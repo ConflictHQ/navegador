@@ -1,6 +1,6 @@
 site_name: Navegador
 site_url: https://navegador.dev
-site_description: AST + knowledge graph context engine for AI coding agents
+site_description: Project knowledge graph for AI coding agents — code structure, business rules, and architectural decisions in one queryable graph
 site_author: CONFLICT LLC
 repo_url: https://github.com/ConflictHQ/navegador
 repo_name: ConflictHQ/navegador
@@ -83,6 +83,8 @@ nav:
       - Loading Context: guide/context-loading.md
       - Graph Queries: guide/graph-queries.md
       - MCP Integration: guide/mcp-integration.md
+      - Agent Hooks: guide/agent-hooks.md
+      - Planopticon: guide/planopticon.md
   - Architecture:
       - Overview: architecture/overview.md
       - Graph Schema: architecture/graph-schema.md
