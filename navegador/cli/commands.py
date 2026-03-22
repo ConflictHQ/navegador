@@ -1,11 +1,13 @@
 """
-Navegador CLI — ingest repos, load context, serve MCP.
+Navegador CLI — the single interface to your project's knowledge graph.
 
-All commands support --format json for clean stdout output suitable for
-piping to agents or other tools without MCP overhead.
+  CODE:      ingest, context, function, class, search, query
+  KNOWLEDGE: add (concept/rule/decision/person/domain), wiki, annotate, domain
+  UNIVERSAL: explain, search (spans both layers), stats
 """
 
 import asyncio
+import json
 import logging
 
 import click
@@ -20,8 +22,7 @@ DB_OPTION = click.option(
 FMT_OPTION = click.option(
     "--format", "fmt",
     type=click.Choice(["markdown", "json"]),
-    default="markdown",
-    show_default=True,
+    default="markdown", show_default=True,
     help="Output format. Use json for agent/pipe consumption.",
 )
 
@@ -32,19 +33,26 @@ def _get_store(db: str):
 
 
 def _emit(text: str, fmt: str) -> None:
-    """Print text — raw to stdout for json, rich for markdown."""
     if fmt == "json":
         click.echo(text)
     else:
         console.print(text)
 
 
+# ── Root group ────────────────────────────────────────────────────────────────
+
 @click.group()
 @click.version_option(package_name="navegador")
 def main():
-    """Navegador — AST + knowledge graph context engine for AI coding agents."""
+    """Navegador — project knowledge graph for AI coding agents.
+
+    Combines code structure (AST, call graphs) with business knowledge
+    (concepts, rules, decisions, wiki) into a single queryable graph.
+    """
     logging.basicConfig(level=logging.WARNING)
 
+
+# ── CODE: ingest ──────────────────────────────────────────────────────────────
 
 @main.command()
 @click.argument("repo_path", type=click.Path(exists=True))
@@ -52,9 +60,7 @@ def main():
 @click.option("--clear", is_flag=True, help="Clear existing graph before ingesting.")
 @click.option("--json", "as_json", is_flag=True, help="Output stats as JSON.")
 def ingest(repo_path: str, db: str, clear: bool, as_json: bool):
-    """Ingest a repository into the navegador graph."""
-    import json
-
+    """Ingest a repository's code into the graph (AST + call graph)."""
     from navegador.ingestion import RepoIngester
 
     store = _get_store(db)
@@ -66,13 +72,15 @@ def ingest(repo_path: str, db: str, clear: bool, as_json: bool):
     else:
         with console.status(f"[bold]Ingesting[/bold] {repo_path}..."):
             stats = ingester.ingest(repo_path, clear=clear)
-        table = Table(title="Ingestion complete", show_header=True)
+        table = Table(title="Ingestion complete")
         table.add_column("Metric", style="cyan")
         table.add_column("Count", justify="right", style="green")
         for k, v in stats.items():
             table.add_row(k.capitalize(), str(v))
         console.print(table)
 
+
+# ── CODE: context / function / class ─────────────────────────────────────────
 
 @main.command()
 @click.argument("file_path")
@@ -81,59 +89,76 @@ def ingest(repo_path: str, db: str, clear: bool, as_json: bool):
 def context(file_path: str, db: str, fmt: str):
     """Load context for a file — all symbols and their relationships."""
     from navegador.context import ContextLoader
-
-    loader = ContextLoader(_get_store(db))
-    bundle = loader.load_file(file_path)
+    bundle = ContextLoader(_get_store(db)).load_file(file_path)
     _emit(bundle.to_json() if fmt == "json" else bundle.to_markdown(), fmt)
 
 
 @main.command()
 @click.argument("name")
-@click.option("--file", "file_path", default="", help="File path to narrow the search.")
-@click.option("--depth", default=2, show_default=True, help="Call graph traversal depth.")
+@click.option("--file", "file_path", default="", help="Narrow to a specific file.")
+@click.option("--depth", default=2, show_default=True)
 @DB_OPTION
 @FMT_OPTION
 def function(name: str, file_path: str, db: str, depth: int, fmt: str):
-    """Load context for a function — callers, callees, signature."""
+    """Load context for a function — callers, callees, decorators."""
     from navegador.context import ContextLoader
-
-    loader = ContextLoader(_get_store(db))
-    bundle = loader.load_function(name, file_path=file_path, depth=depth)
+    bundle = ContextLoader(_get_store(db)).load_function(name, file_path=file_path, depth=depth)
     _emit(bundle.to_json() if fmt == "json" else bundle.to_markdown(), fmt)
 
 
 @main.command("class")
 @click.argument("name")
-@click.option("--file", "file_path", default="", help="File path to narrow the search.")
+@click.option("--file", "file_path", default="", help="Narrow to a specific file.")
 @DB_OPTION
 @FMT_OPTION
 def class_(name: str, file_path: str, db: str, fmt: str):
-    """Load context for a class — methods, inheritance, subclasses."""
+    """Load context for a class — methods, inheritance, references."""
     from navegador.context import ContextLoader
-
-    loader = ContextLoader(_get_store(db))
-    bundle = loader.load_class(name, file_path=file_path)
+    bundle = ContextLoader(_get_store(db)).load_class(name, file_path=file_path)
     _emit(bundle.to_json() if fmt == "json" else bundle.to_markdown(), fmt)
 
+
+# ── UNIVERSAL: explain ────────────────────────────────────────────────────────
+
+@main.command()
+@click.argument("name")
+@click.option("--file", "file_path", default="")
+@DB_OPTION
+@FMT_OPTION
+def explain(name: str, file_path: str, db: str, fmt: str):
+    """Full picture: all relationships in and out, code and knowledge layers."""
+    from navegador.context import ContextLoader
+    bundle = ContextLoader(_get_store(db)).explain(name, file_path=file_path)
+    _emit(bundle.to_json() if fmt == "json" else bundle.to_markdown(), fmt)
+
+
+# ── UNIVERSAL: search ─────────────────────────────────────────────────────────
 
 @main.command()
 @click.argument("query")
 @DB_OPTION
 @click.option("--limit", default=20, show_default=True)
+@click.option("--all", "search_all", is_flag=True,
+              help="Include knowledge layer (concepts, rules, wiki).")
+@click.option("--docs", "by_doc", is_flag=True, help="Search docstrings instead of names.")
 @FMT_OPTION
-def search(query: str, db: str, limit: int, fmt: str):
-    """Search for symbols (functions, classes, methods) by name."""
-    import json
-
+def search(query: str, db: str, limit: int, search_all: bool, by_doc: bool, fmt: str):
+    """Search symbols, concepts, rules, and wiki pages."""
     from navegador.context import ContextLoader
-
     loader = ContextLoader(_get_store(db))
-    results = loader.search(query, limit=limit)
+
+    if by_doc:
+        results = loader.search_by_docstring(query, limit=limit)
+    elif search_all:
+        results = loader.search_all(query, limit=limit)
+    else:
+        results = loader.search(query, limit=limit)
 
     if fmt == "json":
         click.echo(json.dumps([
             {"type": r.type, "name": r.name, "file_path": r.file_path,
-             "line_start": r.line_start, "docstring": r.docstring}
+             "line_start": r.line_start, "docstring": r.docstring,
+             "description": r.description}
             for r in results
         ], indent=2))
         return
@@ -142,7 +167,40 @@ def search(query: str, db: str, limit: int, fmt: str):
         console.print("[yellow]No results.[/yellow]")
         return
 
-    table = Table(title=f"Search: {query!r}", show_header=True)
+    table = Table(title=f"Search: {query!r}")
+    table.add_column("Type", style="cyan")
+    table.add_column("Name", style="bold")
+    table.add_column("File / Domain")
+    table.add_column("Line", justify="right")
+    for r in results:
+        loc = r.file_path or r.domain or ""
+        table.add_row(r.type, r.name, loc, str(r.line_start or ""))
+    console.print(table)
+
+
+# ── CODE: decorator / query ───────────────────────────────────────────────────
+
+@main.command()
+@click.argument("decorator_name")
+@DB_OPTION
+@FMT_OPTION
+def decorated(decorator_name: str, db: str, fmt: str):
+    """Find all functions/methods carrying a decorator."""
+    from navegador.context import ContextLoader
+    results = ContextLoader(_get_store(db)).decorated_by(decorator_name)
+
+    if fmt == "json":
+        click.echo(json.dumps([
+            {"type": r.type, "name": r.name, "file_path": r.file_path, "line": r.line_start}
+            for r in results
+        ], indent=2))
+        return
+
+    if not results:
+        console.print(f"[yellow]No functions decorated with @{decorator_name}[/yellow]")
+        return
+
+    table = Table(title=f"@{decorator_name}")
     table.add_column("Type", style="cyan")
     table.add_column("Name", style="bold")
     table.add_column("File")
@@ -156,35 +214,210 @@ def search(query: str, db: str, limit: int, fmt: str):
 @click.argument("cypher")
 @DB_OPTION
 def query(cypher: str, db: str):
-    """Run a raw Cypher query and print results as JSON."""
-    import json
+    """Run a raw Cypher query — output is always JSON."""
+    result = _get_store(db).query(cypher)
+    click.echo(json.dumps(result.result_set or [], default=str, indent=2))
 
-    store = _get_store(db)
-    result = store.query(cypher)
-    rows = result.result_set or []
-    click.echo(json.dumps(rows, default=str, indent=2))
+
+# ── KNOWLEDGE: add group ──────────────────────────────────────────────────────
+
+@main.group()
+def add():
+    """Add knowledge nodes — concepts, rules, decisions, people, domains."""
+
+
+@add.command("concept")
+@click.argument("name")
+@click.option("--desc", default="", help="Description / definition.")
+@click.option("--domain", default="")
+@click.option("--status", default="", help="e.g. stable, proposed, deprecated")
+@click.option("--rules", default="", help="Comma-separated rule names.")
+@click.option("--wiki", default="", help="Wiki URL or reference.")
+@DB_OPTION
+def add_concept(name: str, desc: str, domain: str, status: str, rules: str, wiki: str, db: str):
+    """Add a business concept to the knowledge graph."""
+    from navegador.ingestion import KnowledgeIngester
+    k = KnowledgeIngester(_get_store(db))
+    k.add_concept(name, description=desc, domain=domain, status=status,
+                  rules=rules, wiki_refs=wiki)
+    console.print(f"[green]Concept added:[/green] {name}")
+
+
+@add.command("rule")
+@click.argument("name")
+@click.option("--desc", default="")
+@click.option("--domain", default="")
+@click.option("--severity", default="info", type=click.Choice(["info", "warning", "critical"]))
+@click.option("--rationale", default="")
+@DB_OPTION
+def add_rule(name: str, desc: str, domain: str, severity: str, rationale: str, db: str):
+    """Add a business rule or constraint."""
+    from navegador.ingestion import KnowledgeIngester
+    k = KnowledgeIngester(_get_store(db))
+    k.add_rule(name, description=desc, domain=domain, severity=severity, rationale=rationale)
+    console.print(f"[green]Rule added:[/green] {name}")
+
+
+@add.command("decision")
+@click.argument("name")
+@click.option("--desc", default="")
+@click.option("--domain", default="")
+@click.option("--rationale", default="")
+@click.option("--alternatives", default="")
+@click.option("--date", default="")
+@click.option("--status", default="accepted",
+              type=click.Choice(["proposed", "accepted", "deprecated"]))
+@DB_OPTION
+def add_decision(name, desc, domain, rationale, alternatives, date, status, db):
+    """Add an architectural or product decision."""
+    from navegador.ingestion import KnowledgeIngester
+    k = KnowledgeIngester(_get_store(db))
+    k.add_decision(name, description=desc, domain=domain, status=status,
+                   rationale=rationale, alternatives=alternatives, date=date)
+    console.print(f"[green]Decision added:[/green] {name}")
+
+
+@add.command("person")
+@click.argument("name")
+@click.option("--email", default="")
+@click.option("--role", default="")
+@click.option("--team", default="")
+@DB_OPTION
+def add_person(name: str, email: str, role: str, team: str, db: str):
+    """Add a person (contributor, owner, stakeholder)."""
+    from navegador.ingestion import KnowledgeIngester
+    k = KnowledgeIngester(_get_store(db))
+    k.add_person(name, email=email, role=role, team=team)
+    console.print(f"[green]Person added:[/green] {name}")
+
+
+@add.command("domain")
+@click.argument("name")
+@click.option("--desc", default="")
+@DB_OPTION
+def add_domain(name: str, desc: str, db: str):
+    """Add a business domain (auth, billing, notifications…)."""
+    from navegador.ingestion import KnowledgeIngester
+    k = KnowledgeIngester(_get_store(db))
+    k.add_domain(name, description=desc)
+    console.print(f"[green]Domain added:[/green] {name}")
+
+
+# ── KNOWLEDGE: annotate ───────────────────────────────────────────────────────
+
+@main.command()
+@click.argument("code_name")
+@click.option("--type", "code_label", default="Function",
+              type=click.Choice(["Function", "Class", "Method", "File", "Module"]))
+@click.option("--concept", default="", help="Link to this concept.")
+@click.option("--rule", default="", help="Link to this rule.")
+@DB_OPTION
+def annotate(code_name: str, code_label: str, concept: str, rule: str, db: str):
+    """Link a code node to a concept or rule in the knowledge graph."""
+    from navegador.ingestion import KnowledgeIngester
+    k = KnowledgeIngester(_get_store(db))
+    k.annotate_code(code_name, code_label,
+                    concept=concept or None, rule=rule or None)
+    console.print(f"[green]Annotated:[/green] {code_name}")
+
+
+# ── KNOWLEDGE: domain view ────────────────────────────────────────────────────
+
+@main.command()
+@click.argument("name")
+@DB_OPTION
+@FMT_OPTION
+def domain(name: str, db: str, fmt: str):
+    """Show everything belonging to a domain — code and knowledge."""
+    from navegador.context import ContextLoader
+    bundle = ContextLoader(_get_store(db)).load_domain(name)
+    _emit(bundle.to_json() if fmt == "json" else bundle.to_markdown(), fmt)
 
 
 @main.command()
+@click.argument("name")
 @DB_OPTION
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
-def stats(db: str, as_json: bool):
-    """Show graph statistics."""
-    import json
+@FMT_OPTION
+def concept(name: str, db: str, fmt: str):
+    """Load a business concept — rules, related concepts, implementing code, wiki."""
+    from navegador.context import ContextLoader
+    bundle = ContextLoader(_get_store(db)).load_concept(name)
+    _emit(bundle.to_json() if fmt == "json" else bundle.to_markdown(), fmt)
 
+
+# ── KNOWLEDGE: wiki ───────────────────────────────────────────────────────────
+
+@main.group()
+def wiki():
+    """Ingest and manage wiki pages in the knowledge graph."""
+
+
+@wiki.command("ingest")
+@click.option("--repo", default="", help="GitHub repo (owner/repo) — clones the wiki.")
+@click.option("--dir", "wiki_dir", default="", help="Local directory of markdown files.")
+@click.option("--token", default="", envvar="GITHUB_TOKEN", help="GitHub token.")
+@click.option("--api", is_flag=True, help="Use GitHub API instead of git clone.")
+@DB_OPTION
+def wiki_ingest(repo: str, wiki_dir: str, token: str, api: bool, db: str):
+    """Pull wiki pages into the knowledge graph."""
+    from navegador.ingestion import WikiIngester
+    w = WikiIngester(_get_store(db))
+
+    if wiki_dir:
+        stats = w.ingest_local(wiki_dir)
+    elif repo:
+        if api:
+            stats = w.ingest_github_api(repo, token=token)
+        else:
+            stats = w.ingest_github(repo, token=token)
+    else:
+        raise click.UsageError("Provide --repo or --dir")
+
+    console.print(f"[green]Wiki ingested:[/green] {stats['pages']} pages, {stats['links']} links")
+
+
+# ── Stats ─────────────────────────────────────────────────────────────────────
+
+@main.command()
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True)
+def stats(db: str, as_json: bool):
+    """Graph statistics broken down by node and edge type."""
+    from navegador.graph import queries as q
     store = _get_store(db)
-    data = {"nodes": store.node_count(), "edges": store.edge_count()}
+
+    node_rows = (store.query(q.NODE_TYPE_COUNTS).result_set or [])
+    edge_rows = (store.query(q.EDGE_TYPE_COUNTS).result_set or [])
+
+    total_nodes = sum(r[1] for r in node_rows)
+    total_edges = sum(r[1] for r in edge_rows)
 
     if as_json:
-        click.echo(json.dumps(data, indent=2))
-    else:
-        table = Table(title="Graph stats", show_header=True)
-        table.add_column("Metric", style="cyan")
-        table.add_column("Count", justify="right", style="green")
-        for k, v in data.items():
-            table.add_row(k.capitalize(), str(v))
-        console.print(table)
+        click.echo(json.dumps({
+            "total_nodes": total_nodes,
+            "total_edges": total_edges,
+            "nodes": {r[0]: r[1] for r in node_rows},
+            "edges": {r[0]: r[1] for r in edge_rows},
+        }, indent=2))
+        return
 
+    node_table = Table(title=f"Nodes ({total_nodes:,})")
+    node_table.add_column("Type", style="cyan")
+    node_table.add_column("Count", justify="right", style="green")
+    for row in node_rows:
+        node_table.add_row(row[0], f"{row[1]:,}")
+
+    edge_table = Table(title=f"Edges ({total_edges:,})")
+    edge_table.add_column("Type", style="cyan")
+    edge_table.add_column("Count", justify="right", style="green")
+    for row in edge_rows:
+        edge_table.add_row(row[0], f"{row[1]:,}")
+
+    console.print(node_table)
+    console.print(edge_table)
+
+
+# ── MCP ───────────────────────────────────────────────────────────────────────
 
 @main.command()
 @DB_OPTION

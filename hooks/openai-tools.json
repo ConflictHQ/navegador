@@ -1,0 +1,159 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "nav_search",
+      "description": "Search the project knowledge graph for symbols, concepts, rules, and wiki pages. Set all=true to include the knowledge layer.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Search term" },
+          "all": { "type": "boolean", "description": "Include concepts, rules, decisions, wiki (default: false)" },
+          "by_docstring": { "type": "boolean", "description": "Search docstring content instead of names" }
+        },
+        "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "nav_explain",
+      "description": "Full picture for any named node — all inbound and outbound relationships across code and knowledge layers.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "file_path": { "type": "string", "description": "Optional — narrow to a specific file" }
+        },
+        "required": ["name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "nav_function",
+      "description": "Load context for a function — callers, callees, and decorators.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "file_path": { "type": "string" },
+          "depth": { "type": "integer", "default": 2 }
+        },
+        "required": ["name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "nav_class",
+      "description": "Load context for a class — methods, inheritance chain, and references.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "file_path": { "type": "string" }
+        },
+        "required": ["name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "nav_context",
+      "description": "All symbols in a file — functions, classes, imports — with line numbers and docstrings.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_path": { "type": "string" }
+        },
+        "required": ["file_path"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "nav_concept",
+      "description": "Load a business concept — governing rules, related concepts, implementing code, and wiki references.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" }
+        },
+        "required": ["name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "nav_domain",
+      "description": "Show everything in a business domain — code and knowledge nodes.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" }
+        },
+        "required": ["name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "nav_decorated",
+      "description": "Find all functions/methods carrying a specific decorator (e.g. login_required, cached).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "decorator": { "type": "string" }
+        },
+        "required": ["decorator"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "nav_query",
+      "description": "Execute a raw Cypher query against the knowledge graph. Returns JSON.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "cypher": { "type": "string" }
+        },
+        "required": ["cypher"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "nav_stats",
+      "description": "Node and edge counts broken down by type — shows what's in the graph.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "nav_ingest",
+      "description": "Ingest a code repository into the knowledge graph (AST parsing + call graph).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Absolute path to the repository root" }
+        },
+        "required": ["path"]
+      }
+    }
+  }
+]

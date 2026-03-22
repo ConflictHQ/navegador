@@ -1,8 +1,13 @@
 """
-Common Cypher query templates for navegador context loading.
+Cypher query templates for navegador.
+
+Parameters passed as $name are substituted by FalkorDB at query time.
+Optional file_path filtering: when file_path is "" the WHERE clause is omitted
+so callers/callees/references work across the whole graph by name alone.
 """
 
-# Find all nodes contained in a file
+# ── Code: file contents ───────────────────────────────────────────────────────
+
 FILE_CONTENTS = """
 MATCH (f:File {path: $path})-[:CONTAINS]->(n)
 RETURN labels(n)[0] AS type, n.name AS name, n.line_start AS line,
@@ -10,51 +15,188 @@ RETURN labels(n)[0] AS type, n.name AS name, n.line_start AS line,
 ORDER BY n.line_start
 """
 
-# Find everything a function/file directly imports
 DIRECT_IMPORTS = """
 MATCH (n {file_path: $file_path, name: $name})-[:IMPORTS]->(dep)
 RETURN labels(dep)[0] AS type, dep.name AS name, dep.file_path AS file_path
 """
 
-# Find callers of a function (up to N hops)
+# ── Code: call graph ──────────────────────────────────────────────────────────
+
+# file_path is optional — if empty, match by name only across all files
 CALLERS = """
-MATCH (caller)-[:CALLS*1..$depth]->(fn {name: $name, file_path: $file_path})
+MATCH (caller)-[:CALLS*1..$depth]->(fn)
+WHERE fn.name = $name AND ($file_path = '' OR fn.file_path = $file_path)
 RETURN DISTINCT labels(caller)[0] AS type, caller.name AS name,
        caller.file_path AS file_path, caller.line_start AS line
 """
 
-# Find callees of a function (what it calls, up to N hops)
 CALLEES = """
-MATCH (fn {name: $name, file_path: $file_path})-[:CALLS*1..$depth]->(callee)
+MATCH (fn)-[:CALLS*1..$depth]->(callee)
+WHERE fn.name = $name AND ($file_path = '' OR fn.file_path = $file_path)
 RETURN DISTINCT labels(callee)[0] AS type, callee.name AS name,
        callee.file_path AS file_path, callee.line_start AS line
 """
 
-# Class hierarchy
+# ── Code: class hierarchy ─────────────────────────────────────────────────────
+
 CLASS_HIERARCHY = """
 MATCH (c:Class {name: $name})-[:INHERITS*]->(parent)
 RETURN parent.name AS name, parent.file_path AS file_path
 """
 
-# All subclasses
 SUBCLASSES = """
 MATCH (child:Class)-[:INHERITS*]->(c:Class {name: $name})
 RETURN child.name AS name, child.file_path AS file_path
 """
 
-# Context bundle: a file + everything 1-2 hops out
-CONTEXT_BUNDLE = """
-MATCH (root {file_path: $file_path})
-OPTIONAL MATCH (root)-[r1:CALLS|IMPORTS|CONTAINS|INHERITS*1..2]-(neighbor)
-RETURN root, collect(DISTINCT neighbor) AS neighbors,
-       collect(DISTINCT type(r1)) AS edge_types
+# ── Code: decorators ─────────────────────────────────────────────────────────
+
+# All functions/methods carrying a given decorator
+DECORATED_BY = """
+MATCH (d:Decorator {name: $decorator_name})-[:DECORATES]->(n)
+RETURN labels(n)[0] AS type, n.name AS name, n.file_path AS file_path,
+       n.line_start AS line
 """
 
-# Symbol search
+# All decorators on a given function/method
+DECORATORS_FOR = """
+MATCH (d:Decorator)-[:DECORATES]->(n)
+WHERE n.name = $name AND ($file_path = '' OR n.file_path = $file_path)
+RETURN d.name AS decorator, d.file_path AS file_path, d.line_start AS line
+"""
+
+# ── Code: references ─────────────────────────────────────────────────────────
+
+REFERENCES_TO = """
+MATCH (src)-[:REFERENCES]->(tgt)
+WHERE tgt.name = $name AND ($file_path = '' OR tgt.file_path = $file_path)
+RETURN DISTINCT labels(src)[0] AS type, src.name AS name,
+       src.file_path AS file_path, src.line_start AS line
+"""
+
+# ── Universal: neighbor traversal ────────────────────────────────────────────
+
+# All nodes reachable from a named node within N hops (any edge type)
+NEIGHBORS = """
+MATCH (root)
+WHERE root.name = $name AND ($file_path = '' OR root.file_path = $file_path)
+OPTIONAL MATCH (root)-[r*1..$depth]-(neighbor)
+RETURN DISTINCT
+    labels(root)[0] AS root_type,
+    root.name AS root_name,
+    labels(neighbor)[0] AS neighbor_type,
+    neighbor.name AS neighbor_name,
+    neighbor.file_path AS neighbor_file_path
+"""
+
+# ── Universal: search ─────────────────────────────────────────────────────────
+
+# Search code symbols by name substring
 SYMBOL_SEARCH = """
 MATCH (n)
 WHERE (n:Function OR n:Class OR n:Method) AND n.name CONTAINS $query
 RETURN labels(n)[0] AS type, n.name AS name, n.file_path AS file_path,
        n.line_start AS line, n.docstring AS docstring
 LIMIT $limit
+"""
+
+# Search code symbols by docstring content
+DOCSTRING_SEARCH = """
+MATCH (n)
+WHERE (n:Function OR n:Class OR n:Method)
+  AND n.docstring IS NOT NULL
+  AND toLower(n.docstring) CONTAINS toLower($query)
+RETURN labels(n)[0] AS type, n.name AS name, n.file_path AS file_path,
+       n.line_start AS line, n.docstring AS docstring
+LIMIT $limit
+"""
+
+# Search knowledge layer (concepts, rules, decisions, wiki) by name or description
+KNOWLEDGE_SEARCH = """
+MATCH (n)
+WHERE (n:Concept OR n:Rule OR n:Decision OR n:WikiPage)
+  AND (toLower(n.name) CONTAINS toLower($query)
+       OR (n.description IS NOT NULL AND toLower(n.description) CONTAINS toLower($query)))
+RETURN labels(n)[0] AS type, n.name AS name, n.description AS description,
+       n.domain AS domain, n.status AS status
+LIMIT $limit
+"""
+
+# Search everything — code + knowledge — in one query
+GLOBAL_SEARCH = """
+MATCH (n)
+WHERE (n:Function OR n:Class OR n:Method OR n:Concept OR n:Rule OR n:Decision OR n:WikiPage)
+  AND (toLower(n.name) CONTAINS toLower($query)
+       OR (n.docstring IS NOT NULL AND toLower(n.docstring) CONTAINS toLower($query))
+       OR (n.description IS NOT NULL AND toLower(n.description) CONTAINS toLower($query)))
+RETURN labels(n)[0] AS type, n.name AS name,
+       coalesce(n.file_path, '') AS file_path,
+       coalesce(n.docstring, n.description, '') AS summary,
+       n.line_start AS line
+LIMIT $limit
+"""
+
+# ── Knowledge: domain ─────────────────────────────────────────────────────────
+
+DOMAIN_CONTENTS = """
+MATCH (n)-[:BELONGS_TO]->(d:Domain {name: $domain})
+RETURN labels(n)[0] AS type, n.name AS name,
+       coalesce(n.file_path, '') AS file_path,
+       coalesce(n.docstring, n.description, '') AS summary
+ORDER BY labels(n)[0], n.name
+"""
+
+# ── Knowledge: concept context ───────────────────────────────────────────────
+
+CONCEPT_CONTEXT = """
+MATCH (c:Concept {name: $name})
+OPTIONAL MATCH (c)-[:RELATED_TO]-(related:Concept)
+OPTIONAL MATCH (rule:Rule)-[:GOVERNS]->(c)
+OPTIONAL MATCH (wiki:WikiPage)-[:DOCUMENTS]->(c)
+OPTIONAL MATCH (impl)-[:IMPLEMENTS]->(c)
+OPTIONAL MATCH (c)-[:BELONGS_TO]->(domain:Domain)
+RETURN
+    c.name AS name, c.description AS description,
+    c.status AS status, c.domain AS domain,
+    collect(DISTINCT related.name) AS related_concepts,
+    collect(DISTINCT rule.name) AS governing_rules,
+    collect(DISTINCT wiki.name) AS wiki_pages,
+    collect(DISTINCT impl.name) AS implemented_by,
+    collect(DISTINCT domain.name) AS domains
+"""
+
+# ── Explain: full picture for any named node ──────────────────────────────────
+
+# All outbound relationships from a node
+OUTBOUND = """
+MATCH (n)-[r]->(neighbor)
+WHERE n.name = $name AND ($file_path = '' OR n.file_path = $file_path)
+RETURN type(r) AS rel, labels(neighbor)[0] AS neighbor_type,
+       neighbor.name AS neighbor_name,
+       coalesce(neighbor.file_path, '') AS neighbor_file_path
+ORDER BY rel, neighbor_name
+"""
+
+# All inbound relationships to a node
+INBOUND = """
+MATCH (neighbor)-[r]->(n)
+WHERE n.name = $name AND ($file_path = '' OR n.file_path = $file_path)
+RETURN type(r) AS rel, labels(neighbor)[0] AS neighbor_type,
+       neighbor.name AS neighbor_name,
+       coalesce(neighbor.file_path, '') AS neighbor_file_path
+ORDER BY rel, neighbor_name
+"""
+
+# ── Stats ─────────────────────────────────────────────────────────────────────
+
+NODE_TYPE_COUNTS = """
+MATCH (n)
+RETURN labels(n)[0] AS type, count(n) AS count
+ORDER BY count DESC
+"""
+
+EDGE_TYPE_COUNTS = """
+MATCH ()-[r]->()
+RETURN type(r) AS type, count(r) AS count
+ORDER BY count DESC
 """
