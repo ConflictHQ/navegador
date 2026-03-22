@@ -12,18 +12,31 @@ navegador ingest ./repo
 
 ### What gets extracted
 
-Navegador walks every `.py` and `.ts` / `.tsx` file and uses tree-sitter to extract:
+Navegador walks all source files in the repo and uses tree-sitter to extract structure. Supported languages:
+
+| Extension(s) | Language |
+|---|---|
+| `.py` | Python |
+| `.ts`, `.tsx` | TypeScript |
+| `.js`, `.jsx` | JavaScript |
+| `.go` | Go |
+| `.rs` | Rust |
+| `.java` | Java |
+
+The following directories are always skipped: `.git`, `.venv`, `venv`, `node_modules`, `__pycache__`, `dist`, `build`, `.next`, `target` (Rust/Java builds), `vendor` (Go modules), `.gradle`.
+
+### What gets extracted
 
 | What | Graph nodes / edges created |
 |---|---|
-| Files and modules | `File`, `Module` nodes; `CONTAINS` edges from `Repository` |
-| Classes | `Class` node with `name`, `file`, `line`, `docstring` |
-| Functions and methods | `Function` / `Method` nodes with `name`, `signature`, `docstring`, `line` |
-| Decorators | `Decorator` node; `DECORATES` edge to the decorated function/class |
-| Imports | `Import` node; `IMPORTS` edge from the importing file |
+| Files | `File` node; `CONTAINS` edge from `Repository` |
+| Classes, structs, interfaces | `Class` node with `name`, `file`, `line`, `docstring` |
+| Functions and methods | `Function` / `Method` nodes with `name`, `docstring`, `line` |
+| Imports / use declarations | `Import` node; `IMPORTS` edge from the importing file |
 | Call relationships | `CALLS` edges between functions based on static call analysis |
-| Inheritance | `INHERITS` edges from subclass to parent; `IMPLEMENTS` for interfaces |
-| Variables (module-level) | `Variable` nodes |
+| Inheritance | `INHERITS` edges from subclass to parent |
+
+Doc comment formats supported per language: Python docstrings, JSDoc (`/** */`), Rust `///`, Java Javadoc.
 
 ### Options
 

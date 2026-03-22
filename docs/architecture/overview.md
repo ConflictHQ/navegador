@@ -75,10 +75,10 @@ Both backends implement the same `GraphStore` interface. The query path is ident
 ## Ingestion pipeline
 
 ```
-Source code (Python, TypeScript)
+Source code (Python · TypeScript · JavaScript · Go · Rust · Java)
           │
           ▼
-    tree-sitter parser
+    tree-sitter parser (per-language grammar)
           │
           ▼
     AST visitor (extract nodes + relationships)
