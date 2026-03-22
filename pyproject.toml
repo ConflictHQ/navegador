@@ -1,0 +1,96 @@
+[build-system]
+requires = ["setuptools>=69.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "navegador"
+version = "0.1.0"
+description = "AST + knowledge graph context engine for AI coding agents"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "CONFLICT LLC" },
+]
+keywords = ["ast", "knowledge-graph", "code-analysis", "ai-agents", "mcp", "context-management", "falkordb"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    # Graph database
+    "FalkorDB>=1.5.0",       # graph query client
+    "falkordblite>=0.8.0",   # embedded SQLite-backed storage (zero-infra local)
+    # AST parsing — multi-language via tree-sitter grammars
+    "tree-sitter>=0.24.0",
+    "tree-sitter-python>=0.23.0",
+    "tree-sitter-typescript>=0.23.0",
+    # CLI
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    # MCP server
+    "mcp>=1.0.0",
+    # Utilities
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+redis = [
+    # Use Redis-backed FalkorDB in production
+    "redis>=5.0.0",
+]
+dev = [
+    "pytest>=7.3.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "mypy>=1.3.0",
+]
+docs = [
+    "mkdocs-material>=9.0.0",
+    "mkdocstrings[python]>=0.24.0",
+    "pymdown-extensions>=10.0",
+]
+all = [
+    "navegador[redis]",
+    "navegador[dev]",
+    "navegador[docs]",
+]
+
+[project.urls]
+Homepage = "https://navegador.dev"
+Documentation = "https://navegador.dev"
+Repository = "https://github.com/ConflictHQ/navegador"
+Issues = "https://github.com/ConflictHQ/navegador/issues"
+
+[project.scripts]
+navegador = "navegador.cli.commands:main"
+
+[tool.setuptools.packages.find]
+include = ["navegador*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "--cov=navegador"

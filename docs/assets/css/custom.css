@@ -1,0 +1,16 @@
+/* Navegador — MkDocs Material custom theme */
+
+:root {
+  --md-primary-fg-color: #DC394C;
+  --md-primary-fg-color--light: #e8677a;
+  --md-primary-fg-color--dark: #8B3138;
+  --md-accent-fg-color: #DC394C;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #DC394C;
+  --md-primary-fg-color--light: #e8677a;
+  --md-primary-fg-color--dark: #8B3138;
+  --md-default-bg-color: #1a1c1b;
+  --md-code-bg-color: #222423;
+}

@@ -1,0 +1,73 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+.mypy_cache/
+coverage.xml
+*.cover
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE and editor files
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+
+# AI tools
+.claude/
+.gemini/
+.codex/
+.aider/
+.continue/
+.copilot/
+AGENTS.md
+GEMINI.md
+
+# API keys and secrets
+.env
+.env.*
+!.env.example
+*service_account*.json
+*credentials*.json
+
+# Log files
+*.log
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# MkDocs build output
+site/
+
+# Navegador runtime
+*.db
+*.db-shm
+*.db-wal
+.navegador/
+navegador-graph/
+
+# Ruff cache
+.ruff_cache/
