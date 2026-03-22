@@ -6,7 +6,7 @@ and writes nodes + edges into the GraphStore.
 import logging
 from pathlib import Path
 
-from navegador.graph.schema import EdgeType, NodeLabel
+from navegador.graph.schema import NodeLabel
 from navegador.graph.store import GraphStore
 
 logger = logging.getLogger(__name__)
@@ -82,7 +82,9 @@ class RepoIngester:
         return stats
 
     def _iter_source_files(self, repo_path: Path):
-        skip_dirs = {".git", ".venv", "venv", "node_modules", "__pycache__", "dist", "build", ".next"}
+        skip_dirs = {
+            ".git", ".venv", "venv", "node_modules", "__pycache__", "dist", "build", ".next"
+        }
         for path in repo_path.rglob("*"):
             if path.is_file() and path.suffix in LANGUAGE_MAP:
                 if not any(part in skip_dirs for part in path.parts):

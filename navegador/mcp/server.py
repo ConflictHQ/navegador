@@ -20,7 +20,6 @@ def create_mcp_server(store_factory):
     """
     try:
         from mcp.server import Server  # type: ignore[import]
-        from mcp.server.stdio import stdio_server  # type: ignore[import]
         from mcp.types import TextContent, Tool  # type: ignore[import]
     except ImportError as e:
         raise ImportError("Install mcp: pip install mcp") from e
@@ -47,20 +46,29 @@ def create_mcp_server(store_factory):
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "Absolute path to the repository."},
-                        "clear": {"type": "boolean", "description": "Clear existing graph before ingesting.", "default": False},
+                        "path": {"type": "string", "description": "Absolute path to the repo."},
+                        "clear": {
+                            "type": "boolean",
+                            "description": "Clear existing graph before ingesting.",
+                            "default": False,
+                        },
                     },
                     "required": ["path"],
                 },
             ),
             Tool(
                 name="load_file_context",
-                description="Return all symbols (functions, classes, imports) in a file and their relationships.",
+                description="Return all symbols (functions, classes, imports) in a file.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "file_path": {"type": "string", "description": "Relative file path within the ingested repo."},
-                        "format": {"type": "string", "enum": ["json", "markdown"], "default": "markdown"},
+                        "file_path": {
+                            "type": "string",
+                            "description": "Relative file path within the ingested repo.",
+                        },
+                        "format": {
+                            "type": "string", "enum": ["json", "markdown"], "default": "markdown",
+                        },
                     },
                     "required": ["file_path"],
                 },
@@ -74,7 +82,9 @@ def create_mcp_server(store_factory):
                         "name": {"type": "string", "description": "Function name."},
                         "file_path": {"type": "string", "description": "Relative file path."},
                         "depth": {"type": "integer", "default": 2},
-                        "format": {"type": "string", "enum": ["json", "markdown"], "default": "markdown"},
+                        "format": {
+                            "type": "string", "enum": ["json", "markdown"], "default": "markdown",
+                        },
                     },
                     "required": ["name", "file_path"],
                 },
@@ -87,7 +97,9 @@ def create_mcp_server(store_factory):
                     "properties": {
                         "name": {"type": "string", "description": "Class name."},
                         "file_path": {"type": "string", "description": "Relative file path."},
-                        "format": {"type": "string", "enum": ["json", "markdown"], "default": "markdown"},
+                        "format": {
+                            "type": "string", "enum": ["json", "markdown"], "default": "markdown",
+                        },
                     },
                     "required": ["name", "file_path"],
                 },

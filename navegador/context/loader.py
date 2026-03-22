@@ -18,8 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from navegador.graph import GraphStore
-from navegador.graph import queries
+from navegador.graph import GraphStore, queries
 
 logger = logging.getLogger(__name__)
 
@@ -123,12 +122,16 @@ class ContextLoader:
         nodes: list[ContextNode] = []
         edges: list[dict[str, str]] = []
 
-        callees = self.store.query(queries.CALLEES, {"name": name, "file_path": file_path, "depth": depth})
+        callees = self.store.query(
+            queries.CALLEES, {"name": name, "file_path": file_path, "depth": depth}
+        )
         for row in (callees.result_set or []):
             nodes.append(ContextNode(type=row[0], name=row[1], file_path=row[2], line_start=row[3]))
             edges.append({"from": name, "type": "CALLS", "to": row[1]})
 
-        callers = self.store.query(queries.CALLERS, {"name": name, "file_path": file_path, "depth": depth})
+        callers = self.store.query(
+            queries.CALLERS, {"name": name, "file_path": file_path, "depth": depth}
+        )
         for row in (callers.result_set or []):
             nodes.append(ContextNode(type=row[0], name=row[1], file_path=row[2], line_start=row[3]))
             edges.append({"from": row[1], "type": "CALLS", "to": name})

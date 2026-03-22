@@ -40,8 +40,13 @@ NODE_PROPS = {
     NodeLabel.File: ["name", "path", "language", "size", "line_count"],
     NodeLabel.Module: ["name", "file_path", "docstring"],
     NodeLabel.Class: ["name", "file_path", "line_start", "line_end", "docstring", "source"],
-    NodeLabel.Function: ["name", "file_path", "line_start", "line_end", "docstring", "source", "signature"],
-    NodeLabel.Method: ["name", "file_path", "line_start", "line_end", "docstring", "source", "signature", "class_name"],
+    NodeLabel.Function: [
+        "name", "file_path", "line_start", "line_end", "docstring", "source", "signature",
+    ],
+    NodeLabel.Method: [
+        "name", "file_path", "line_start", "line_end",
+        "docstring", "source", "signature", "class_name",
+    ],
     NodeLabel.Variable: ["name", "file_path", "line_start", "type_annotation"],
     NodeLabel.Import: ["name", "file_path", "line_start", "module", "alias"],
     NodeLabel.Decorator: ["name", "file_path", "line_start"],

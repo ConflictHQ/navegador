@@ -29,7 +29,6 @@ classifiers = [
 dependencies = [
     # Graph database
     "FalkorDB>=1.5.0",       # graph query client
-    "falkordblite>=0.8.0",   # embedded SQLite-backed storage (zero-infra local)
     # AST parsing — multi-language via tree-sitter grammars
     "tree-sitter>=0.24.0",
     "tree-sitter-python>=0.23.0",
@@ -45,6 +44,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+sqlite = [
+    # Embedded SQLite backend via falkordblite (requires Python 3.12+)
+    "falkordblite>=0.8.0",
+]
 redis = [
     # Use Redis-backed FalkorDB in production
     "redis>=5.0.0",

@@ -42,7 +42,9 @@ def _get_docstring(node, source: bytes) -> str | None:
     first_stmt = next((c for c in body.children if c.type == "expression_statement"), None)
     if not first_stmt:
         return None
-    string_node = next((c for c in first_stmt.children if c.type in ("string", "string_content")), None)
+    string_node = next(
+        (c for c in first_stmt.children if c.type in ("string", "string_content")), None
+    )
     if string_node:
         raw = _node_text(string_node, source)
         return raw.strip('"""').strip("'''").strip('"').strip("'").strip()
@@ -199,7 +201,10 @@ class PythonParser(LanguageParser):
             if class_name
             else {"path": file_path}
         )
-        store.create_edge(container_label, container_key, EdgeType.CONTAINS, label, {"name": name, "file_path": file_path})
+        store.create_edge(
+            container_label, container_key, EdgeType.CONTAINS, label,
+            {"name": name, "file_path": file_path},
+        )
         stats["functions"] += 1
         stats["edges"] += 1
 
@@ -210,7 +215,9 @@ class PythonParser(LanguageParser):
                        fn_label: str, store: GraphStore, stats: dict) -> None:
         def walk_calls(node):
             if node.type == "call":
-                func = next((c for c in node.children if c.type in ("identifier", "attribute")), None)
+                func = next(
+                    (c for c in node.children if c.type in ("identifier", "attribute")), None
+                )
                 if func:
                     callee_name = _node_text(func, source).split(".")[-1]
                     store.create_edge(

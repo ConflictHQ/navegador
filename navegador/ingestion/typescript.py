@@ -141,6 +141,9 @@ class TypeScriptParser(LanguageParser):
             if class_name
             else {"path": file_path}
         )
-        store.create_edge(container_label, container_key, EdgeType.CONTAINS, label, {"name": name, "file_path": file_path})
+        store.create_edge(
+            container_label, container_key, EdgeType.CONTAINS, label,
+            {"name": name, "file_path": file_path},
+        )
         stats["functions"] += 1
         stats["edges"] += 1

@@ -4,7 +4,6 @@ Navegador CLI — ingest repos, load context, serve MCP.
 
 import asyncio
 import logging
-from pathlib import Path
 
 import click
 from rich.console import Console
@@ -107,14 +106,15 @@ def stats(db: str):
 @click.option("--port", default=8765, show_default=True)
 def mcp(db: str, host: str, port: int):
     """Start the MCP server for AI agent integration."""
-    from navegador.mcp import create_mcp_server
     from mcp.server.stdio import stdio_server  # type: ignore[import]
+
+    from navegador.mcp import create_mcp_server
 
     def store_factory():
         return _get_store(db)
 
     server = create_mcp_server(store_factory)
-    console.print(f"[green]Navegador MCP server running[/green] (stdio)")
+    console.print("[green]Navegador MCP server running[/green] (stdio)")
 
     async def _run():
         async with stdio_server() as (read_stream, write_stream):
