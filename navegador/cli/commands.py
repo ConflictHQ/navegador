@@ -28,8 +28,8 @@ FMT_OPTION = click.option(
 
 
 def _get_store(db: str):
-    from navegador.graph import GraphStore
-    return GraphStore.sqlite(db)
+    from navegador.config import DEFAULT_DB_PATH, get_store
+    return get_store(db if db != DEFAULT_DB_PATH else None)
 
 
 def _emit(text: str, fmt: str) -> None:
@@ -50,6 +50,44 @@ def main():
     (concepts, rules, decisions, wiki) into a single queryable graph.
     """
     logging.basicConfig(level=logging.WARNING)
+
+
+# ── Init ──────────────────────────────────────────────────────────────────────
+
+@main.command()
+@click.argument("path", default=".", type=click.Path())
+@click.option("--redis", "redis_url", default="",
+              help="Redis URL for centralized/production mode (e.g. redis://host:6379).")
+def init(path: str, redis_url: str):
+    """Initialise navegador in a project directory.
+
+    Creates .navegador/ (gitignored), writes .env.example with storage options.
+
+    \b
+    Local SQLite (default — zero infra):
+      navegador init
+
+    Centralized Redis (production / multi-agent):
+      navegador init --redis redis://host:6379
+      # Then: export NAVEGADOR_REDIS_URL=redis://host:6379
+    """
+    from navegador.config import init_project
+
+    nav_dir = init_project(path)
+    console.print(f"[green]Initialised navegador[/green] → {nav_dir}")
+
+    if redis_url:
+        console.print(
+            f"\n[bold]Redis mode:[/bold] set [cyan]NAVEGADOR_REDIS_URL={redis_url}[/cyan] "
+            "in your environment or CI secrets."
+        )
+    else:
+        console.print(
+            "\n[bold]Local SQLite mode[/bold] (default). "
+            "To use a shared Redis graph set [cyan]NAVEGADOR_REDIS_URL[/cyan]."
+        )
+
+    console.print("\nNext: [bold]navegador ingest .[/bold]")
 
 
 # ── CODE: ingest ──────────────────────────────────────────────────────────────
