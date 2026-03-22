@@ -116,7 +116,7 @@ class ContextLoader:
             metadata={"depth": depth, "query": "file_contents"},
         )
 
-    def load_function(self, name: str, file_path: str, depth: int = 2) -> ContextBundle:
+    def load_function(self, name: str, file_path: str = "", depth: int = 2) -> ContextBundle:
         """Load context for a function — its callers and callees."""
         target = ContextNode(type="Function", name=name, file_path=file_path)
         nodes: list[ContextNode] = []
@@ -139,7 +139,7 @@ class ContextLoader:
         return ContextBundle(target=target, nodes=nodes, edges=edges,
                              metadata={"depth": depth, "query": "function_context"})
 
-    def load_class(self, name: str, file_path: str) -> ContextBundle:
+    def load_class(self, name: str, file_path: str = "") -> ContextBundle:
         """Load context for a class — its methods, parent classes, and subclasses."""
         target = ContextNode(type="Class", name=name, file_path=file_path)
         nodes: list[ContextNode] = []
