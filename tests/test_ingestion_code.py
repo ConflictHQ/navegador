@@ -30,6 +30,11 @@ class TestLanguageMap:
         assert LANGUAGE_MAP[".js"] == "javascript"
         assert LANGUAGE_MAP[".jsx"] == "javascript"
 
+    def test_go_rust_java_extensions(self):
+        assert LANGUAGE_MAP[".go"] == "go"
+        assert LANGUAGE_MAP[".rs"] == "rust"
+        assert LANGUAGE_MAP[".java"] == "java"
+
     def test_no_entry_for_unknown(self):
         assert ".rb" not in LANGUAGE_MAP
         assert ".php" not in LANGUAGE_MAP
@@ -258,25 +263,62 @@ class TestGetParser:
         with pytest.raises(ValueError, match="Unsupported language"):
             ingester._get_parser("ruby")
 
-    def test_creates_python_parser(self):
+    def test_creates_python_parser_via_lazy_import(self):
         store = _make_store()
         ingester = RepoIngester(store)
         mock_py_parser = MagicMock()
         mock_py_class = MagicMock(return_value=mock_py_parser)
+        with patch.dict("sys.modules", {
+            "navegador.ingestion.python": MagicMock(PythonParser=mock_py_class)
+        }):
+            result = ingester._get_parser("python")
+        assert result is mock_py_parser
+        mock_py_class.assert_called_once_with()
 
-        with patch("navegador.ingestion.parser.PythonParser", mock_py_class, create=True):
-            with patch.dict("sys.modules", {
-                "navegador.ingestion.python": MagicMock(PythonParser=mock_py_class)
-            }):
-                # Just verify caching works by pre-populating
-                ingester._parsers["python"] = mock_py_parser
-                result = ingester._get_parser("python")
-                assert result is mock_py_parser
-
-    def test_creates_typescript_parser(self):
+    def test_creates_typescript_parser_via_lazy_import(self):
         store = _make_store()
         ingester = RepoIngester(store)
         mock_ts_parser = MagicMock()
-        ingester._parsers["typescript"] = mock_ts_parser
-        result = ingester._get_parser("typescript")
+        mock_ts_class = MagicMock(return_value=mock_ts_parser)
+        with patch.dict("sys.modules", {
+            "navegador.ingestion.typescript": MagicMock(TypeScriptParser=mock_ts_class)
+        }):
+            result = ingester._get_parser("typescript")
         assert result is mock_ts_parser
+        mock_ts_class.assert_called_once_with("typescript")
+
+    def test_creates_go_parser_via_lazy_import(self):
+        store = _make_store()
+        ingester = RepoIngester(store)
+        mock_go_parser = MagicMock()
+        mock_go_class = MagicMock(return_value=mock_go_parser)
+        with patch.dict("sys.modules", {
+            "navegador.ingestion.go": MagicMock(GoParser=mock_go_class)
+        }):
+            result = ingester._get_parser("go")
+        assert result is mock_go_parser
+        mock_go_class.assert_called_once_with()
+
+    def test_creates_rust_parser_via_lazy_import(self):
+        store = _make_store()
+        ingester = RepoIngester(store)
+        mock_rust_parser = MagicMock()
+        mock_rust_class = MagicMock(return_value=mock_rust_parser)
+        with patch.dict("sys.modules", {
+            "navegador.ingestion.rust": MagicMock(RustParser=mock_rust_class)
+        }):
+            result = ingester._get_parser("rust")
+        assert result is mock_rust_parser
+        mock_rust_class.assert_called_once_with()
+
+    def test_creates_java_parser_via_lazy_import(self):
+        store = _make_store()
+        ingester = RepoIngester(store)
+        mock_java_parser = MagicMock()
+        mock_java_class = MagicMock(return_value=mock_java_parser)
+        with patch.dict("sys.modules", {
+            "navegador.ingestion.java": MagicMock(JavaParser=mock_java_class)
+        }):
+            result = ingester._get_parser("java")
+        assert result is mock_java_parser
+        mock_java_class.assert_called_once_with()

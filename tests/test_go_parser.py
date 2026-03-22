@@ -180,7 +180,7 @@ class TestGoExtractCalls:
     def test_extracts_call(self):
         parser = _make_parser()
         store = _make_store()
-        source = b"func foo() { bar() }"
+        source = b"bar"
         callee = _text_node(b"bar")
         call_node = MockNode("call_expression")
         call_node.set_field("function", callee)
@@ -191,7 +191,8 @@ class TestGoExtractCalls:
         parser._extract_calls(fn_node, source, "main.go", "foo",
                               NodeLabel.Function, store, stats)
         assert stats["edges"] == 1
-        store.create_edge.assert_called_once()
+        edge_call = store.create_edge.call_args[0]
+        assert edge_call[4]["name"] == "bar"
 
     def test_no_calls_in_empty_body(self):
         parser = _make_parser()

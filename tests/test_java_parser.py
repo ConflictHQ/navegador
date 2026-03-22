@@ -232,7 +232,7 @@ class TestJavaExtractCalls:
     def test_extracts_method_invocation(self):
         parser = _make_parser()
         store = _make_store()
-        source = b"void foo() { bar(); }"
+        source = b"bar"
         callee = _text_node(b"bar")
         invocation = MockNode("method_invocation")
         invocation.set_field("name", callee)
@@ -242,7 +242,8 @@ class TestJavaExtractCalls:
         stats = {"functions": 0, "classes": 0, "edges": 0}
         parser._extract_calls(node, source, "Foo.java", "foo", store, stats)
         assert stats["edges"] == 1
-        store.create_edge.assert_called_once()
+        edge_call = store.create_edge.call_args[0]
+        assert edge_call[4]["name"] == "bar"
 
     def test_no_calls_in_empty_body(self):
         parser = _make_parser()

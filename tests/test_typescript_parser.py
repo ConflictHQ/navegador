@@ -291,7 +291,7 @@ class TestTsExtractCalls:
     def test_extracts_call(self):
         parser = _make_parser()
         store = _make_store()
-        source = b"function foo() { bar() }"
+        source = b"bar"
         callee = _text_node(b"bar")
         call_node = MockNode("call_expression")
         call_node.set_field("function", callee)
@@ -301,6 +301,8 @@ class TestTsExtractCalls:
         parser._extract_calls(fn_node, source, "app.ts", "foo",
                               NodeLabel.Function, store, stats)
         assert stats["edges"] == 1
+        edge_call = store.create_edge.call_args[0]
+        assert edge_call[4]["name"] == "bar"
 
     def test_no_calls_in_empty_body(self):
         parser = _make_parser()

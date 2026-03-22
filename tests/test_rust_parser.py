@@ -225,7 +225,7 @@ class TestRustExtractCalls:
     def test_extracts_call(self):
         parser = _make_parser()
         store = _make_store()
-        source = b"fn foo() { bar() }"
+        source = b"bar"
         callee = _text_node(b"bar")
         call_node = MockNode("call_expression")
         call_node.set_field("function", callee)
@@ -236,6 +236,8 @@ class TestRustExtractCalls:
         parser._extract_calls(fn_node, source, "lib.rs", "foo",
                               NodeLabel.Function, store, stats)
         assert stats["edges"] == 1
+        edge_call = store.create_edge.call_args[0]
+        assert edge_call[4]["name"] == "bar"
 
     def test_handles_method_call_syntax(self):
         parser = _make_parser()
