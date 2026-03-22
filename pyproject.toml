@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "AST + knowledge graph context engine for AI coding agents"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
     { name = "CONFLICT LLC" },
 ]
@@ -18,10 +18,9 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -29,6 +28,7 @@ classifiers = [
 dependencies = [
     # Graph database
     "FalkorDB>=1.5.0",       # graph query client
+    "falkordblite>=0.8.0",   # embedded SQLite-backed storage (zero-infra local)
     # AST parsing — multi-language via tree-sitter grammars
     "tree-sitter>=0.24.0",
     "tree-sitter-python>=0.23.0",
@@ -44,10 +44,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sqlite = [
-    # Embedded SQLite backend via falkordblite (requires Python 3.12+)
-    "falkordblite>=0.8.0",
-]
 redis = [
     # Use Redis-backed FalkorDB in production
     "redis>=5.0.0",
@@ -83,13 +79,13 @@ include = ["navegador*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 
