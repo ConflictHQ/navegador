@@ -417,6 +417,80 @@ def stats(db: str, as_json: bool):
     console.print(edge_table)
 
 
+# ── PLANOPTICON ingestion ──────────────────────────────────────────────────────
+
+@main.group()
+def planopticon():
+    """Ingest planopticon output (meetings, videos, docs) into the knowledge graph."""
+
+
+@planopticon.command("ingest")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--type", "input_type",
+              type=click.Choice(["auto", "manifest", "kg", "interchange", "batch"]),
+              default="auto", show_default=True,
+              help="Input format. auto detects from filename.")
+@click.option("--source", default="", help="Source label for provenance (e.g. 'Q4 planning').")
+@click.option("--json", "as_json", is_flag=True)
+@DB_OPTION
+def planopticon_ingest(path: str, input_type: str, source: str, as_json: bool, db: str):
+    """Load a planopticon output directory or file into the knowledge graph.
+
+    PATH can be:
+      - A manifest.json file
+      - A knowledge_graph.json file
+      - An interchange.json file
+      - A batch manifest JSON
+      - A planopticon output directory (auto-detects manifest.json inside)
+    """
+    from pathlib import Path as P
+
+    from navegador.ingestion import PlanopticonIngester
+
+    p = P(path)
+    # Resolve directory → manifest.json
+    if p.is_dir():
+        candidates = ["manifest.json", "results/knowledge_graph.json", "interchange.json"]
+        for c in candidates:
+            if (p / c).exists():
+                p = p / c
+                break
+        else:
+            raise click.UsageError(f"No recognised planopticon file found in {path}")
+
+    # Auto-detect type from filename
+    if input_type == "auto":
+        name = p.name.lower()
+        if "manifest" in name:
+            input_type = "manifest"
+        elif "interchange" in name:
+            input_type = "interchange"
+        elif "batch" in name:
+            input_type = "batch"
+        else:
+            input_type = "kg"
+
+    ing = PlanopticonIngester(_get_store(db), source_tag=source)
+
+    dispatch = {
+        "manifest":    ing.ingest_manifest,
+        "kg":          ing.ingest_kg,
+        "interchange": ing.ingest_interchange,
+        "batch":       ing.ingest_batch,
+    }
+    stats = dispatch[input_type](p)
+
+    if as_json:
+        click.echo(json.dumps(stats, indent=2))
+    else:
+        table = Table(title=f"Planopticon import ({input_type})")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Count", justify="right", style="green")
+        for k, v in stats.items():
+            table.add_row(k.capitalize(), str(v))
+        console.print(table)
+
+
 # ── MCP ───────────────────────────────────────────────────────────────────────
 
 @main.command()
