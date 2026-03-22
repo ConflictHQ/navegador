@@ -32,7 +32,7 @@ class TestLanguageMap:
 
     def test_no_entry_for_unknown(self):
         assert ".rb" not in LANGUAGE_MAP
-        assert ".go" not in LANGUAGE_MAP
+        assert ".php" not in LANGUAGE_MAP
 
 
 # ── ingest() ─────────────────────────────────────────────────────────────────

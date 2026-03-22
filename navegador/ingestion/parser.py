@@ -1,6 +1,14 @@
 """
 RepoIngester — walks a repository, parses source files with tree-sitter,
 and writes nodes + edges into the GraphStore.
+
+Supported languages (all via tree-sitter):
+  Python      .py
+  TypeScript  .ts .tsx
+  JavaScript  .js .jsx
+  Go          .go
+  Rust        .rs
+  Java        .java
 """
 
 import logging
@@ -13,11 +21,14 @@ logger = logging.getLogger(__name__)
 
 # File extensions → language key
 LANGUAGE_MAP: dict[str, str] = {
-    ".py": "python",
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".js": "javascript",
-    ".jsx": "javascript",
+    ".py":   "python",
+    ".ts":   "typescript",
+    ".tsx":  "typescript",
+    ".js":   "javascript",
+    ".jsx":  "javascript",
+    ".go":   "go",
+    ".rs":   "rust",
+    ".java": "java",
 }
 
 
@@ -83,7 +94,11 @@ class RepoIngester:
 
     def _iter_source_files(self, repo_path: Path):
         skip_dirs = {
-            ".git", ".venv", "venv", "node_modules", "__pycache__", "dist", "build", ".next"
+            ".git", ".venv", "venv", "node_modules", "__pycache__",
+            "dist", "build", ".next",
+            "target",       # Rust / Java (Maven/Gradle)
+            "vendor",       # Go modules cache
+            ".gradle",      # Gradle cache
         }
         for path in repo_path.rglob("*"):
             if path.is_file() and path.suffix in LANGUAGE_MAP:
@@ -98,6 +113,15 @@ class RepoIngester:
             elif language in ("typescript", "javascript"):
                 from navegador.ingestion.typescript import TypeScriptParser
                 self._parsers[language] = TypeScriptParser(language)
+            elif language == "go":
+                from navegador.ingestion.go import GoParser
+                self._parsers[language] = GoParser()
+            elif language == "rust":
+                from navegador.ingestion.rust import RustParser
+                self._parsers[language] = RustParser()
+            elif language == "java":
+                from navegador.ingestion.java import JavaParser
+                self._parsers[language] = JavaParser()
             else:
                 raise ValueError(f"Unsupported language: {language}")
         return self._parsers[language]

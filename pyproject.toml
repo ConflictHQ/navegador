@@ -12,7 +12,7 @@ requires-python = ">=3.12"
 authors = [
     { name = "CONFLICT LLC" },
 ]
-keywords = ["ast", "knowledge-graph", "code-analysis", "ai-agents", "mcp", "context-management", "falkordb"]
+keywords = ["ast", "knowledge-graph", "code-analysis", "ai-agents", "mcp", "context-management", "falkordb", "go", "rust", "java", "typescript"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -33,6 +33,10 @@ dependencies = [
     "tree-sitter>=0.24.0",
     "tree-sitter-python>=0.23.0",
     "tree-sitter-typescript>=0.23.0",
+    "tree-sitter-javascript>=0.23.0",
+    "tree-sitter-go>=0.23.0",
+    "tree-sitter-rust>=0.23.0",
+    "tree-sitter-java>=0.23.0",
     # CLI
     "click>=8.1.0",
     "rich>=13.0.0",
