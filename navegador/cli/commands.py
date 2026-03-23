@@ -1999,3 +1999,279 @@ def workspace_ingest(repos: tuple, mode: str, db: str, clear: bool, as_json: boo
                     f"{repo_stats.get('files', 0)} files, "
                     f"{repo_stats.get('nodes', 0)} nodes"
                 )
+
+
+# ── Intelligence: semantic search ─────────────────────────────────────────────
+
+
+@main.command("semantic-search")
+@click.argument("query")
+@DB_OPTION
+@click.option("--limit", default=10, show_default=True, help="Maximum results to return.")
+@click.option(
+    "--index",
+    "do_index",
+    is_flag=True,
+    help="(Re-)build the embedding index before searching.",
+)
+@click.option(
+    "--provider",
+    "llm_provider",
+    default="",
+    help="LLM provider to use (anthropic, openai, ollama). Auto-detected if omitted.",
+)
+@click.option("--model", "llm_model", default="", help="LLM model name.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+def semantic_search(
+    query: str,
+    db: str,
+    limit: int,
+    do_index: bool,
+    llm_provider: str,
+    llm_model: str,
+    as_json: bool,
+):
+    """Semantic similarity search using embeddings.
+
+    Embeds QUERY and returns the most similar symbols from the graph.
+    Use --index to (re-)build the embedding index before searching.
+
+    \b
+    Examples:
+      navegador semantic-search "validates JWT tokens"
+      navegador semantic-search "database connection" --index --provider openai
+    """
+    from navegador.intelligence.search import SemanticSearch
+    from navegador.llm import auto_provider, get_provider
+
+    store = _get_store(db)
+    provider = (
+        get_provider(llm_provider, model=llm_model) if llm_provider else auto_provider(model=llm_model)
+    )
+    ss = SemanticSearch(store, provider)
+
+    if do_index:
+        n = ss.index()
+        if not as_json:
+            console.print(f"[green]Indexed[/green] {n} nodes.")
+
+    results = ss.search(query, limit=limit)
+
+    if as_json:
+        click.echo(json.dumps(results, indent=2))
+        return
+
+    if not results:
+        console.print("[yellow]No results found.  Try --index to build the index first.[/yellow]")
+        return
+
+    table = Table(title=f"Semantic search: {query!r}")
+    table.add_column("Score", style="cyan", justify="right")
+    table.add_column("Type", style="yellow")
+    table.add_column("Name", style="bold")
+    table.add_column("File", style="dim")
+    for r in results:
+        table.add_row(
+            f"{r['score']:.3f}",
+            r.get("type", ""),
+            r.get("name", ""),
+            r.get("file_path", ""),
+        )
+    console.print(table)
+
+
+# ── Intelligence: community detection ─────────────────────────────────────────
+
+
+@main.command("communities")
+@DB_OPTION
+@click.option("--min-size", default=2, show_default=True, help="Minimum community size.")
+@click.option("--store-labels", is_flag=True, help="Write community labels back onto nodes.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+def communities(db: str, min_size: int, store_labels: bool, as_json: bool):
+    """Detect communities in the graph via label propagation.
+
+    \b
+    Examples:
+      navegador communities
+      navegador communities --min-size 3 --store-labels
+    """
+    from navegador.intelligence.community import CommunityDetector
+
+    store = _get_store(db)
+    detector = CommunityDetector(store)
+    detected = detector.detect(min_size=min_size)
+
+    if store_labels:
+        n = detector.store_communities()
+        if not as_json:
+            console.print(f"[green]Community labels written to[/green] {n} nodes.")
+
+    if as_json:
+        click.echo(
+            json.dumps(
+                [
+                    {
+                        "name": c.name,
+                        "members": c.members,
+                        "size": c.size,
+                        "density": c.density,
+                    }
+                    for c in detected
+                ],
+                indent=2,
+            )
+        )
+        return
+
+    if not detected:
+        console.print("[yellow]No communities found (graph may be empty).[/yellow]")
+        return
+
+    table = Table(title=f"Communities (min_size={min_size})")
+    table.add_column("Community", style="cyan")
+    table.add_column("Size", justify="right", style="green")
+    table.add_column("Density", justify="right", style="yellow")
+    table.add_column("Members (preview)", style="dim")
+    for c in detected:
+        preview = ", ".join(c.members[:5])
+        if c.size > 5:
+            preview += f" …+{c.size - 5}"
+        table.add_row(c.name, str(c.size), f"{c.density:.3f}", preview)
+    console.print(table)
+
+
+# ── Intelligence: natural language query ──────────────────────────────────────
+
+
+@main.command("ask")
+@click.argument("question")
+@DB_OPTION
+@click.option(
+    "--provider",
+    "llm_provider",
+    default="",
+    help="LLM provider (anthropic, openai, ollama). Auto-detected if omitted.",
+)
+@click.option("--model", "llm_model", default="", help="LLM model name.")
+def ask(question: str, db: str, llm_provider: str, llm_model: str):
+    """Ask a natural-language question about the codebase.
+
+    Converts the question to Cypher, executes it, and returns a
+    human-readable answer.
+
+    \b
+    Examples:
+      navegador ask "Which functions call authenticate_user?"
+      navegador ask "What concepts are in the auth domain?"
+    """
+    from navegador.intelligence.nlp import NLPEngine
+    from navegador.llm import auto_provider, get_provider
+
+    store = _get_store(db)
+    provider = (
+        get_provider(llm_provider, model=llm_model) if llm_provider else auto_provider(model=llm_model)
+    )
+    engine = NLPEngine(store, provider)
+
+    with console.status("[bold]Thinking...[/bold]"):
+        answer = engine.natural_query(question)
+
+    console.print(answer)
+
+
+# ── Intelligence: generate docs ───────────────────────────────────────────────
+
+
+@main.command("generate-docs")
+@click.argument("name")
+@DB_OPTION
+@click.option(
+    "--provider",
+    "llm_provider",
+    default="",
+    help="LLM provider (anthropic, openai, ollama). Auto-detected if omitted.",
+)
+@click.option("--model", "llm_model", default="", help="LLM model name.")
+@click.option("--file", "file_path", default="", help="Narrow to a specific file.")
+def generate_docs_cmd(
+    name: str, db: str, llm_provider: str, llm_model: str, file_path: str
+):
+    """Generate LLM-powered documentation for a named symbol.
+
+    \b
+    Examples:
+      navegador generate-docs authenticate_user
+      navegador generate-docs GraphStore --file navegador/graph/store.py
+    """
+    from navegador.intelligence.nlp import NLPEngine
+    from navegador.llm import auto_provider, get_provider
+
+    store = _get_store(db)
+    provider = (
+        get_provider(llm_provider, model=llm_model) if llm_provider else auto_provider(model=llm_model)
+    )
+    engine = NLPEngine(store, provider)
+
+    with console.status("[bold]Generating docs...[/bold]"):
+        docs = engine.generate_docs(name, file_path=file_path)
+
+    console.print(docs)
+
+
+# ── Intelligence: docs (template + LLM) ──────────────────────────────────────
+
+
+@main.command("docs")
+@click.argument("target")
+@DB_OPTION
+@click.option("--project", is_flag=True, help="Generate full project documentation.")
+@click.option(
+    "--provider",
+    "llm_provider",
+    default="",
+    help="LLM provider (anthropic, openai, ollama). Template mode if omitted.",
+)
+@click.option("--model", "llm_model", default="", help="LLM model name.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON (wraps markdown in a dict).")
+def docs(
+    target: str, db: str, project: bool, llm_provider: str, llm_model: str, as_json: bool
+):
+    """Generate markdown documentation from the graph.
+
+    TARGET can be a file path or a module name (dotted or partial).
+    Use --project to generate full project docs instead.
+
+    \b
+    Examples:
+      navegador docs navegador/graph/store.py
+      navegador docs navegador.graph
+      navegador docs . --project
+      navegador docs . --project --provider openai
+    """
+    from navegador.intelligence.docgen import DocGenerator
+
+    store = _get_store(db)
+
+    provider = None
+    if llm_provider:
+        from navegador.llm import get_provider
+
+        provider = get_provider(llm_provider, model=llm_model)
+
+    gen = DocGenerator(store, provider=provider)
+
+    if project:
+        with console.status("[bold]Generating project docs...[/bold]"):
+            output = gen.generate_project_docs()
+    elif "/" in target or target.endswith(".py"):
+        with console.status(f"[bold]Generating docs for file[/bold] {target}..."):
+            output = gen.generate_file_docs(target)
+    else:
+        with console.status(f"[bold]Generating docs for module[/bold] {target}..."):
+            output = gen.generate_module_docs(target)
+
+    if as_json:
+        click.echo(json.dumps({"docs": output}, indent=2))
+    else:
+        console.print(output)
