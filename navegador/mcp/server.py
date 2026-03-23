@@ -12,12 +12,15 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def create_mcp_server(store_factory):
+def create_mcp_server(store_factory, read_only: bool = False):
     """
     Build and return an MCP server instance wired to a GraphStore factory.
 
     Args:
         store_factory: Callable[[], GraphStore] — called lazily on first request.
+        read_only: When True, the ingest_repo tool is disabled and all
+                   query_graph queries are validated for write operations and
+                   injection patterns.  Complexity checks apply to all modes.
     """
     try:
         from mcp.server import Server  # type: ignore[import]
@@ -26,6 +29,7 @@ def create_mcp_server(store_factory):
         raise ImportError("Install mcp: pip install mcp") from e
 
     from navegador.context import ContextLoader
+    from navegador.mcp.security import check_complexity, validate_cypher
 
     server = Server("navegador")
     _store: Any = None
@@ -190,6 +194,11 @@ def create_mcp_server(store_factory):
         loader = _get_loader()
 
         if name == "ingest_repo":
+            if read_only:
+                return [TextContent(
+                    type="text",
+                    text="Error: ingest_repo is disabled in read-only mode.",
+                )]
             from navegador.ingestion import RepoIngester
 
             ingester = RepoIngester(loader.store)
@@ -224,7 +233,17 @@ def create_mcp_server(store_factory):
             return [TextContent(type="text", text="\n".join(lines) or "No results.")]
 
         elif name == "query_graph":
-            result = loader.store.query(arguments["cypher"])
+            cypher = arguments["cypher"]
+            if read_only:
+                try:
+                    validate_cypher(cypher)
+                except Exception as exc:
+                    return [TextContent(type="text", text=f"Error: {exc}")]
+            try:
+                check_complexity(cypher)
+            except Exception as exc:
+                return [TextContent(type="text", text=f"Error: {exc}")]
+            result = loader.store.query(cypher)
             rows = result.result_set or []
             text = json.dumps(rows, default=str, indent=2)
             return [TextContent(type="text", text=text)]

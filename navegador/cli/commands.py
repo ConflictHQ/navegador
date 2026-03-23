@@ -134,13 +134,18 @@ def init(path: str, redis_url: str, llm_provider: str, llm_model: str, cluster: 
 @click.option("--watch", is_flag=True, help="Watch for changes and re-ingest incrementally.")
 @click.option("--interval", default=2.0, show_default=True, help="Watch poll interval (seconds).")
 @click.option("--json", "as_json", is_flag=True, help="Output stats as JSON.")
+@click.option(
+    "--redact",
+    is_flag=True,
+    help="Scan each file for sensitive content and redact before storing in graph nodes.",
+)
 def ingest(repo_path: str, db: str, clear: bool, incremental: bool, watch: bool,
-           interval: float, as_json: bool):
+           interval: float, as_json: bool, redact: bool):
     """Ingest a repository's code into the graph (AST + call graph)."""
     from navegador.ingestion import RepoIngester
 
     store = _get_store(db)
-    ingester = RepoIngester(store)
+    ingester = RepoIngester(store, redact=redact)
 
     if watch:
         console.print(f"[bold]Watching[/bold] {repo_path} (interval={interval}s, Ctrl-C to stop)")
@@ -884,19 +889,77 @@ def ci_check(db: str):
     sys.exit(reporter.exit_code())
 
 
+# ── Shell completions ─────────────────────────────────────────────────────────
+
+
+@main.command()
+@click.argument("shell", type=click.Choice(["bash", "zsh", "fish"]))
+@click.option(
+    "--install",
+    "do_install",
+    is_flag=True,
+    help="Append the completion line to the default shell rc file.",
+)
+@click.option(
+    "--rc-path",
+    default="",
+    help="Override the rc file path used by --install.",
+)
+def completions(shell: str, do_install: bool, rc_path: str):
+    """Print (or install) tab-completion for bash, zsh, or fish.
+
+    \b
+    Print the line to add manually:
+      navegador completions bash
+      navegador completions zsh
+      navegador completions fish
+
+    \b
+    Auto-append to your rc file:
+      navegador completions bash --install
+      navegador completions zsh --install
+      navegador completions fish --install
+    """
+    from navegador.completions import get_eval_line, get_rc_path, install_completion
+
+    if do_install:
+        target = install_completion(shell, rc_path=rc_path or None)
+        console.print(f"[green]Completion installed[/green] → {target}")
+        console.print(f"Restart your shell or run: [bold]source {target}[/bold]")
+    else:
+        line = get_eval_line(shell)
+        rc = rc_path or get_rc_path(shell)
+        console.print(f"Add the following line to [bold]{rc}[/bold]:\n")
+        click.echo(f"  {line}")
+        console.print(
+            f"\nOr run: [bold]navegador completions {shell} --install[/bold]"
+        )
+
+
 # ── MCP ───────────────────────────────────────────────────────────────────────
 
 
 @main.command()
 @DB_OPTION
-def mcp(db: str):
+@click.option(
+    "--read-only",
+    "read_only",
+    is_flag=True,
+    default=False,
+    help=(
+        "Start in read-only mode: disables ingest_repo and blocks write "
+        "operations in query_graph."
+    ),
+)
+def mcp(db: str, read_only: bool):
     """Start the MCP server for AI agent integration (stdio)."""
     from mcp.server.stdio import stdio_server  # type: ignore[import]
 
     from navegador.mcp import create_mcp_server
 
-    server = create_mcp_server(lambda: _get_store(db))
-    console.print("[green]Navegador MCP server running[/green] (stdio)")
+    server = create_mcp_server(lambda: _get_store(db), read_only=read_only)
+    mode = "read-only" if read_only else "read-write"
+    console.print(f"[green]Navegador MCP server running[/green] (stdio, {mode})")
 
     async def _run():
         async with stdio_server() as (read_stream, write_stream):

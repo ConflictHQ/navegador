@@ -318,15 +318,15 @@ class TestCallToolQueryGraph:
     @pytest.mark.asyncio
     async def test_executes_cypher_and_returns_json(self):
         self.fx.store.query.return_value = MagicMock(result_set=[["node_a"], ["node_b"]])
-        result = await self.fx.call_tool_fn("query_graph", {"cypher": "MATCH (n) RETURN n"})
-        self.fx.store.query.assert_called_once_with("MATCH (n) RETURN n")
+        result = await self.fx.call_tool_fn("query_graph", {"cypher": "MATCH (n) RETURN n LIMIT 10"})
+        self.fx.store.query.assert_called_once_with("MATCH (n) RETURN n LIMIT 10")
         data = json.loads(result[0]["text"])
         assert len(data) == 2
 
     @pytest.mark.asyncio
     async def test_empty_result_set(self):
         self.fx.store.query.return_value = MagicMock(result_set=[])
-        result = await self.fx.call_tool_fn("query_graph", {"cypher": "MATCH (n) RETURN n"})
+        result = await self.fx.call_tool_fn("query_graph", {"cypher": "MATCH (n) RETURN n LIMIT 10"})
         data = json.loads(result[0]["text"])
         assert data == []
 
