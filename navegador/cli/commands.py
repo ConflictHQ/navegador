@@ -756,6 +756,58 @@ def migrate(db: str, check: bool):
         console.print(f"[green]Schema is up to date[/green] (v{current})")
 
 
+# ── Graph explorer ────────────────────────────────────────────────────────────
+
+
+@main.command()
+@DB_OPTION
+@click.option("--host", default="127.0.0.1", show_default=True, help="Bind address.")
+@click.option("--port", default=8080, show_default=True, help="TCP port.")
+@click.option(
+    "--no-browser",
+    is_flag=True,
+    default=False,
+    help="Don't open a browser tab automatically.",
+)
+def explore(db: str, host: str, port: int, no_browser: bool):
+    """Launch the browser-based graph explorer.
+
+    Starts an HTTP server and opens the interactive force-directed
+    visualisation in your default browser.
+
+    \b
+    Examples:
+      navegador explore
+      navegador explore --port 9000
+      navegador explore --no-browser
+    """
+    import time
+    import webbrowser
+
+    from navegador.explorer import ExplorerServer
+
+    store = _get_store(db)
+    server = ExplorerServer(store, host=host, port=port)
+    server.start()
+    url = server.url
+
+    console.print(f"[green]Graph explorer running[/green] → {url}")
+    console.print("Press [bold]Ctrl-C[/bold] to stop.")
+
+    if not no_browser:
+        # Small delay so the server is accepting connections before the browser hits it
+        time.sleep(0.3)
+        webbrowser.open(url)
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopping explorer…[/yellow]")
+    finally:
+        server.stop()
+
+
 # ── Enrichment ───────────────────────────────────────────────────────────────
 
 
