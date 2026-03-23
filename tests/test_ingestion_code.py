@@ -322,3 +322,39 @@ class TestGetParser:
             result = ingester._get_parser("java")
         assert result is mock_java_parser
         mock_java_class.assert_called_once_with()
+
+
+# ── defensive continue branch ─────────────────────────────────────────────────
+
+class TestIngesterContinueBranch:
+    def test_skips_file_when_language_not_in_map(self):
+        """
+        _iter_source_files filters to LANGUAGE_MAP extensions, but ingest()
+        has a defensive `if not language: continue`.  Test it by patching
+        _iter_source_files to yield a .rb path.
+        """
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        store = _make_store()
+        ingester = RepoIngester(store)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rb_file = Path(tmpdir) / "script.rb"
+            rb_file.write_text("puts 'hello'")
+            with patch.object(ingester, "_iter_source_files", return_value=[rb_file]):
+                stats = ingester.ingest(tmpdir)
+        assert stats["files"] == 0
+
+
+# ── LanguageParser base class ─────────────────────────────────────────────────
+
+class TestLanguageParserBase:
+    def test_parse_file_raises_not_implemented(self):
+        from pathlib import Path
+
+        import pytest
+
+        from navegador.ingestion.parser import LanguageParser
+        lp = LanguageParser()
+        with pytest.raises(NotImplementedError):
+            lp.parse_file(Path("/tmp/x.py"), Path("/tmp"), MagicMock())

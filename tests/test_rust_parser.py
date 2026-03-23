@@ -255,3 +255,122 @@ class TestRustExtractCalls:
         # "Repo::save" → callee = "save"
         edge_call = store.create_edge.call_args[0]
         assert edge_call[4]["name"] == "save"
+
+
+# ── _get_rust_language happy path ─────────────────────────────────────────────
+
+class TestRustGetLanguageHappyPath:
+    def test_returns_language_object(self):
+        from navegador.ingestion.rust import _get_rust_language
+        mock_tsrust = MagicMock()
+        mock_ts = MagicMock()
+        with patch.dict("sys.modules", {
+            "tree_sitter_rust": mock_tsrust,
+            "tree_sitter": mock_ts,
+        }):
+            result = _get_rust_language()
+        assert result is mock_ts.Language.return_value
+
+
+# ── RustParser init and parse_file ───────────────────────────────────────────
+
+class TestRustParserInit:
+    def test_init_creates_parser(self):
+        mock_tsrust = MagicMock()
+        mock_ts = MagicMock()
+        with patch.dict("sys.modules", {
+            "tree_sitter_rust": mock_tsrust,
+            "tree_sitter": mock_ts,
+        }):
+            from navegador.ingestion.rust import RustParser
+            parser = RustParser()
+        assert parser._parser is mock_ts.Parser.return_value
+
+    def test_parse_file_creates_file_node(self):
+        import tempfile
+        from pathlib import Path
+
+        from navegador.graph.schema import NodeLabel
+        parser = _make_parser()
+        store = _make_store()
+        mock_tree = MagicMock()
+        mock_tree.root_node.type = "source_file"
+        mock_tree.root_node.children = []
+        parser._parser.parse.return_value = mock_tree
+        with tempfile.NamedTemporaryFile(suffix=".rs", delete=False) as f:
+            f.write(b"fn main() {}\n")
+            fpath = Path(f.name)
+        try:
+            parser.parse_file(fpath, fpath.parent, store)
+            store.create_node.assert_called_once()
+            assert store.create_node.call_args[0][0] == NodeLabel.File
+            assert store.create_node.call_args[0][1]["language"] == "rust"
+        finally:
+            fpath.unlink()
+
+
+# ── _walk dispatch ────────────────────────────────────────────────────────────
+
+class TestRustWalkDispatch:
+    def test_walk_handles_function_item(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"foo"
+        name = _text_node(b"foo")
+        fn_node = MockNode("function_item", start_point=(0, 0), end_point=(0, 10))
+        fn_node.set_field("name", name)
+        root = MockNode("source_file", children=[fn_node])
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._walk(root, source, "lib.rs", store, stats, impl_type=None)
+        assert stats["functions"] == 1
+
+    def test_walk_handles_impl_item(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"MyStruct"
+        type_node = MockNode("type_identifier", start_byte=0, end_byte=8)
+        body = MockNode("declaration_list", children=[])
+        impl_node = MockNode("impl_item")
+        impl_node.set_field("type", type_node)
+        impl_node.set_field("body", body)
+        root = MockNode("source_file", children=[impl_node])
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._walk(root, source, "lib.rs", store, stats, impl_type=None)
+        # No functions in body, just verifies dispatch doesn't crash
+        assert stats["functions"] == 0
+
+    def test_walk_handles_struct_item(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"Foo"
+        name = _text_node(b"Foo", "type_identifier")
+        node = MockNode("struct_item", start_point=(0, 0), end_point=(0, 10))
+        node.set_field("name", name)
+        _parent = MockNode("source_file", children=[node])
+        root = MockNode("source_file", children=[node])
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._walk(root, source, "lib.rs", store, stats, impl_type=None)
+        assert stats["classes"] == 1
+
+    def test_walk_handles_use_declaration(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"use std::io;"
+        use_node = MockNode("use_declaration", start_byte=0, end_byte=12)
+        root = MockNode("source_file", children=[use_node])
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._walk(root, source, "lib.rs", store, stats, impl_type=None)
+        assert stats["edges"] == 1
+
+    def test_walk_recurses_into_unknown_nodes(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"foo"
+        name = _text_node(b"foo")
+        fn_node = MockNode("function_item", start_point=(0, 0), end_point=(0, 10))
+        fn_node.set_field("name", name)
+        wrapper = MockNode("mod_item", children=[fn_node])
+        root = MockNode("source_file", children=[wrapper])
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._walk(root, source, "lib.rs", store, stats, impl_type=None)
+        assert stats["functions"] == 1

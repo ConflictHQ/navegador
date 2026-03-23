@@ -174,3 +174,27 @@ class TestKnowledgeIngesterAnnotate:
         k = KnowledgeIngester(store)
         with pytest.raises(ValueError):
             k.annotate_code("foo", "InvalidLabel", concept="Bar")
+
+
+class TestKnowledgeIngesterRuleWithDomain:
+    def test_add_rule_with_domain_creates_link(self):
+        from navegador.graph.schema import EdgeType
+        store = _mock_store()
+        k = KnowledgeIngester(store)
+        k.add_rule("Tokens must expire", domain="auth", severity="critical")
+        # create_node called twice: once for rule, once for domain
+        assert store.create_node.call_count == 2
+        # BELONGS_TO edge created
+        edge_calls = [c[0][2] for c in store.create_edge.call_args_list]
+        assert EdgeType.BELONGS_TO in edge_calls
+
+
+class TestKnowledgeIngesterDecisionWithDomain:
+    def test_add_decision_with_domain_creates_link(self):
+        from navegador.graph.schema import EdgeType
+        store = _mock_store()
+        k = KnowledgeIngester(store)
+        k.add_decision("Use PostgreSQL", domain="infra", status="accepted")
+        assert store.create_node.call_count == 2
+        edge_calls = [c[0][2] for c in store.create_edge.call_args_list]
+        assert EdgeType.BELONGS_TO in edge_calls

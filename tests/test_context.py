@@ -282,3 +282,185 @@ class TestContextLoaderConcept:
         bundle = loader.load_domain("auth")
         assert bundle.target.name == "auth"
         assert bundle.target.type == "Domain"
+
+
+# ── to_markdown with status and node docstrings ───────────────────────────────
+
+class TestContextBundleMarkdownBranches:
+    def test_markdown_includes_status(self):
+        target = ContextNode(type="Concept", name="JWT", status="active")
+        b = ContextBundle(target=target)
+        md = b.to_markdown()
+        assert "active" in md
+
+    def test_markdown_node_with_docstring(self):
+        target = ContextNode(type="File", name="app.py", file_path="app.py")
+        node = ContextNode(type="Function", name="foo", file_path="app.py",
+                           docstring="Does something useful.")
+        b = ContextBundle(target=target, nodes=[node])
+        md = b.to_markdown()
+        assert "Does something useful." in md
+
+    def test_markdown_node_with_description_fallback(self):
+        target = ContextNode(type="Concept", name="JWT")
+        node = ContextNode(type="Rule", name="must_expire",
+                           description="Tokens must expire.")
+        b = ContextBundle(target=target, nodes=[node])
+        md = b.to_markdown()
+        assert "Tokens must expire." in md
+
+
+# ── load_function with callers and decorators ─────────────────────────────────
+
+class TestContextLoaderFunctionBranches:
+    def test_load_function_with_callers(self):
+        call_count = [0]
+
+        def side_effect(query, params):
+            result = MagicMock()
+            call_count[0] += 1
+            if call_count[0] == 1:
+                result.result_set = []  # callees empty
+            elif call_count[0] == 2:
+                result.result_set = [["Function", "caller_fn", "src/x.py", 5]]
+            else:
+                result.result_set = []  # decorators empty
+            return result
+
+        store = MagicMock()
+        store.query.side_effect = side_effect
+        loader = ContextLoader(store)
+        bundle = loader.load_function("get_user", file_path="src/auth.py")
+        assert any(n.name == "caller_fn" for n in bundle.nodes)
+        assert any(e["type"] == "CALLS" for e in bundle.edges)
+
+    def test_load_function_with_decorators(self):
+        call_count = [0]
+
+        def side_effect(query, params):
+            result = MagicMock()
+            call_count[0] += 1
+            if call_count[0] <= 2:
+                result.result_set = []  # callees and callers empty
+            else:
+                result.result_set = [["login_required", "src/decorators.py"]]
+            return result
+
+        store = MagicMock()
+        store.query.side_effect = side_effect
+        loader = ContextLoader(store)
+        bundle = loader.load_function("my_view", file_path="src/views.py")
+        assert any(n.name == "login_required" for n in bundle.nodes)
+
+
+# ── load_class with subs and refs ─────────────────────────────────────────────
+
+class TestContextLoaderClassBranches:
+    def test_load_class_with_subclasses(self):
+        call_count = [0]
+
+        def side_effect(query, params):
+            result = MagicMock()
+            call_count[0] += 1
+            if call_count[0] == 1:
+                result.result_set = []  # parents empty
+            elif call_count[0] == 2:
+                result.result_set = [["ChildService", "src/child.py"]]
+            else:
+                result.result_set = []  # refs empty
+            return result
+
+        store = MagicMock()
+        store.query.side_effect = side_effect
+        loader = ContextLoader(store)
+        bundle = loader.load_class("BaseService")
+        assert any(n.name == "ChildService" for n in bundle.nodes)
+        assert any(e["type"] == "INHERITS" for e in bundle.edges)
+
+    def test_load_class_with_references(self):
+        call_count = [0]
+
+        def side_effect(query, params):
+            result = MagicMock()
+            call_count[0] += 1
+            if call_count[0] <= 2:
+                result.result_set = []  # parents and subs empty
+            else:
+                result.result_set = [["Function", "use_service", "src/x.py", 10]]
+            return result
+
+        store = MagicMock()
+        store.query.side_effect = side_effect
+        loader = ContextLoader(store)
+        bundle = loader.load_class("AuthService")
+        assert any(n.name == "use_service" for n in bundle.nodes)
+
+
+# ── explain with data ─────────────────────────────────────────────────────────
+
+class TestContextLoaderExplainBranches:
+    def test_explain_with_outbound_data(self):
+        call_count = [0]
+
+        def side_effect(query, params):
+            result = MagicMock()
+            call_count[0] += 1
+            if call_count[0] == 1:
+                result.result_set = [["CALLS", "Function", "helper", "src/utils.py"]]
+            else:
+                result.result_set = []
+            return result
+
+        store = MagicMock()
+        store.query.side_effect = side_effect
+        loader = ContextLoader(store)
+        bundle = loader.explain("main_fn")
+        assert any(n.name == "helper" for n in bundle.nodes)
+        assert any(e["type"] == "CALLS" for e in bundle.edges)
+
+    def test_explain_with_inbound_data(self):
+        call_count = [0]
+
+        def side_effect(query, params):
+            result = MagicMock()
+            call_count[0] += 1
+            if call_count[0] == 1:
+                result.result_set = []
+            else:
+                result.result_set = [["CALLS", "Function", "caller", "src/main.py"]]
+            return result
+
+        store = MagicMock()
+        store.query.side_effect = side_effect
+        loader = ContextLoader(store)
+        bundle = loader.explain("helper_fn")
+        assert any(n.name == "caller" for n in bundle.nodes)
+
+
+# ── load_concept with populated related nodes ─────────────────────────────────
+
+class TestContextLoaderConceptBranches:
+    def test_load_concept_with_related_concepts_rules_wiki_implements(self):
+        rows = [[
+            "JWT",
+            "Stateless token auth",
+            "active",
+            "auth",
+            ["OAuth"],           # related concepts
+            ["Tokens must expire"],  # rules
+            ["Auth Overview"],   # wiki pages
+            ["validate_token"],  # implementing code
+        ]]
+        store = _mock_store(rows)
+        loader = ContextLoader(store)
+        bundle = loader.load_concept("JWT")
+        names = {n.name for n in bundle.nodes}
+        assert "OAuth" in names
+        assert "Tokens must expire" in names
+        assert "Auth Overview" in names
+        assert "validate_token" in names
+        types = {e["type"] for e in bundle.edges}
+        assert "RELATED_TO" in types
+        assert "GOVERNS" in types
+        assert "DOCUMENTS" in types
+        assert "IMPLEMENTS" in types

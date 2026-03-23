@@ -313,3 +313,241 @@ class TestTsExtractCalls:
         parser._extract_calls(fn_node, b"", "app.ts", "foo",
                               NodeLabel.Function, store, stats)
         assert stats["edges"] == 0
+
+
+# ── _get_ts_language happy paths ──────────────────────────────────────────────
+
+class TestTsGetLanguageHappyPath:
+    def test_returns_typescript_language(self):
+        from navegador.ingestion.typescript import _get_ts_language
+        mock_tsts = MagicMock()
+        mock_ts = MagicMock()
+        with patch.dict("sys.modules", {
+            "tree_sitter_typescript": mock_tsts,
+            "tree_sitter": mock_ts,
+        }):
+            result = _get_ts_language("typescript")
+        assert result is mock_ts.Language.return_value
+
+    def test_returns_javascript_language(self):
+        from navegador.ingestion.typescript import _get_ts_language
+        mock_tsjs = MagicMock()
+        mock_ts = MagicMock()
+        with patch.dict("sys.modules", {
+            "tree_sitter_javascript": mock_tsjs,
+            "tree_sitter": mock_ts,
+        }):
+            result = _get_ts_language("javascript")
+        assert result is mock_ts.Language.return_value
+
+
+# ── TypeScriptParser init and parse_file ─────────────────────────────────────
+
+class TestTsParserInit:
+    def test_init_creates_parser(self):
+        mock_tsts = MagicMock()
+        mock_ts = MagicMock()
+        with patch.dict("sys.modules", {
+            "tree_sitter_typescript": mock_tsts,
+            "tree_sitter": mock_ts,
+        }):
+            from navegador.ingestion.typescript import TypeScriptParser
+            parser = TypeScriptParser("typescript")
+        assert parser._parser is mock_ts.Parser.return_value
+        assert parser._language == "typescript"
+
+    def test_parse_file_creates_file_node(self):
+        import tempfile
+        from pathlib import Path
+
+        from navegador.graph.schema import NodeLabel
+        parser = _make_parser("typescript")
+        store = _make_store()
+        mock_tree = MagicMock()
+        mock_tree.root_node.type = "program"
+        mock_tree.root_node.children = []
+        parser._parser.parse.return_value = mock_tree
+        with tempfile.NamedTemporaryFile(suffix=".ts", delete=False) as f:
+            f.write(b"const x = 1;\n")
+            fpath = Path(f.name)
+        try:
+            parser.parse_file(fpath, fpath.parent, store)
+            store.create_node.assert_called_once()
+            assert store.create_node.call_args[0][0] == NodeLabel.File
+            assert store.create_node.call_args[0][1]["language"] == "typescript"
+        finally:
+            fpath.unlink()
+
+
+# ── _walk dispatch ────────────────────────────────────────────────────────────
+
+class TestTsWalkDispatch:
+    def test_walk_handles_class_declaration(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"MyClass"
+        name = MockNode("type_identifier", start_byte=0, end_byte=7)
+        body = MockNode("class_body", children=[])
+        node = MockNode("class_declaration", start_point=(0, 0), end_point=(0, 20))
+        node.children = [name, body]
+        root = MockNode("program", children=[node])
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._walk(root, source, "app.ts", store, stats, class_name=None)
+        assert stats["classes"] == 1
+
+    def test_walk_handles_interface_declaration(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"MyInterface"
+        name = MockNode("type_identifier", start_byte=0, end_byte=11)
+        node = MockNode("interface_declaration", start_point=(0, 0), end_point=(0, 25))
+        node.children = [name]
+        root = MockNode("program", children=[node])
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._walk(root, source, "app.ts", store, stats, class_name=None)
+        assert stats["classes"] == 1
+
+    def test_walk_handles_function_declaration(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"myFn"
+        name = MockNode("identifier", start_byte=0, end_byte=4)
+        node = MockNode("function_declaration", start_point=(0, 0), end_point=(0, 20))
+        node.children = [name]
+        root = MockNode("program", children=[node])
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._walk(root, source, "app.ts", store, stats, class_name=None)
+        assert stats["functions"] == 1
+
+    def test_walk_handles_lexical_declaration(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"arrowFn"
+        name_node = MockNode("identifier", start_byte=0, end_byte=7)
+        arrow = MockNode("arrow_function")
+        declarator = MockNode("variable_declarator")
+        declarator.set_field("name", name_node)
+        declarator.set_field("value", arrow)
+        node = MockNode("lexical_declaration", start_point=(0, 0), end_point=(0, 30))
+        node.children = [declarator]
+        root = MockNode("program", children=[node])
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._walk(root, source, "app.ts", store, stats, class_name=None)
+        assert stats["functions"] == 1
+
+    def test_walk_handles_import_statement(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b'"./utils"'
+        str_node = MockNode("string", start_byte=0, end_byte=9)
+        node = MockNode("import_statement", start_point=(0, 0), end_point=(0, 25))
+        node.children = [str_node]
+        root = MockNode("program", children=[node])
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._walk(root, source, "app.ts", store, stats, class_name=None)
+        assert stats["edges"] == 1
+
+    def test_walk_handles_export_statement(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"myFn"
+        name = MockNode("identifier", start_byte=0, end_byte=4)
+        fn_decl = MockNode("function_declaration", start_point=(0, 0), end_point=(0, 20))
+        fn_decl.children = [name]
+        export_node = MockNode("export_statement")
+        export_node.children = [MockNode("export"), fn_decl]
+        root = MockNode("program", children=[export_node])
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._walk(root, source, "app.ts", store, stats, class_name=None)
+        assert stats["functions"] == 1
+
+    def test_walk_recurses_into_children(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"myFn"
+        name = MockNode("identifier", start_byte=0, end_byte=4)
+        fn = MockNode("function_declaration", start_point=(0, 0), end_point=(0, 20))
+        fn.children = [name]
+        wrapper = MockNode("unknown_node", children=[fn])
+        root = MockNode("program", children=[wrapper])
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._walk(root, source, "app.ts", store, stats, class_name=None)
+        assert stats["functions"] == 1
+
+
+# ── _handle_function keyword name with no follow-up identifier ────────────────
+
+class TestTsHandleFunctionKeywordThenNone:
+    def test_skips_when_keyword_name_has_no_second_identifier(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"constructor"
+        # Node whose only identifier child is the keyword "constructor"
+        keyword_name = MockNode("property_identifier", start_byte=0, end_byte=11)
+        node = MockNode("method_definition", start_point=(0, 0), end_point=(0, 20))
+        node.children = [keyword_name]
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._handle_function(node, source, "app.ts", store, stats, class_name=None)
+        # "constructor" is a keyword — looks for next identifier, finds none → skips
+        assert stats["functions"] == 0
+
+
+class TestTsHandleFunctionKeywordWithSuccessor:
+    def test_uses_second_identifier_when_first_is_keyword(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"get foo"
+        keyword_name = MockNode("identifier", start_byte=0, end_byte=3)
+        real_name = MockNode("identifier", start_byte=4, end_byte=7)
+        node = MockNode("method_definition", start_point=(0, 0), end_point=(0, 10))
+        node.children = [keyword_name, real_name]
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._handle_function(node, source, "app.ts", store, stats, class_name=None)
+        # "get" is a keyword → picks next identifier "foo"
+        assert stats["functions"] == 1
+        props = store.create_node.call_args[0][1]
+        assert props["name"] == "foo"
+
+
+class TestTsWalkMethodDefinition:
+    def test_walk_dispatches_method_definition(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"get foo"
+        keyword_name = MockNode("identifier", start_byte=0, end_byte=3)
+        real_name = MockNode("identifier", start_byte=4, end_byte=7)
+        node = MockNode("method_definition", start_point=(0, 0), end_point=(0, 10))
+        node.children = [keyword_name, real_name]
+        root = MockNode("program", children=[node])
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._walk(root, source, "app.ts", store, stats, class_name=None)
+        assert stats["functions"] == 1
+
+
+class TestTsHandleLexicalContinueBranches:
+    def test_skips_non_variable_declarator_children(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"const"
+        # Child is not a variable_declarator
+        other_child = MockNode("identifier", start_byte=0, end_byte=5)
+        node = MockNode("lexical_declaration", start_point=(0, 0), end_point=(0, 10))
+        node.children = [other_child]
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._handle_lexical(node, source, "app.ts", store, stats)
+        assert stats["functions"] == 0
+
+    def test_skips_declarator_without_value_node(self):
+        parser = _make_parser()
+        store = _make_store()
+        source = b"x"
+        name_node = MockNode("identifier", start_byte=0, end_byte=1)
+        # declarator with a name but no value field
+        declarator = MockNode("variable_declarator")
+        declarator._fields["name"] = name_node
+        # no "value" field set
+        node = MockNode("lexical_declaration", start_point=(0, 0), end_point=(0, 5))
+        node.children = [declarator]
+        stats = {"functions": 0, "classes": 0, "edges": 0}
+        parser._handle_lexical(node, source, "app.ts", store, stats)
+        assert stats["functions"] == 0
