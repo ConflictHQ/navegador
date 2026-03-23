@@ -187,6 +187,30 @@ def create_mcp_server(store_factory, read_only: bool = False):
                     "required": ["query"],
                 },
             ),
+            Tool(
+                name="blast_radius",
+                description=(
+                    "Impact analysis: find all nodes and files affected by changing a symbol. "
+                    "Traverses CALLS, REFERENCES, INHERITS, IMPLEMENTS, ANNOTATES edges outward."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Symbol name to analyse."},
+                        "file_path": {
+                            "type": "string",
+                            "description": "Narrow to a specific file (optional).",
+                            "default": "",
+                        },
+                        "depth": {
+                            "type": "integer",
+                            "description": "Maximum traversal depth.",
+                            "default": 3,
+                        },
+                    },
+                    "required": ["name"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -283,6 +307,16 @@ def create_mcp_server(store_factory, read_only: bool = False):
                 for r in results
             ]
             return [TextContent(type="text", text="\n".join(lines))]
+
+        elif name == "blast_radius":
+            from navegador.analysis.impact import ImpactAnalyzer
+
+            result = ImpactAnalyzer(loader.store).blast_radius(
+                arguments["name"],
+                file_path=arguments.get("file_path", ""),
+                depth=arguments.get("depth", 3),
+            )
+            return [TextContent(type="text", text=json.dumps(result.to_dict(), indent=2))]
 
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
