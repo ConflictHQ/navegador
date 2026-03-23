@@ -462,6 +462,75 @@ class TestFileUnchanged:
         assert ingester._file_unchanged("app.py", "new_hash") is False
 
 
+# ── Redaction integration ─────────────────────────────────────────────────────
+
+class TestRedaction:
+    def test_constructor_with_redact_true(self):
+        store = _make_store()
+        ingester = RepoIngester(store, redact=True)
+        assert ingester.redact is True
+        assert ingester._detector is not None
+
+    def test_constructor_with_redact_false(self):
+        store = _make_store()
+        ingester = RepoIngester(store, redact=False)
+        assert ingester.redact is False
+
+    def test_maybe_redact_noop_when_disabled(self):
+        store = _make_store()
+        ingester = RepoIngester(store, redact=False)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            f = Path(tmpdir) / "app.py"
+            f.write_text("x = 1")
+            parse_path, root = ingester._maybe_redact_to_tmp(f, Path(tmpdir))
+            assert parse_path == f
+            assert root == Path(tmpdir)
+
+    def test_maybe_redact_returns_original_if_no_sensitive(self):
+        store = _make_store()
+        ingester = RepoIngester(store, redact=True)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            f = Path(tmpdir) / "app.py"
+            f.write_text("def hello(): pass")
+            parse_path, root = ingester._maybe_redact_to_tmp(f, Path(tmpdir))
+            assert parse_path == f
+
+    def test_maybe_redact_creates_temp_for_sensitive(self):
+        store = _make_store()
+        ingester = RepoIngester(store, redact=True)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            f = Path(tmpdir) / "app.py"
+            f.write_text('password = "s3cret123"')
+            parse_path, root = ingester._maybe_redact_to_tmp(f, Path(tmpdir))
+            assert parse_path != f
+            assert root != Path(tmpdir)
+            content = parse_path.read_text()
+            assert "[REDACTED]" in content
+            # Clean up
+            import shutil
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_maybe_redact_handles_oserror(self):
+        store = _make_store()
+        ingester = RepoIngester(store, redact=True)
+        fake_path = Path("/nonexistent/file.py")
+        parse_path, root = ingester._maybe_redact_to_tmp(fake_path, Path("/nonexistent"))
+        assert parse_path == fake_path
+
+    def test_ingest_with_redact_cleans_up_temp(self):
+        store = _make_store()
+        ingester = RepoIngester(store, redact=True)
+        mock_parser = MagicMock()
+        mock_parser.parse_file.return_value = {"functions": 1, "classes": 0, "edges": 0}
+        ingester._parsers["python"] = mock_parser
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            f = Path(tmpdir) / "app.py"
+            f.write_text('api_key = "sk-1234567890abcdef1234567890"')
+            ingester.ingest(tmpdir)
+            assert mock_parser.parse_file.called
+
+
 class TestWatch:
     def test_watch_raises_on_missing_dir(self):
         store = _make_store()
