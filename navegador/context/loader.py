@@ -110,17 +110,18 @@ class ContextLoader:
         result = self.store.query(queries.FILE_CONTENTS, {"path": file_path})
         target = ContextNode(type="File", name=Path(file_path).name, file_path=file_path)
         nodes = []
-        for row in (result.result_set or []):
-            nodes.append(ContextNode(
-                type=row[0] or "Unknown",
-                name=row[1] or "",
-                file_path=file_path,
-                line_start=row[2],
-                docstring=row[3],
-                signature=row[4],
-            ))
-        return ContextBundle(target=target, nodes=nodes,
-                             metadata={"query": "file_contents"})
+        for row in result.result_set or []:
+            nodes.append(
+                ContextNode(
+                    type=row[0] or "Unknown",
+                    name=row[1] or "",
+                    file_path=file_path,
+                    line_start=row[2],
+                    docstring=row[3],
+                    signature=row[4],
+                )
+            )
+        return ContextBundle(target=target, nodes=nodes, metadata={"query": "file_contents"})
 
     # ── Code: function ────────────────────────────────────────────────────────
 
@@ -133,24 +134,28 @@ class ContextLoader:
         params = {"name": name, "file_path": file_path, "depth": depth}
 
         callees = self.store.query(queries.CALLEES, params)
-        for row in (callees.result_set or []):
+        for row in callees.result_set or []:
             nodes.append(ContextNode(type=row[0], name=row[1], file_path=row[2], line_start=row[3]))
             edges.append({"from": name, "type": "CALLS", "to": row[1]})
 
         callers = self.store.query(queries.CALLERS, params)
-        for row in (callers.result_set or []):
+        for row in callers.result_set or []:
             nodes.append(ContextNode(type=row[0], name=row[1], file_path=row[2], line_start=row[3]))
             edges.append({"from": row[1], "type": "CALLS", "to": name})
 
         decorators = self.store.query(
             queries.DECORATORS_FOR, {"name": name, "file_path": file_path}
         )
-        for row in (decorators.result_set or []):
+        for row in decorators.result_set or []:
             nodes.append(ContextNode(type="Decorator", name=row[0], file_path=row[1]))
             edges.append({"from": row[0], "type": "DECORATES", "to": name})
 
-        return ContextBundle(target=target, nodes=nodes, edges=edges,
-                             metadata={"depth": depth, "query": "function_context"})
+        return ContextBundle(
+            target=target,
+            nodes=nodes,
+            edges=edges,
+            metadata={"depth": depth, "query": "function_context"},
+        )
 
     # ── Code: class ───────────────────────────────────────────────────────────
 
@@ -161,22 +166,23 @@ class ContextLoader:
         edges: list[dict[str, str]] = []
 
         parents = self.store.query(queries.CLASS_HIERARCHY, {"name": name})
-        for row in (parents.result_set or []):
+        for row in parents.result_set or []:
             nodes.append(ContextNode(type="Class", name=row[0], file_path=row[1]))
             edges.append({"from": name, "type": "INHERITS", "to": row[0]})
 
         subs = self.store.query(queries.SUBCLASSES, {"name": name})
-        for row in (subs.result_set or []):
+        for row in subs.result_set or []:
             nodes.append(ContextNode(type="Class", name=row[0], file_path=row[1]))
             edges.append({"from": row[0], "type": "INHERITS", "to": name})
 
         refs = self.store.query(queries.REFERENCES_TO, {"name": name, "file_path": ""})
-        for row in (refs.result_set or []):
+        for row in refs.result_set or []:
             nodes.append(ContextNode(type=row[0], name=row[1], file_path=row[2], line_start=row[3]))
             edges.append({"from": row[1], "type": "REFERENCES", "to": name})
 
-        return ContextBundle(target=target, nodes=nodes, edges=edges,
-                             metadata={"query": "class_context"})
+        return ContextBundle(
+            target=target, nodes=nodes, edges=edges, metadata={"query": "class_context"}
+        )
 
     # ── Universal: explain ────────────────────────────────────────────────────
 
@@ -191,19 +197,18 @@ class ContextLoader:
         edges: list[dict[str, str]] = []
 
         outbound = self.store.query(queries.OUTBOUND, params)
-        for row in (outbound.result_set or []):
+        for row in outbound.result_set or []:
             rel, ntype, nname, npath = row[0], row[1], row[2], row[3]
             nodes.append(ContextNode(type=ntype, name=nname, file_path=npath))
             edges.append({"from": name, "type": rel, "to": nname})
 
         inbound = self.store.query(queries.INBOUND, params)
-        for row in (inbound.result_set or []):
+        for row in inbound.result_set or []:
             rel, ntype, nname, npath = row[0], row[1], row[2], row[3]
             nodes.append(ContextNode(type=ntype, name=nname, file_path=npath))
             edges.append({"from": nname, "type": rel, "to": name})
 
-        return ContextBundle(target=target, nodes=nodes, edges=edges,
-                             metadata={"query": "explain"})
+        return ContextBundle(target=target, nodes=nodes, edges=edges, metadata={"query": "explain"})
 
     # ── Knowledge: concept ────────────────────────────────────────────────────
 
@@ -213,32 +218,38 @@ class ContextLoader:
         rows = result.result_set or []
 
         if not rows:
-            return ContextBundle(target=ContextNode(type="Concept", name=name),
-                                 metadata={"query": "concept_context", "found": False})
+            return ContextBundle(
+                target=ContextNode(type="Concept", name=name),
+                metadata={"query": "concept_context", "found": False},
+            )
 
         row = rows[0]
         target = ContextNode(
-            type="Concept", name=row[0],
-            description=row[1], status=row[2], domain=row[3],
+            type="Concept",
+            name=row[0],
+            description=row[1],
+            status=row[2],
+            domain=row[3],
         )
         nodes: list[ContextNode] = []
         edges: list[dict[str, str]] = []
 
-        for cname in (row[4] or []):
+        for cname in row[4] or []:
             nodes.append(ContextNode(type="Concept", name=cname))
             edges.append({"from": name, "type": "RELATED_TO", "to": cname})
-        for rname in (row[5] or []):
+        for rname in row[5] or []:
             nodes.append(ContextNode(type="Rule", name=rname))
             edges.append({"from": rname, "type": "GOVERNS", "to": name})
-        for wname in (row[6] or []):
+        for wname in row[6] or []:
             nodes.append(ContextNode(type="WikiPage", name=wname))
             edges.append({"from": wname, "type": "DOCUMENTS", "to": name})
-        for iname in (row[7] or []):
+        for iname in row[7] or []:
             nodes.append(ContextNode(type="Code", name=iname))
             edges.append({"from": iname, "type": "IMPLEMENTS", "to": name})
 
-        return ContextBundle(target=target, nodes=nodes, edges=edges,
-                             metadata={"query": "concept_context"})
+        return ContextBundle(
+            target=target, nodes=nodes, edges=edges, metadata={"query": "concept_context"}
+        )
 
     # ── Knowledge: domain ─────────────────────────────────────────────────────
 
@@ -247,12 +258,10 @@ class ContextLoader:
         result = self.store.query(queries.DOMAIN_CONTENTS, {"domain": domain})
         target = ContextNode(type="Domain", name=domain)
         nodes = [
-            ContextNode(type=row[0], name=row[1], file_path=row[2],
-                        description=row[3] or None)
+            ContextNode(type=row[0], name=row[1], file_path=row[2], description=row[3] or None)
             for row in (result.result_set or [])
         ]
-        return ContextBundle(target=target, nodes=nodes,
-                             metadata={"query": "domain_contents"})
+        return ContextBundle(target=target, nodes=nodes, metadata={"query": "domain_contents"})
 
     # ── Search ────────────────────────────────────────────────────────────────
 
@@ -260,8 +269,9 @@ class ContextLoader:
         """Search code symbols by name."""
         result = self.store.query(queries.SYMBOL_SEARCH, {"query": query, "limit": limit})
         return [
-            ContextNode(type=row[0], name=row[1], file_path=row[2],
-                        line_start=row[3], docstring=row[4])
+            ContextNode(
+                type=row[0], name=row[1], file_path=row[2], line_start=row[3], docstring=row[4]
+            )
             for row in (result.result_set or [])
         ]
 
@@ -269,8 +279,9 @@ class ContextLoader:
         """Search everything — code symbols, concepts, rules, decisions, wiki."""
         result = self.store.query(queries.GLOBAL_SEARCH, {"query": query, "limit": limit})
         return [
-            ContextNode(type=row[0], name=row[1], file_path=row[2],
-                        docstring=row[3], line_start=row[4])
+            ContextNode(
+                type=row[0], name=row[1], file_path=row[2], docstring=row[3], line_start=row[4]
+            )
             for row in (result.result_set or [])
         ]
 
@@ -278,15 +289,15 @@ class ContextLoader:
         """Search functions/classes whose docstring contains the query."""
         result = self.store.query(queries.DOCSTRING_SEARCH, {"query": query, "limit": limit})
         return [
-            ContextNode(type=row[0], name=row[1], file_path=row[2],
-                        line_start=row[3], docstring=row[4])
+            ContextNode(
+                type=row[0], name=row[1], file_path=row[2], line_start=row[3], docstring=row[4]
+            )
             for row in (result.result_set or [])
         ]
 
     def decorated_by(self, decorator_name: str) -> list[ContextNode]:
         """All functions/methods carrying a given decorator."""
-        result = self.store.query(queries.DECORATED_BY,
-                                  {"decorator_name": decorator_name})
+        result = self.store.query(queries.DECORATED_BY, {"decorator_name": decorator_name})
         return [
             ContextNode(type=row[0], name=row[1], file_path=row[2], line_start=row[3])
             for row in (result.result_set or [])

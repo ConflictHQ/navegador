@@ -7,6 +7,7 @@ Run:
 
 import json
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +28,8 @@ def create_mcp_server(store_factory):
     from navegador.context import ContextLoader
 
     server = Server("navegador")
-    _store = None
-    _loader = None
+    _store: Any = None
+    _loader: ContextLoader | None = None
 
     def _get_loader() -> ContextLoader:
         nonlocal _store, _loader
@@ -67,7 +68,9 @@ def create_mcp_server(store_factory):
                             "description": "Relative file path within the ingested repo.",
                         },
                         "format": {
-                            "type": "string", "enum": ["json", "markdown"], "default": "markdown",
+                            "type": "string",
+                            "enum": ["json", "markdown"],
+                            "default": "markdown",
                         },
                     },
                     "required": ["file_path"],
@@ -83,7 +86,9 @@ def create_mcp_server(store_factory):
                         "file_path": {"type": "string", "description": "Relative file path."},
                         "depth": {"type": "integer", "default": 2},
                         "format": {
-                            "type": "string", "enum": ["json", "markdown"], "default": "markdown",
+                            "type": "string",
+                            "enum": ["json", "markdown"],
+                            "default": "markdown",
                         },
                     },
                     "required": ["name", "file_path"],
@@ -98,7 +103,9 @@ def create_mcp_server(store_factory):
                         "name": {"type": "string", "description": "Class name."},
                         "file_path": {"type": "string", "description": "Relative file path."},
                         "format": {
-                            "type": "string", "enum": ["json", "markdown"], "default": "markdown",
+                            "type": "string",
+                            "enum": ["json", "markdown"],
+                            "default": "markdown",
                         },
                     },
                     "required": ["name", "file_path"],
@@ -140,6 +147,7 @@ def create_mcp_server(store_factory):
 
         if name == "ingest_repo":
             from navegador.ingestion import RepoIngester
+
             ingester = RepoIngester(loader.store)
             stats = ingester.ingest(arguments["path"], clear=arguments.get("clear", False))
             return [TextContent(type="text", text=json.dumps(stats, indent=2))]

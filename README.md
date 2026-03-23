@@ -103,7 +103,9 @@ store = GraphStore.redis("redis://localhost:6379")
 |----------|--------|
 | Python | ✅ |
 | TypeScript / JavaScript | ✅ |
-| Go, Rust, Java | Planned |
+| Go | ✅ |
+| Rust | ✅ |
+| Java | ✅ |
 
 ---
 

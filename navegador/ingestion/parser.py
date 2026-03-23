@@ -21,13 +21,13 @@ logger = logging.getLogger(__name__)
 
 # File extensions → language key
 LANGUAGE_MAP: dict[str, str] = {
-    ".py":   "python",
-    ".ts":   "typescript",
-    ".tsx":  "typescript",
-    ".js":   "javascript",
-    ".jsx":  "javascript",
-    ".go":   "go",
-    ".rs":   "rust",
+    ".py": "python",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".go": "go",
+    ".rs": "rust",
     ".java": "java",
 }
 
@@ -65,10 +65,13 @@ class RepoIngester:
             self.store.clear()
 
         # Create repository node
-        self.store.create_node(NodeLabel.Repository, {
-            "name": repo_path.name,
-            "path": str(repo_path),
-        })
+        self.store.create_node(
+            NodeLabel.Repository,
+            {
+                "name": repo_path.name,
+                "path": str(repo_path),
+            },
+        )
 
         stats: dict[str, int] = {"files": 0, "functions": 0, "classes": 0, "edges": 0}
 
@@ -88,17 +91,26 @@ class RepoIngester:
 
         logger.info(
             "Ingested %s: %d files, %d functions, %d classes",
-            repo_path.name, stats["files"], stats["functions"], stats["classes"],
+            repo_path.name,
+            stats["files"],
+            stats["functions"],
+            stats["classes"],
         )
         return stats
 
     def _iter_source_files(self, repo_path: Path):
         skip_dirs = {
-            ".git", ".venv", "venv", "node_modules", "__pycache__",
-            "dist", "build", ".next",
-            "target",       # Rust / Java (Maven/Gradle)
-            "vendor",       # Go modules cache
-            ".gradle",      # Gradle cache
+            ".git",
+            ".venv",
+            "venv",
+            "node_modules",
+            "__pycache__",
+            "dist",
+            "build",
+            ".next",
+            "target",  # Rust / Java (Maven/Gradle)
+            "vendor",  # Go modules cache
+            ".gradle",  # Gradle cache
         }
         for path in repo_path.rglob("*"):
             if path.is_file() and path.suffix in LANGUAGE_MAP:
@@ -109,18 +121,23 @@ class RepoIngester:
         if language not in self._parsers:
             if language == "python":
                 from navegador.ingestion.python import PythonParser
+
                 self._parsers[language] = PythonParser()
             elif language in ("typescript", "javascript"):
                 from navegador.ingestion.typescript import TypeScriptParser
+
                 self._parsers[language] = TypeScriptParser(language)
             elif language == "go":
                 from navegador.ingestion.go import GoParser
+
                 self._parsers[language] = GoParser()
             elif language == "rust":
                 from navegador.ingestion.rust import RustParser
+
                 self._parsers[language] = RustParser()
             elif language == "java":
                 from navegador.ingestion.java import JavaParser
+
                 self._parsers[language] = JavaParser()
             else:
                 raise ValueError(f"Unsupported language: {language}")

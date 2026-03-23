@@ -105,7 +105,8 @@ class WikiIngester:
         logger.info("Cloning wiki %s → %s", wiki_url, clone_dir)
         result = subprocess.run(
             ["git", "clone", "--depth=1", wiki_url, str(clone_dir)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if result.returncode != 0:
             # Wiki may not exist yet — treat as empty
@@ -139,6 +140,7 @@ class WikiIngester:
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     import base64
                     import json as _json
+
                     data = _json.loads(resp.read().decode())
                     content = base64.b64decode(data["content"]).decode("utf-8", errors="replace")  # noqa: E501
                     page_name = Path(path).stem.replace("-", " ").replace("_", " ")
@@ -162,12 +164,15 @@ class WikiIngester:
         url: str,
     ) -> int:
         """Store one wiki page and return the number of DOCUMENTS links created."""
-        self.store.create_node(NodeLabel.WikiPage, {
-            "name": name,
-            "url": url,
-            "source": source,
-            "content": content[:4000],  # cap stored content
-        })
+        self.store.create_node(
+            NodeLabel.WikiPage,
+            {
+                "name": name,
+                "url": url,
+                "source": source,
+                "content": content[:4000],  # cap stored content
+            },
+        )
 
         links = 0
         for term in _extract_terms(content):
@@ -197,9 +202,11 @@ class WikiIngester:
         try:
             label = NodeLabel(label_str)
             self.store.create_edge(
-                NodeLabel.WikiPage, {"name": wiki_page_name},
+                NodeLabel.WikiPage,
+                {"name": wiki_page_name},
                 EdgeType.DOCUMENTS,
-                label, {"name": node_name},
+                label,
+                {"name": node_name},
             )
             return 1
         except ValueError:

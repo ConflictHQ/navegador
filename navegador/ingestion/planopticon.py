@@ -47,49 +47,49 @@ logger = logging.getLogger(__name__)
 # ── Relationship type mapping ─────────────────────────────────────────────────
 
 EDGE_MAP: dict[str, EdgeType] = {
-    "related_to":   EdgeType.RELATED_TO,
-    "uses":         EdgeType.DEPENDS_ON,
-    "depends_on":   EdgeType.DEPENDS_ON,
-    "built_on":     EdgeType.DEPENDS_ON,
-    "implements":   EdgeType.IMPLEMENTS,
-    "requires":     EdgeType.DEPENDS_ON,
-    "blocked_by":   EdgeType.DEPENDS_ON,
-    "has_risk":     EdgeType.RELATED_TO,
-    "addresses":    EdgeType.RELATED_TO,
+    "related_to": EdgeType.RELATED_TO,
+    "uses": EdgeType.DEPENDS_ON,
+    "depends_on": EdgeType.DEPENDS_ON,
+    "built_on": EdgeType.DEPENDS_ON,
+    "implements": EdgeType.IMPLEMENTS,
+    "requires": EdgeType.DEPENDS_ON,
+    "blocked_by": EdgeType.DEPENDS_ON,
+    "has_risk": EdgeType.RELATED_TO,
+    "addresses": EdgeType.RELATED_TO,
     "has_tradeoff": EdgeType.RELATED_TO,
-    "delivers":     EdgeType.IMPLEMENTS,
-    "parent_of":    EdgeType.CONTAINS,
-    "assigned_to":  EdgeType.ASSIGNED_TO,
-    "owned_by":     EdgeType.ASSIGNED_TO,
-    "owns":         EdgeType.ASSIGNED_TO,
-    "employed_by":  EdgeType.ASSIGNED_TO,
-    "works_with":   EdgeType.RELATED_TO,
-    "governs":      EdgeType.GOVERNS,
-    "documents":    EdgeType.DOCUMENTS,
+    "delivers": EdgeType.IMPLEMENTS,
+    "parent_of": EdgeType.CONTAINS,
+    "assigned_to": EdgeType.ASSIGNED_TO,
+    "owned_by": EdgeType.ASSIGNED_TO,
+    "owns": EdgeType.ASSIGNED_TO,
+    "employed_by": EdgeType.ASSIGNED_TO,
+    "works_with": EdgeType.RELATED_TO,
+    "governs": EdgeType.GOVERNS,
+    "documents": EdgeType.DOCUMENTS,
 }
 
 # planopticon node type → navegador NodeLabel
 NODE_TYPE_MAP: dict[str, NodeLabel] = {
-    "concept":      NodeLabel.Concept,
-    "technology":   NodeLabel.Concept,
+    "concept": NodeLabel.Concept,
+    "technology": NodeLabel.Concept,
     "organization": NodeLabel.Concept,
-    "diagram":      NodeLabel.WikiPage,
-    "time":         NodeLabel.Concept,
-    "person":       NodeLabel.Person,
+    "diagram": NodeLabel.WikiPage,
+    "time": NodeLabel.Concept,
+    "person": NodeLabel.Person,
 }
 
 # planning_type → navegador NodeLabel
 PLANNING_TYPE_MAP: dict[str, NodeLabel] = {
-    "decision":    NodeLabel.Decision,
+    "decision": NodeLabel.Decision,
     "requirement": NodeLabel.Rule,
-    "constraint":  NodeLabel.Rule,
-    "risk":        NodeLabel.Rule,
-    "goal":        NodeLabel.Concept,
-    "assumption":  NodeLabel.Concept,
-    "feature":     NodeLabel.Concept,
-    "milestone":   NodeLabel.Concept,
-    "task":        NodeLabel.Concept,
-    "dependency":  NodeLabel.Concept,
+    "constraint": NodeLabel.Rule,
+    "risk": NodeLabel.Rule,
+    "goal": NodeLabel.Concept,
+    "assumption": NodeLabel.Concept,
+    "feature": NodeLabel.Concept,
+    "milestone": NodeLabel.Concept,
+    "task": NodeLabel.Concept,
+    "dependency": NodeLabel.Concept,
 }
 
 
@@ -146,7 +146,9 @@ class PlanopticonIngester:
 
         logger.info(
             "PlanopticonIngester (%s): nodes=%d edges=%d",
-            title, stats.get("nodes", 0), stats.get("edges", 0),
+            title,
+            stats.get("nodes", 0),
+            stats.get("edges", 0),
         )
         return stats
 
@@ -249,33 +251,44 @@ class PlanopticonIngester:
         description = descriptions[0] if descriptions else node.get("description", "")
 
         if label == NodeLabel.Person:
-            self.store.create_node(NodeLabel.Person, {
-                "name": name,
-                "email": "",
-                "role": node.get("role", ""),
-                "team": node.get("organization", ""),
-            })
+            self.store.create_node(
+                NodeLabel.Person,
+                {
+                    "name": name,
+                    "email": "",
+                    "role": node.get("role", ""),
+                    "team": node.get("organization", ""),
+                },
+            )
         elif label == NodeLabel.WikiPage:
-            self.store.create_node(NodeLabel.WikiPage, {
-                "name": name,
-                "url": node.get("source", ""),
-                "source": self.source_tag,
-                "content": description[:4000],
-            })
+            self.store.create_node(
+                NodeLabel.WikiPage,
+                {
+                    "name": name,
+                    "url": node.get("source", ""),
+                    "source": self.source_tag,
+                    "content": description[:4000],
+                },
+            )
         else:
             domain = "organization" if raw_type == "organization" else node.get("domain", "")
-            self.store.create_node(NodeLabel.Concept, {
-                "name": name,
-                "description": description,
-                "domain": domain,
-                "status": node.get("status", ""),
-            })
+            self.store.create_node(
+                NodeLabel.Concept,
+                {
+                    "name": name,
+                    "description": description,
+                    "domain": domain,
+                    "status": node.get("status", ""),
+                },
+            )
             if domain:
                 self._ensure_domain(domain)
                 self.store.create_edge(
-                    NodeLabel.Concept, {"name": name},
+                    NodeLabel.Concept,
+                    {"name": name},
                     EdgeType.BELONGS_TO,
-                    NodeLabel.Domain, {"name": domain},
+                    NodeLabel.Domain,
+                    {"name": domain},
                 )
 
         self._stats["nodes"] = self._stats.get("nodes", 0) + 1
@@ -298,35 +311,46 @@ class PlanopticonIngester:
         priority = entity.get("priority", "")
 
         if label == NodeLabel.Decision:
-            self.store.create_node(NodeLabel.Decision, {
-                "name": name,
-                "description": description,
-                "domain": domain,
-                "status": status or "accepted",
-                "rationale": entity.get("rationale", ""),
-            })
+            self.store.create_node(
+                NodeLabel.Decision,
+                {
+                    "name": name,
+                    "description": description,
+                    "domain": domain,
+                    "status": status or "accepted",
+                    "rationale": entity.get("rationale", ""),
+                },
+            )
         elif label == NodeLabel.Rule:
-            self.store.create_node(NodeLabel.Rule, {
-                "name": name,
-                "description": description,
-                "domain": domain,
-                "severity": "critical" if priority == "high" else "info",
-                "rationale": entity.get("rationale", ""),
-            })
+            self.store.create_node(
+                NodeLabel.Rule,
+                {
+                    "name": name,
+                    "description": description,
+                    "domain": domain,
+                    "severity": "critical" if priority == "high" else "info",
+                    "rationale": entity.get("rationale", ""),
+                },
+            )
         else:
-            self.store.create_node(NodeLabel.Concept, {
-                "name": name,
-                "description": description,
-                "domain": domain,
-                "status": status,
-            })
+            self.store.create_node(
+                NodeLabel.Concept,
+                {
+                    "name": name,
+                    "description": description,
+                    "domain": domain,
+                    "status": status,
+                },
+            )
 
         if domain:
             self._ensure_domain(domain)
             self.store.create_edge(
-                label, {"name": name},
+                label,
+                {"name": name},
                 EdgeType.BELONGS_TO,
-                NodeLabel.Domain, {"name": domain},
+                NodeLabel.Domain,
+                {"name": domain},
             )
 
         self._stats["nodes"] = self._stats.get("nodes", 0) + 1
@@ -342,11 +366,15 @@ class PlanopticonIngester:
         edge_type = EDGE_MAP.get(rel_type, EdgeType.RELATED_TO)
 
         # We don't know the exact label of each node — use a label-agnostic match
-        cypher = """
+        cypher = (
+            """
         MATCH (a), (b)
         WHERE a.name = $src AND b.name = $tgt
-        MERGE (a)-[r:""" + edge_type + """]->(b)
+        MERGE (a)-[r:"""
+            + edge_type
+            + """]->(b)
         """
+        )
         try:
             self.store.query(cypher, {"src": src, "tgt": tgt})
             self._stats["edges"] = self._stats.get("edges", 0) + 1
@@ -360,18 +388,23 @@ class PlanopticonIngester:
                 continue
             topic = kp.get("topic") or ""
             name = point[:120]  # use the point text as the concept name
-            self.store.create_node(NodeLabel.Concept, {
-                "name": name,
-                "description": kp.get("details", ""),
-                "domain": topic,
-                "status": "key_point",
-            })
+            self.store.create_node(
+                NodeLabel.Concept,
+                {
+                    "name": name,
+                    "description": kp.get("details", ""),
+                    "domain": topic,
+                    "status": "key_point",
+                },
+            )
             if topic:
                 self._ensure_domain(topic)
                 self.store.create_edge(
-                    NodeLabel.Concept, {"name": name},
+                    NodeLabel.Concept,
+                    {"name": name},
                     EdgeType.BELONGS_TO,
-                    NodeLabel.Domain, {"name": topic},
+                    NodeLabel.Domain,
+                    {"name": topic},
                 )
             self._stats["nodes"] = self._stats.get("nodes", 0) + 1
 
@@ -383,23 +416,34 @@ class PlanopticonIngester:
                 continue
 
             # Action → Rule (it's a commitment / obligation)
-            self.store.create_node(NodeLabel.Rule, {
-                "name": action[:120],
-                "description": item.get("context", ""),
-                "domain": source,
-                "severity": item.get("priority", "info"),
-                "rationale": f"Action item from {source}",
-            })
+            self.store.create_node(
+                NodeLabel.Rule,
+                {
+                    "name": action[:120],
+                    "description": item.get("context", ""),
+                    "domain": source,
+                    "severity": item.get("priority", "info"),
+                    "rationale": f"Action item from {source}",
+                },
+            )
             self._stats["nodes"] = self._stats.get("nodes", 0) + 1
 
             if assignee:
-                self.store.create_node(NodeLabel.Person, {
-                    "name": assignee, "email": "", "role": "", "team": "",
-                })
+                self.store.create_node(
+                    NodeLabel.Person,
+                    {
+                        "name": assignee,
+                        "email": "",
+                        "role": "",
+                        "team": "",
+                    },
+                )
                 self.store.create_edge(
-                    NodeLabel.Rule, {"name": action[:120]},
+                    NodeLabel.Rule,
+                    {"name": action[:120]},
                     EdgeType.ASSIGNED_TO,
-                    NodeLabel.Person, {"name": assignee},
+                    NodeLabel.Person,
+                    {"name": assignee},
                 )
                 self._stats["edges"] = self._stats.get("edges", 0) + 1
 
@@ -411,12 +455,15 @@ class PlanopticonIngester:
         name = f"{dtype.capitalize()} @ {ts:.0f}s" if ts is not None else f"{dtype.capitalize()}"
 
         content = mermaid or desc
-        self.store.create_node(NodeLabel.WikiPage, {
-            "name": name,
-            "url": diagram.get("image_path", ""),
-            "source": source,
-            "content": content[:4000],
-        })
+        self.store.create_node(
+            NodeLabel.WikiPage,
+            {
+                "name": name,
+                "url": diagram.get("image_path", ""),
+                "source": source,
+                "content": content[:4000],
+            },
+        )
         self._stats["nodes"] = self._stats.get("nodes", 0) + 1
 
         # Link diagram elements as concepts
@@ -424,13 +471,21 @@ class PlanopticonIngester:
             element = element.strip()
             if not element:
                 continue
-            self.store.create_node(NodeLabel.Concept, {
-                "name": element, "description": "", "domain": source, "status": "",
-            })
+            self.store.create_node(
+                NodeLabel.Concept,
+                {
+                    "name": element,
+                    "description": "",
+                    "domain": source,
+                    "status": "",
+                },
+            )
             self.store.create_edge(
-                NodeLabel.WikiPage, {"name": name},
+                NodeLabel.WikiPage,
+                {"name": name},
                 EdgeType.DOCUMENTS,
-                NodeLabel.Concept, {"name": element},
+                NodeLabel.Concept,
+                {"name": element},
             )
             self._stats["edges"] = self._stats.get("edges", 0) + 1
 
@@ -438,13 +493,16 @@ class PlanopticonIngester:
         name = (source.get("title") or source.get("source_id") or "").strip()
         if not name:
             return
-        self.store.create_node(NodeLabel.WikiPage, {
-            "name": name,
-            "url": source.get("url") or source.get("path") or "",
-            "source": source.get("source_type", ""),
-            "content": "",
-            "updated_at": source.get("ingested_at", ""),
-        })
+        self.store.create_node(
+            NodeLabel.WikiPage,
+            {
+                "name": name,
+                "url": source.get("url") or source.get("path") or "",
+                "source": source.get("source_type", ""),
+                "content": "",
+                "updated_at": source.get("ingested_at", ""),
+            },
+        )
         self._stats["nodes"] = self._stats.get("nodes", 0) + 1
 
     def _ingest_artifact(self, artifact: dict[str, Any], project_name: str) -> None:
@@ -452,12 +510,15 @@ class PlanopticonIngester:
         if not name:
             return
         content = artifact.get("content", "")
-        self.store.create_node(NodeLabel.WikiPage, {
-            "name": name,
-            "url": "",
-            "source": project_name,
-            "content": content[:4000],
-        })
+        self.store.create_node(
+            NodeLabel.WikiPage,
+            {
+                "name": name,
+                "url": "",
+                "source": project_name,
+                "content": content[:4000],
+            },
+        )
         self._stats["nodes"] = self._stats.get("nodes", 0) + 1
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -469,9 +530,11 @@ class PlanopticonIngester:
         """Create a DOCUMENTS edge from a WikiPage to this node if the page exists."""
         try:
             self.store.create_edge(
-                NodeLabel.WikiPage, {"name": source_id},
+                NodeLabel.WikiPage,
+                {"name": source_id},
                 EdgeType.DOCUMENTS,
-                label, {"name": name},
+                label,
+                {"name": name},
             )
         except Exception:
             logger.debug("Could not link %s to wiki page %s", name, source_id)

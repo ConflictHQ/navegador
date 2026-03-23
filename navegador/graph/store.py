@@ -76,10 +76,7 @@ class GraphStore:
     def create_node(self, label: str, props: dict[str, Any]) -> None:
         """Upsert a node by (label, name, file_path)."""
         prop_str = ", ".join(f"n.{k} = ${k}" for k in props)
-        cypher = (
-            f"MERGE (n:{label} {{name: $name, file_path: $file_path}}) "
-            f"SET {prop_str}"
-        )
+        cypher = f"MERGE (n:{label} {{name: $name, file_path: $file_path}}) SET {prop_str}"
         self.query(cypher, props)
 
     def create_edge(
