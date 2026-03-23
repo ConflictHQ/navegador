@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "navegador"
-version = "0.7.0"
+version = "0.7.1"
 description = "AST + knowledge graph context engine for AI coding agents"
 readme = "README.md"
 license = "MIT"
@@ -119,3 +119,6 @@ warn_unused_configs = true
 testpaths = ["tests"]
 python_files = "test_*.py"
 addopts = "--cov=navegador"
+filterwarnings = [
+    "ignore::ResourceWarning",
+]

@@ -137,54 +137,54 @@ class TestExitCodes:
 
 
 class TestJSONOutput:
-    def _emit_to_str(self, reporter, data=None, monkeypatch=None) -> dict:
+    def _emit_to_str(self, reporter, monkeypatch, data=None) -> dict:
+        _clear_ci_env(monkeypatch)
         buf = StringIO()
-        if monkeypatch:
-            _clear_ci_env(monkeypatch)
         reporter.emit(data=data, file=buf)
         return json.loads(buf.getvalue())
 
-    def test_status_success(self):
+    def test_status_success(self, monkeypatch):
         r = CICDReporter()
-        out = self._emit_to_str(r)
+        out = self._emit_to_str(r, monkeypatch)
         assert out["status"] == "success"
 
-    def test_status_error(self):
+    def test_status_error(self, monkeypatch):
         r = CICDReporter()
         r.add_error("boom")
-        out = self._emit_to_str(r)
+        out = self._emit_to_str(r, monkeypatch)
         assert out["status"] == "error"
 
-    def test_status_warning(self):
+    def test_status_warning(self, monkeypatch):
         r = CICDReporter()
         r.add_warning("careful")
-        out = self._emit_to_str(r)
+        out = self._emit_to_str(r, monkeypatch)
         assert out["status"] == "warning"
 
-    def test_errors_list_in_payload(self):
+    def test_errors_list_in_payload(self, monkeypatch):
         r = CICDReporter()
         r.add_error("err1")
         r.add_error("err2")
-        out = self._emit_to_str(r)
+        out = self._emit_to_str(r, monkeypatch)
         assert out["errors"] == ["err1", "err2"]
 
-    def test_warnings_list_in_payload(self):
+    def test_warnings_list_in_payload(self, monkeypatch):
         r = CICDReporter()
         r.add_warning("w1")
-        out = self._emit_to_str(r)
+        out = self._emit_to_str(r, monkeypatch)
         assert out["warnings"] == ["w1"]
 
-    def test_data_included_when_provided(self):
+    def test_data_included_when_provided(self, monkeypatch):
         r = CICDReporter()
-        out = self._emit_to_str(r, data={"files": 5, "functions": 20})
+        out = self._emit_to_str(r, monkeypatch, data={"files": 5, "functions": 20})
         assert out["data"] == {"files": 5, "functions": 20}
 
-    def test_data_absent_when_not_provided(self):
+    def test_data_absent_when_not_provided(self, monkeypatch):
         r = CICDReporter()
-        out = self._emit_to_str(r)
+        out = self._emit_to_str(r, monkeypatch)
         assert "data" not in out
 
-    def test_output_is_valid_json(self):
+    def test_output_is_valid_json(self, monkeypatch):
+        _clear_ci_env(monkeypatch)
         r = CICDReporter()
         r.add_error("oops")
         r.add_warning("watch out")
@@ -334,7 +334,8 @@ class TestGitHubStepSummary:
 
 
 class TestCIIngestCommand:
-    def test_success_outputs_json(self):
+    def test_success_outputs_json(self, monkeypatch):
+        _clear_ci_env(monkeypatch)
         runner = CliRunner()
         with runner.isolated_filesystem():
             Path("src").mkdir()
@@ -347,7 +348,8 @@ class TestCIIngestCommand:
                 assert payload["status"] == "success"
                 assert payload["data"]["files"] == 5
 
-    def test_warning_when_no_files_ingested(self):
+    def test_warning_when_no_files_ingested(self, monkeypatch):
+        _clear_ci_env(monkeypatch)
         runner = CliRunner()
         with runner.isolated_filesystem():
             Path("src").mkdir()
@@ -360,7 +362,8 @@ class TestCIIngestCommand:
                 assert payload["status"] == "warning"
                 assert payload["warnings"]
 
-    def test_error_on_ingest_exception(self):
+    def test_error_on_ingest_exception(self, monkeypatch):
+        _clear_ci_env(monkeypatch)
         runner = CliRunner()
         with runner.isolated_filesystem():
             Path("src").mkdir()
@@ -373,7 +376,8 @@ class TestCIIngestCommand:
                 assert payload["status"] == "error"
                 assert "DB unavailable" in payload["errors"][0]
 
-    def test_output_is_valid_json(self):
+    def test_output_is_valid_json(self, monkeypatch):
+        _clear_ci_env(monkeypatch)
         runner = CliRunner()
         with runner.isolated_filesystem():
             Path("src").mkdir()
@@ -403,7 +407,8 @@ class TestCIStatsCommand:
         store.query.side_effect = _query
         return store
 
-    def test_outputs_json_stats(self):
+    def test_outputs_json_stats(self, monkeypatch):
+        _clear_ci_env(monkeypatch)
         runner = CliRunner()
         with patch("navegador.cli.commands._get_store", return_value=self._store_with_counts()):
             result = runner.invoke(main, ["ci", "stats"])
@@ -414,7 +419,8 @@ class TestCIStatsCommand:
             assert "total_nodes" in payload["data"]
             assert "total_edges" in payload["data"]
 
-    def test_error_on_store_failure(self):
+    def test_error_on_store_failure(self, monkeypatch):
+        _clear_ci_env(monkeypatch)
         runner = CliRunner()
         with patch("navegador.cli.commands._get_store", side_effect=RuntimeError("no db")):
             result = runner.invoke(main, ["ci", "stats"])
@@ -427,7 +433,8 @@ class TestCIStatsCommand:
 
 
 class TestCICheckCommand:
-    def test_success_when_schema_current(self):
+    def test_success_when_schema_current(self, monkeypatch):
+        _clear_ci_env(monkeypatch)
         from navegador.graph.migrations import CURRENT_SCHEMA_VERSION
 
         store = MagicMock()
@@ -441,9 +448,9 @@ class TestCICheckCommand:
             assert payload["status"] == "success"
             assert payload["data"]["schema_version"] == CURRENT_SCHEMA_VERSION
 
-    def test_warning_when_migration_needed(self):
+    def test_warning_when_migration_needed(self, monkeypatch):
+        _clear_ci_env(monkeypatch)
         store = MagicMock()
-        # Return version 0 so migration is needed
         store.query.return_value = MagicMock(result_set=[[0]])
 
         runner = CliRunner()
@@ -454,7 +461,8 @@ class TestCICheckCommand:
             assert payload["status"] == "warning"
             assert payload["warnings"]
 
-    def test_error_on_store_failure(self):
+    def test_error_on_store_failure(self, monkeypatch):
+        _clear_ci_env(monkeypatch)
         runner = CliRunner()
         with patch("navegador.cli.commands._get_store", side_effect=RuntimeError("no db")):
             result = runner.invoke(main, ["ci", "check"])
@@ -462,7 +470,8 @@ class TestCICheckCommand:
             payload = json.loads(result.output)
             assert payload["status"] == "error"
 
-    def test_payload_includes_version_info(self):
+    def test_payload_includes_version_info(self, monkeypatch):
+        _clear_ci_env(monkeypatch)
         from navegador.graph.migrations import CURRENT_SCHEMA_VERSION
 
         store = MagicMock()
