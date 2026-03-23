@@ -726,6 +726,164 @@ def migrate(db: str, check: bool):
         console.print(f"[green]Schema is up to date[/green] (v{current})")
 
 
+# ── Editor integrations ───────────────────────────────────────────────────────
+
+
+@main.group()
+def editor():
+    """Generate MCP config snippets for AI coding editors."""
+
+
+@editor.command("setup")
+@click.argument("editor_name", metavar="EDITOR")
+@DB_OPTION
+@click.option(
+    "--write",
+    "do_write",
+    is_flag=True,
+    help="Write the config file to the expected path in the current directory.",
+)
+def editor_setup(editor_name: str, db: str, do_write: bool):
+    """Generate the MCP config snippet for an editor.
+
+    \b
+    EDITOR is one of: claude-code, cursor, codex, windsurf, all
+
+    \b
+    Examples:
+      navegador editor setup claude-code
+      navegador editor setup cursor --db .navegador/graph.db
+      navegador editor setup all --write
+    """
+    from navegador.editor import SUPPORTED_EDITORS, EditorIntegration
+
+    if editor_name not in SUPPORTED_EDITORS and editor_name != "all":
+        raise click.BadParameter(
+            f"Unknown editor {editor_name!r}. "
+            f"Choose from: {', '.join(SUPPORTED_EDITORS + ['all'])}",
+            param_hint="EDITOR",
+        )
+
+    integration = EditorIntegration(db=db)
+    targets = SUPPORTED_EDITORS if editor_name == "all" else [editor_name]
+
+    for target in targets:
+        config_json = integration.config_json(target)
+        config_path = integration.config_path(target)
+
+        if len(targets) > 1:
+            console.print(f"\n[bold cyan]{target}[/bold cyan] ({config_path})")
+
+        click.echo(config_json)
+
+        if do_write:
+            written = integration.write_config(target)
+            console.print(f"[green]Written:[/green] {written}")
+
+
+# ── CI/CD ─────────────────────────────────────────────────────────────────────
+
+
+@main.group()
+def ci():
+    """CI/CD mode — machine-readable output and structured exit codes.
+
+    All subcommands emit JSON to stdout and exit with:
+      0  success
+      1  error
+      2  warnings only
+    """
+
+
+@ci.command("ingest")
+@click.argument("repo_path", type=click.Path(exists=True))
+@DB_OPTION
+@click.option("--clear", is_flag=True, help="Clear existing graph before ingesting.")
+@click.option("--incremental", is_flag=True, help="Only re-parse changed files.")
+def ci_ingest(repo_path: str, db: str, clear: bool, incremental: bool):
+    """Ingest a repository and exit non-zero on errors or empty results."""
+    import sys
+
+    from navegador.cicd import CICDReporter
+    from navegador.ingestion import RepoIngester
+
+    reporter = CICDReporter()
+    data: dict = {}
+
+    try:
+        store = _get_store(db)
+        ingester = RepoIngester(store)
+        stats = ingester.ingest(repo_path, clear=clear, incremental=incremental)
+        data = stats
+        if stats.get("files", 0) == 0:
+            reporter.add_warning("No source files were ingested.")
+    except Exception as exc:  # noqa: BLE001
+        reporter.add_error(str(exc))
+
+    reporter.emit(data=data or None)
+    sys.exit(reporter.exit_code())
+
+
+@ci.command("stats")
+@DB_OPTION
+def ci_stats(db: str):
+    """Emit graph statistics as JSON (for CI consumption)."""
+    import sys
+
+    from navegador.cicd import CICDReporter
+    from navegador.graph import queries as q
+
+    reporter = CICDReporter()
+    data: dict = {}
+
+    try:
+        store = _get_store(db)
+        node_rows = store.query(q.NODE_TYPE_COUNTS).result_set or []
+        edge_rows = store.query(q.EDGE_TYPE_COUNTS).result_set or []
+        data = {
+            "total_nodes": sum(r[1] for r in node_rows),
+            "total_edges": sum(r[1] for r in edge_rows),
+            "nodes": {r[0]: r[1] for r in node_rows},
+            "edges": {r[0]: r[1] for r in edge_rows},
+        }
+    except Exception as exc:  # noqa: BLE001
+        reporter.add_error(str(exc))
+
+    reporter.emit(data=data or None)
+    sys.exit(reporter.exit_code())
+
+
+@ci.command("check")
+@DB_OPTION
+def ci_check(db: str):
+    """Check schema version — exits 2 if migration is needed, 1 on hard error."""
+    import sys
+
+    from navegador.cicd import CICDReporter
+    from navegador.graph.migrations import (
+        CURRENT_SCHEMA_VERSION,
+        get_schema_version,
+        needs_migration,
+    )
+
+    reporter = CICDReporter()
+    data: dict = {}
+
+    try:
+        store = _get_store(db)
+        current = get_schema_version(store)
+        data = {"schema_version": current, "current_schema_version": CURRENT_SCHEMA_VERSION}
+        if needs_migration(store):
+            reporter.add_warning(
+                f"Schema migration needed: v{current} → v{CURRENT_SCHEMA_VERSION}"
+            )
+    except Exception as exc:  # noqa: BLE001
+        reporter.add_error(str(exc))
+
+    reporter.emit(data=data or None)
+    sys.exit(reporter.exit_code())
+
+
 # ── MCP ───────────────────────────────────────────────────────────────────────
 
 
