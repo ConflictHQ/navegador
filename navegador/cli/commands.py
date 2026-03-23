@@ -646,6 +646,48 @@ def planopticon_ingest(path: str, input_type: str, source: str, as_json: bool, d
         console.print(table)
 
 
+# ── Export / Import ──────────────────────────────────────────────────────────
+
+
+@main.command("export")
+@click.argument("output", type=click.Path())
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True, help="Output stats as JSON.")
+def export_cmd(output: str, db: str, as_json: bool):
+    """Export the graph to a text-based JSONL file (git-friendly)."""
+    from navegador.graph.export import export_graph
+
+    store = _get_store(db)
+    stats = export_graph(store, output)
+
+    if as_json:
+        click.echo(json.dumps(stats, indent=2))
+    else:
+        console.print(
+            f"[green]Exported[/green] {stats['nodes']} nodes, {stats['edges']} edges → {output}"
+        )
+
+
+@main.command("import")
+@click.argument("input_path", type=click.Path(exists=True))
+@DB_OPTION
+@click.option("--no-clear", is_flag=True, help="Don't wipe graph before importing.")
+@click.option("--json", "as_json", is_flag=True, help="Output stats as JSON.")
+def import_cmd(input_path: str, db: str, no_clear: bool, as_json: bool):
+    """Import a graph from a JSONL export file."""
+    from navegador.graph.export import import_graph
+
+    store = _get_store(db)
+    stats = import_graph(store, input_path, clear=not no_clear)
+
+    if as_json:
+        click.echo(json.dumps(stats, indent=2))
+    else:
+        console.print(
+            f"[green]Imported[/green] {stats['nodes']} nodes, {stats['edges']} edges ← {input_path}"
+        )
+
+
 # ── Schema migrations ────────────────────────────────────────────────────────
 
 

@@ -641,6 +641,62 @@ class TestPlanopticonAutoDetect:
 
 # ── mcp command (lines 538-549) ───────────────────────────────────────────────
 
+# ── export / import ──────────────────────────────────────────────────────────
+
+class TestExportCommand:
+    def test_export_success(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+                 patch("navegador.graph.export.export_graph", return_value={"nodes": 10, "edges": 5}):
+                result = runner.invoke(main, ["export", "graph.jsonl"])
+                assert result.exit_code == 0
+                assert "10 nodes" in result.output
+
+    def test_export_json(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+                 patch("navegador.graph.export.export_graph", return_value={"nodes": 10, "edges": 5}):
+                result = runner.invoke(main, ["export", "graph.jsonl", "--json"])
+                assert result.exit_code == 0
+                data = json.loads(result.output)
+                assert data["nodes"] == 10
+
+
+class TestImportCommand:
+    def test_import_success(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("graph.jsonl").write_text("")
+            with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+                 patch("navegador.graph.export.import_graph", return_value={"nodes": 10, "edges": 5}):
+                result = runner.invoke(main, ["import", "graph.jsonl"])
+                assert result.exit_code == 0
+                assert "10 nodes" in result.output
+
+    def test_import_json(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("graph.jsonl").write_text("")
+            with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+                 patch("navegador.graph.export.import_graph", return_value={"nodes": 8, "edges": 3}):
+                result = runner.invoke(main, ["import", "graph.jsonl", "--json"])
+                assert result.exit_code == 0
+                data = json.loads(result.output)
+                assert data["nodes"] == 8
+
+    def test_import_no_clear(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("graph.jsonl").write_text("")
+            with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+                 patch("navegador.graph.export.import_graph", return_value={"nodes": 0, "edges": 0}) as mock_imp:
+                runner.invoke(main, ["import", "graph.jsonl", "--no-clear"])
+                mock_imp.assert_called_once()
+                assert mock_imp.call_args[1]["clear"] is False
+
+
 # ── migrate ──────────────────────────────────────────────────────────────────
 
 class TestMigrateCommand:
