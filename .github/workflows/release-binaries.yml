@@ -1,0 +1,71 @@
+name: Build Release Binaries
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+            ext: ""
+          - os: macos-latest
+            target: macos-arm64
+            ext: ""
+          - os: macos-13
+            target: macos-x86_64
+            ext: ""
+          - os: windows-latest
+            target: windows-x86_64
+            ext: ".exe"
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[all]"
+          pip install pyinstaller
+
+      - name: Build binary
+        shell: bash
+        run: |
+          pyinstaller \
+            --name navegador-${{ matrix.target }} \
+            --onefile \
+            --console \
+            --hidden-import=navegador \
+            --hidden-import=navegador.cli.commands \
+            --hidden-import=navegador.ingestion \
+            --hidden-import=navegador.ingestion.python \
+            --hidden-import=navegador.ingestion.typescript \
+            --hidden-import=navegador.ingestion.go \
+            --hidden-import=navegador.ingestion.rust \
+            --hidden-import=navegador.ingestion.java \
+            --hidden-import=navegador.ingestion.knowledge \
+            --hidden-import=navegador.ingestion.planopticon \
+            --hidden-import=navegador.ingestion.wiki \
+            --hidden-import=navegador.graph \
+            --hidden-import=navegador.graph.store \
+            --hidden-import=navegador.graph.schema \
+            --hidden-import=navegador.graph.queries \
+            --hidden-import=navegador.mcp \
+            --hidden-import=navegador.mcp.server \
+            --collect-all navegador \
+            navegador/cli/commands.py
+
+      - name: Upload binary to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/navegador-${{ matrix.target }}${{ matrix.ext }}
