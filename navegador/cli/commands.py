@@ -139,9 +139,34 @@ def init(path: str, redis_url: str, llm_provider: str, llm_model: str, cluster: 
     is_flag=True,
     help="Scan each file for sensitive content and redact before storing in graph nodes.",
 )
+@click.option(
+    "--monorepo",
+    is_flag=True,
+    help="Detect and ingest as a monorepo workspace (Turborepo, Nx, Yarn, pnpm, Cargo, Go).",
+)
 def ingest(repo_path: str, db: str, clear: bool, incremental: bool, watch: bool,
-           interval: float, as_json: bool, redact: bool):
+           interval: float, as_json: bool, redact: bool, monorepo: bool):
     """Ingest a repository's code into the graph (AST + call graph)."""
+    if monorepo:
+        from navegador.monorepo import MonorepoIngester
+
+        store = _get_store(db)
+        mono_ingester = MonorepoIngester(store)
+
+        if as_json:
+            stats = mono_ingester.ingest(repo_path, clear=clear)
+            click.echo(json.dumps(stats, indent=2))
+        else:
+            with console.status(f"[bold]Ingesting monorepo[/bold] {repo_path}..."):
+                stats = mono_ingester.ingest(repo_path, clear=clear)
+            table = Table(title="Monorepo ingestion complete")
+            table.add_column("Metric", style="cyan")
+            table.add_column("Count", justify="right", style="green")
+            for k, v in stats.items():
+                table.add_row(str(k).capitalize(), str(v))
+            console.print(table)
+        return
+
     from navegador.ingestion import RepoIngester
 
     store = _get_store(db)
@@ -731,6 +756,151 @@ def migrate(db: str, check: bool):
         console.print(f"[green]Schema is up to date[/green] (v{current})")
 
 
+# ── Enrichment ───────────────────────────────────────────────────────────────
+
+
+@main.command()
+@DB_OPTION
+@click.option(
+    "--framework",
+    "framework_name",
+    default="",
+    help="Framework to enrich (e.g. django, fastapi). Auto-detects if omitted.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output results as JSON.")
+def enrich(db: str, framework_name: str, as_json: bool):
+    """Run framework enrichment on the graph.
+
+    Promotes generic Function/Class nodes to semantic framework types
+    by detecting framework patterns and adding labels/properties.
+
+    \b
+    Auto-detect all frameworks:
+      navegador enrich
+
+    \b
+    Target a specific framework:
+      navegador enrich --framework django
+    """
+    import importlib
+    import pkgutil
+
+    import navegador.enrichment as _enrichment_pkg
+    from navegador.enrichment.base import FrameworkEnricher
+
+    store = _get_store(db)
+
+    # Discover all FrameworkEnricher subclasses in the enrichment package.
+    def _load_enrichers() -> dict[str, type[FrameworkEnricher]]:
+        enrichers: dict[str, type[FrameworkEnricher]] = {}
+        pkg_path = _enrichment_pkg.__path__
+        pkg_name = _enrichment_pkg.__name__
+        for _finder, mod_name, _ispkg in pkgutil.iter_modules(pkg_path):
+            if mod_name == "base":
+                continue
+            mod = importlib.import_module(f"{pkg_name}.{mod_name}")
+            for attr in vars(mod).values():
+                if (
+                    isinstance(attr, type)
+                    and issubclass(attr, FrameworkEnricher)
+                    and attr is not FrameworkEnricher
+                ):
+                    try:
+                        instance = attr.__new__(attr)
+                        instance.store = store
+                        enrichers[attr(store).framework_name] = attr
+                    except Exception:  # noqa: BLE001
+                        pass
+        return enrichers
+
+    available = _load_enrichers()
+
+    if framework_name:
+        if framework_name not in available:
+            raise click.BadParameter(
+                f"Unknown framework {framework_name!r}. "
+                f"Available: {', '.join(sorted(available)) or '(none registered)'}",
+                param_hint="--framework",
+            )
+        targets = {framework_name: available[framework_name]}
+    else:
+        # Auto-detect: only run enrichers whose detect() returns True.
+        targets = {
+            name: cls
+            for name, cls in available.items()
+            if cls(store).detect()
+        }
+        if not targets and not as_json:
+            console.print("[yellow]No frameworks detected in the graph.[/yellow]")
+            return
+
+    all_results: dict[str, dict] = {}
+    for name, cls in targets.items():
+        enricher = cls(store)
+        result = enricher.enrich()
+        all_results[name] = {
+            "promoted": result.promoted,
+            "edges_added": result.edges_added,
+            "patterns_found": result.patterns_found,
+        }
+
+    if as_json:
+        click.echo(json.dumps(all_results, indent=2))
+        return
+
+    for name, data in all_results.items():
+        table = Table(title=f"Enrichment: {name}")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", justify="right", style="green")
+        table.add_row("Nodes promoted", str(data["promoted"]))
+        table.add_row("Edges added", str(data["edges_added"]))
+        for pattern, count in data["patterns_found"].items():
+            table.add_row(f"  {pattern}", str(count))
+        console.print(table)
+
+
+# ── Diff: map uncommitted changes to affected graph nodes ─────────────────────
+
+
+@main.command("diff")
+@DB_OPTION
+@FMT_OPTION
+@click.option(
+    "--repo",
+    "repo_path",
+    default=".",
+    show_default=True,
+    type=click.Path(exists=True),
+    help="Repository root to inspect (default: current directory).",
+)
+def diff_cmd(db: str, fmt: str, repo_path: str):
+    """Show which graph nodes are affected by uncommitted changes.
+
+    Reads the current git diff, finds every function/class/method whose
+    line range overlaps a changed hunk, then follows knowledge edges to
+    surface impacted concepts, rules, and decisions.
+
+    \b
+    Examples:
+      navegador diff
+      navegador diff --format json
+      navegador diff --repo /path/to/project
+    """
+    from pathlib import Path as P
+
+    from navegador.diff import DiffAnalyzer
+
+    analyzer = DiffAnalyzer(_get_store(db), P(repo_path))
+
+    if fmt == "json":
+        click.echo(analyzer.to_json())
+        return
+
+    # Rich markdown output
+    md = analyzer.to_markdown()
+    console.print(md)
+
+
 # ── Editor integrations ───────────────────────────────────────────────────────
 
 
@@ -933,6 +1103,132 @@ def completions(shell: str, do_install: bool, rc_path: str):
         click.echo(f"  {line}")
         console.print(
             f"\nOr run: [bold]navegador completions {shell} --install[/bold]"
+        )
+
+
+# ── Churn / behavioural coupling ─────────────────────────────────────────────
+
+
+@main.command()
+@click.argument("repo_path", default=".", type=click.Path(exists=True))
+@DB_OPTION
+@click.option("--limit", default=500, show_default=True, help="Max commits to inspect.")
+@click.option(
+    "--min-confidence",
+    default=0.5,
+    show_default=True,
+    type=float,
+    help="Minimum coupling confidence (0–1).",
+)
+@click.option(
+    "--min-co-changes",
+    default=3,
+    show_default=True,
+    type=int,
+    help="Minimum co-change count for a coupling pair.",
+)
+@click.option("--store", "do_store", is_flag=True, help="Write results to the graph.")
+@click.option("--json", "as_json", is_flag=True, help="Output results as JSON.")
+def churn(
+    repo_path: str,
+    db: str,
+    limit: int,
+    min_confidence: float,
+    min_co_changes: int,
+    do_store: bool,
+    as_json: bool,
+):
+    """Analyze git history for file churn and behavioural coupling.
+
+    Shows files that change most often and pairs of files that
+    frequently change together (co-evolution / logical coupling).
+
+    \b
+    Examples:
+      navegador churn .
+      navegador churn . --limit 200 --min-confidence 0.7
+      navegador churn . --store          # persist to graph
+      navegador churn . --json           # machine-readable output
+    """
+    from pathlib import Path as P
+
+    from navegador.churn import ChurnAnalyzer
+
+    analyzer = ChurnAnalyzer(P(repo_path), limit=limit)
+
+    with console.status("[bold]Analysing git history…[/bold]"):
+        churn_entries = analyzer.file_churn()
+        pairs = analyzer.coupling_pairs(
+            min_co_changes=min_co_changes, min_confidence=min_confidence
+        )
+
+    if do_store:
+        store = _get_store(db)
+        stats = analyzer.store_churn(store)
+        if as_json:
+            click.echo(json.dumps(stats, indent=2))
+        else:
+            console.print(
+                f"[green]Churn stored:[/green] "
+                f"{stats['churn_updated']} files updated, "
+                f"{stats['couplings_written']} coupling edges written"
+            )
+        return
+
+    if as_json:
+        click.echo(
+            json.dumps(
+                {
+                    "churn": [
+                        {
+                            "file_path": e.file_path,
+                            "commit_count": e.commit_count,
+                            "lines_changed": e.lines_changed,
+                        }
+                        for e in churn_entries
+                    ],
+                    "coupling_pairs": [
+                        {
+                            "file_a": p.file_a,
+                            "file_b": p.file_b,
+                            "co_change_count": p.co_change_count,
+                            "confidence": p.confidence,
+                        }
+                        for p in pairs
+                    ],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    # ── Rich tables ───────────────────────────────────────────────────────────
+    churn_table = Table(title=f"File churn (top {min(20, len(churn_entries))})")
+    churn_table.add_column("File", style="cyan")
+    churn_table.add_column("Commits", justify="right", style="green")
+    churn_table.add_column("Lines changed", justify="right")
+    for entry in churn_entries[:20]:
+        churn_table.add_row(entry.file_path, str(entry.commit_count), str(entry.lines_changed))
+    console.print(churn_table)
+
+    if pairs:
+        pair_table = Table(title=f"Behavioural coupling ({len(pairs)} pairs)")
+        pair_table.add_column("File A", style="cyan")
+        pair_table.add_column("File B", style="cyan")
+        pair_table.add_column("Co-changes", justify="right", style="green")
+        pair_table.add_column("Confidence", justify="right")
+        for pair in pairs[:20]:
+            pair_table.add_row(
+                pair.file_a,
+                pair.file_b,
+                str(pair.co_change_count),
+                f"{pair.confidence:.2f}",
+            )
+        console.print(pair_table)
+    else:
+        console.print(
+            f"[yellow]No coupling pairs found[/yellow] "
+            f"(min_co_changes={min_co_changes}, min_confidence={min_confidence})"
         )
 
 
