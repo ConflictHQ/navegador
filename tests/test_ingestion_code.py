@@ -36,8 +36,8 @@ class TestLanguageMap:
         assert LANGUAGE_MAP[".java"] == "java"
 
     def test_no_entry_for_unknown(self):
-        assert ".rb" not in LANGUAGE_MAP
-        assert ".php" not in LANGUAGE_MAP
+        assert ".txt" not in LANGUAGE_MAP
+        assert ".md" not in LANGUAGE_MAP
 
 
 # ── ingest() ─────────────────────────────────────────────────────────────────
@@ -261,7 +261,7 @@ class TestGetParser:
         store = _make_store()
         ingester = RepoIngester(store)
         with pytest.raises(ValueError, match="Unsupported language"):
-            ingester._get_parser("ruby")
+            ingester._get_parser("brainfuck")
 
     def test_creates_python_parser_via_lazy_import(self):
         store = _make_store()
@@ -331,7 +331,7 @@ class TestIngesterContinueBranch:
         """
         _iter_source_files filters to LANGUAGE_MAP extensions, but ingest()
         has a defensive `if not language: continue`.  Test it by patching
-        _iter_source_files to yield a .rb path.
+        _iter_source_files to yield a .txt path.
         """
         import tempfile
         from pathlib import Path
@@ -339,8 +339,8 @@ class TestIngesterContinueBranch:
         store = _make_store()
         ingester = RepoIngester(store)
         with tempfile.TemporaryDirectory() as tmpdir:
-            rb_file = Path(tmpdir) / "script.rb"
-            rb_file.write_text("puts 'hello'")
+            rb_file = Path(tmpdir) / "notes.txt"
+            rb_file.write_text("just a text file")
             with patch.object(ingester, "_iter_source_files", return_value=[rb_file]):
                 stats = ingester.ingest(tmpdir)
         assert stats["files"] == 0

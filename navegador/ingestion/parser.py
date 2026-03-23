@@ -9,6 +9,13 @@ Supported languages (all via tree-sitter):
   Go          .go
   Rust        .rs
   Java        .java
+  Kotlin      .kt .kts
+  C#          .cs
+  PHP         .php
+  Ruby        .rb
+  Swift       .swift
+  C           .c .h
+  C++         .cpp .hpp .cc .cxx
 """
 
 import hashlib
@@ -32,6 +39,18 @@ LANGUAGE_MAP: dict[str, str] = {
     ".go": "go",
     ".rs": "rust",
     ".java": "java",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
+    ".cs": "csharp",
+    ".php": "php",
+    ".rb": "ruby",
+    ".swift": "swift",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".hpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
 }
 
 
@@ -269,6 +288,34 @@ class RepoIngester:
                 from navegador.ingestion.java import JavaParser
 
                 self._parsers[language] = JavaParser()
+            elif language == "kotlin":
+                from navegador.ingestion.kotlin import KotlinParser
+
+                self._parsers[language] = KotlinParser()
+            elif language == "csharp":
+                from navegador.ingestion.csharp import CSharpParser
+
+                self._parsers[language] = CSharpParser()
+            elif language == "php":
+                from navegador.ingestion.php import PHPParser
+
+                self._parsers[language] = PHPParser()
+            elif language == "ruby":
+                from navegador.ingestion.ruby import RubyParser
+
+                self._parsers[language] = RubyParser()
+            elif language == "swift":
+                from navegador.ingestion.swift import SwiftParser
+
+                self._parsers[language] = SwiftParser()
+            elif language == "c":
+                from navegador.ingestion.c import CParser
+
+                self._parsers[language] = CParser()
+            elif language == "cpp":
+                from navegador.ingestion.cpp import CppParser
+
+                self._parsers[language] = CppParser()
             else:
                 raise ValueError(f"Unsupported language: {language}")
         return self._parsers[language]
