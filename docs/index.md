@@ -1,4 +1,4 @@
-# Navegador
+# Navegador <small>v0.7</small>
 
 **The project knowledge graph for AI coding agents.**
 
