@@ -627,6 +627,48 @@ class TestPlanopticonAutoDetect:
 
 # ── mcp command (lines 538-549) ───────────────────────────────────────────────
 
+# ── migrate ──────────────────────────────────────────────────────────────────
+
+class TestMigrateCommand:
+    def test_migrate_applies_migrations(self):
+        runner = CliRunner()
+        with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+             patch("navegador.graph.migrations.get_schema_version", return_value=0), \
+             patch("navegador.graph.migrations.migrate", return_value=[1, 2]) as mock_migrate, \
+             patch("navegador.graph.migrations.CURRENT_SCHEMA_VERSION", 2):
+            result = runner.invoke(main, ["migrate"])
+            assert result.exit_code == 0
+            assert "Migrated" in result.output
+
+    def test_migrate_already_current(self):
+        runner = CliRunner()
+        with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+             patch("navegador.graph.migrations.get_schema_version", return_value=2), \
+             patch("navegador.graph.migrations.migrate", return_value=[]):
+            result = runner.invoke(main, ["migrate"])
+            assert result.exit_code == 0
+            assert "up to date" in result.output
+
+    def test_migrate_check_needed(self):
+        runner = CliRunner()
+        with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+             patch("navegador.graph.migrations.get_schema_version", return_value=0), \
+             patch("navegador.graph.migrations.needs_migration", return_value=True), \
+             patch("navegador.graph.migrations.CURRENT_SCHEMA_VERSION", 2):
+            result = runner.invoke(main, ["migrate", "--check"])
+            assert result.exit_code == 0
+            assert "Migration needed" in result.output
+
+    def test_migrate_check_not_needed(self):
+        runner = CliRunner()
+        with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+             patch("navegador.graph.migrations.get_schema_version", return_value=2), \
+             patch("navegador.graph.migrations.needs_migration", return_value=False):
+            result = runner.invoke(main, ["migrate", "--check"])
+            assert result.exit_code == 0
+            assert "up to date" in result.output
+
+
 class TestMcpCommand:
     def test_mcp_command_runs_server(self):
         from contextlib import asynccontextmanager

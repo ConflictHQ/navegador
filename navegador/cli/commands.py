@@ -622,6 +622,44 @@ def planopticon_ingest(path: str, input_type: str, source: str, as_json: bool, d
         console.print(table)
 
 
+# ── Schema migrations ────────────────────────────────────────────────────────
+
+
+@main.command()
+@DB_OPTION
+@click.option("--check", is_flag=True, help="Check if migration is needed without applying.")
+def migrate(db: str, check: bool):
+    """Apply pending schema migrations to the graph."""
+    from navegador.graph.migrations import (
+        CURRENT_SCHEMA_VERSION,
+        get_schema_version,
+        migrate as do_migrate,
+        needs_migration,
+    )
+
+    store = _get_store(db)
+
+    if check:
+        current = get_schema_version(store)
+        if needs_migration(store):
+            console.print(
+                f"[yellow]Migration needed:[/yellow] v{current} → v{CURRENT_SCHEMA_VERSION}"
+            )
+        else:
+            console.print(f"[green]Schema is up to date[/green] (v{current})")
+        return
+
+    current = get_schema_version(store)
+    applied = do_migrate(store)
+    if applied:
+        console.print(
+            f"[green]Migrated[/green] v{current} → v{CURRENT_SCHEMA_VERSION} "
+            f"({len(applied)} migration{'s' if len(applied) != 1 else ''})"
+        )
+    else:
+        console.print(f"[green]Schema is up to date[/green] (v{current})")
+
+
 # ── MCP ───────────────────────────────────────────────────────────────────────
 
 
