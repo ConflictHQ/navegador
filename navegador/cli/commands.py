@@ -67,10 +67,18 @@ def main():
     default="",
     help="Redis URL for centralized/production mode (e.g. redis://host:6379).",
 )
-def init(path: str, redis_url: str):
+@click.option(
+    "--llm-provider",
+    default="",
+    help="LLM provider (e.g. anthropic, openai, ollama).",
+)
+@click.option("--llm-model", default="", help="LLM model name.")
+@click.option("--cluster", is_flag=True, help="Enable cluster/swarm mode.")
+def init(path: str, redis_url: str, llm_provider: str, llm_model: str, cluster: bool):
     """Initialise navegador in a project directory.
 
-    Creates .navegador/ (gitignored), writes .env.example with storage options.
+    Creates .navegador/ (gitignored), writes config.toml with storage,
+    LLM, and cluster settings.
 
     \b
     Local SQLite (default — zero infra):
@@ -78,11 +86,21 @@ def init(path: str, redis_url: str):
 
     Centralized Redis (production / multi-agent):
       navegador init --redis redis://host:6379
-      # Then: export NAVEGADOR_REDIS_URL=redis://host:6379
+
+    With LLM:
+      navegador init --llm-provider anthropic --llm-model claude-sonnet-4-6
     """
     from navegador.config import init_project
 
-    nav_dir = init_project(path)
+    storage = "redis" if redis_url else "sqlite"
+    nav_dir = init_project(
+        path,
+        storage=storage,
+        redis_url=redis_url,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+        cluster=cluster,
+    )
     console.print(f"[green]Initialised navegador[/green] → {nav_dir}")
 
     if redis_url:
@@ -95,6 +113,12 @@ def init(path: str, redis_url: str):
             "\n[bold]Local SQLite mode[/bold] (default). "
             "To use a shared Redis graph set [cyan]NAVEGADOR_REDIS_URL[/cyan]."
         )
+
+    if llm_provider:
+        console.print(f"\n[bold]LLM:[/bold] {llm_provider} / {llm_model or '(default)'}")
+
+    if cluster:
+        console.print("\n[bold]Cluster mode:[/bold] enabled")
 
     console.print("\nNext: [bold]navegador ingest .[/bold]")
 

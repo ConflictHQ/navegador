@@ -50,6 +50,20 @@ class TestInitCommand:
             assert result.exit_code == 0
             assert "Local SQLite" in result.output
 
+    def test_llm_provider_shown(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            result = runner.invoke(main, ["init", ".", "--llm-provider", "anthropic"])
+            assert result.exit_code == 0
+            assert "anthropic" in result.output
+
+    def test_cluster_flag_shown(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            result = runner.invoke(main, ["init", ".", "--cluster"])
+            assert result.exit_code == 0
+            assert "Cluster mode" in result.output
+
 
 # ── ingest ────────────────────────────────────────────────────────────────────
 

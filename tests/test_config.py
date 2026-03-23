@@ -126,3 +126,52 @@ class TestInitProject:
             result = init_project(tmpdir)
             assert isinstance(result, Path)
             assert result == Path(tmpdir).resolve() / ".navegador"
+
+    def test_creates_config_toml(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from navegador.config import init_project
+            nav_dir = init_project(tmpdir)
+            config = nav_dir / "config.toml"
+            assert config.exists()
+            content = config.read_text()
+            assert "[storage]" in content
+            assert "[llm]" in content
+            assert "[cluster]" in content
+
+    def test_config_toml_sqlite_defaults(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from navegador.config import init_project
+            nav_dir = init_project(tmpdir)
+            content = (nav_dir / "config.toml").read_text()
+            assert 'backend = "sqlite"' in content
+            assert "db_path" in content
+
+    def test_config_toml_redis_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from navegador.config import init_project
+            nav_dir = init_project(tmpdir, storage="redis", redis_url="redis://host:6379")
+            content = (nav_dir / "config.toml").read_text()
+            assert 'backend = "redis"' in content
+            assert 'redis_url = "redis://host:6379"' in content
+
+    def test_config_toml_llm_settings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from navegador.config import init_project
+            nav_dir = init_project(tmpdir, llm_provider="anthropic", llm_model="claude-sonnet-4-6")
+            content = (nav_dir / "config.toml").read_text()
+            assert 'provider = "anthropic"' in content
+            assert 'model = "claude-sonnet-4-6"' in content
+
+    def test_config_toml_cluster_enabled(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from navegador.config import init_project
+            nav_dir = init_project(tmpdir, cluster=True)
+            content = (nav_dir / "config.toml").read_text()
+            assert "enabled = true" in content
+
+    def test_config_toml_cluster_disabled_by_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from navegador.config import init_project
+            nav_dir = init_project(tmpdir)
+            content = (nav_dir / "config.toml").read_text()
+            assert "enabled = false" in content
