@@ -43,6 +43,34 @@ This installs the core package with the SQLite backend (`falkordblite`) included
 
     See [Configuration](configuration.md) for full Redis setup details.
 
+=== "[languages]"
+
+    Additional tree-sitter grammars for Kotlin, C#, PHP, Ruby, Swift, C, and C++. The default install includes Python, TypeScript, JavaScript, Go, Rust, and Java.
+
+    ```bash
+    pip install "navegador[languages]"
+    ```
+
+    After installing, all 13 languages are parsed automatically by `navegador ingest`. No additional configuration is required.
+
+=== "[llm]"
+
+    LLM provider integrations for Anthropic, OpenAI, and Ollama. Required for `navegador ask`, `navegador docs`, and `navegador semantic-search`.
+
+    ```bash
+    pip install "navegador[llm]"
+    ```
+
+    Configure the provider in `.navegador/config.toml` or via environment variables. See [Configuration](configuration.md) for details.
+
+=== "all extras"
+
+    Install everything at once:
+
+    ```bash
+    pip install "navegador[sqlite,redis,languages,llm]"
+    ```
+
 ## Verify
 
 ```bash
@@ -52,15 +80,40 @@ navegador --version
 Expected output:
 
 ```
-navegador, version 0.x.y
+navegador, version 0.7.0
 ```
+
+## Shell completions
+
+Install shell completions for tab-completion of commands and flags:
+
+```bash
+navegador completions bash >> ~/.bashrc
+navegador completions zsh  >> ~/.zshrc
+navegador completions fish > ~/.config/fish/completions/navegador.fish
+```
+
+## Python SDK
+
+The Python SDK wraps all CLI functionality in a single `Navegador` class:
+
+```python
+from navegador import Navegador
+
+nav = Navegador(".navegador/navegador.db")
+nav.ingest("./src")
+bundle = nav.explain("AuthService")
+print(bundle.to_markdown())
+```
+
+The SDK is included in the base install — no extra is required.
 
 ## Development install
 
 ```bash
 git clone https://github.com/ConflictHQ/navegador
 cd navegador
-pip install -e ".[sqlite,redis]"
+pip install -e ".[sqlite,redis,languages,llm,dev]"
 ```
 
 ## Upgrading
@@ -69,8 +122,10 @@ pip install -e ".[sqlite,redis]"
 pip install --upgrade navegador
 ```
 
-After upgrading, re-ingest any existing repos to pick up new parser features or schema changes:
+After upgrading, run schema migrations first, then re-ingest to pick up new parser features:
 
 ```bash
-navegador ingest ./repo --clear
+navegador migrate          # apply any schema changes from the new version
+navegador ingest ./repo    # re-ingest with incremental updates (preferred)
+navegador ingest ./repo --clear  # full rebuild if you prefer a clean slate
 ```

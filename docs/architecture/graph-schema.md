@@ -49,6 +49,9 @@
 | `ANNOTATES` | Concept, Rule | Function, Method, Class, File, Module | Knowledge node annotates code node |
 | `ASSIGNED_TO` | Rule, Decision | Person | Work item or decision assigned to person |
 | `DECIDED_BY` | Decision | Person | Decision was made by person |
+| `TESTS` | Function, Method | Function, Method, Class | Test function exercises a source function or class |
+| `COUPLED_WITH` | File, Module | File, Module | Files that change together frequently (from churn analysis) |
+| `OWNS` | Person | File, Module, Class | Ownership from CODEOWNERS or annotation |
 
 ---
 
@@ -103,6 +106,10 @@ graph LR
     Class -->|IMPLEMENTS| Concept
     Decision -->|DECIDED_BY| Person
     Rule -->|ASSIGNED_TO| Person
+    Function -->|TESTS| Function
+    Function -->|TESTS| Class
+    File -->|COUPLED_WITH| File
+    Person -->|OWNS| File
 ```
 
 ---
@@ -120,3 +127,7 @@ The two layers have different **lifecycle** and **provenance**:
 | Queryability | Names, signatures, call graphs | Domain semantics, rationale, history |
 
 Cross-layer edges (`ANNOTATES`, `GOVERNS`, `IMPLEMENTS`, `DOCUMENTS`) are the join points between the two layers. They are created explicitly by humans via `navegador annotate` or inferred during wiki/Planopticon ingestion.
+
+Analysis edges (`TESTS`, `COUPLED_WITH`) are created by analysis commands (`navegador testmap`, `navegador churn`) and are derived rather than curated. They are refreshed whenever those commands are re-run.
+
+`OWNS` edges are populated from CODEOWNERS file parsing (`navegador codeowners`) and from explicit `navegador annotate --owner` assignments.

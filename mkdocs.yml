@@ -81,15 +81,23 @@ nav:
   - Guide:
       - Ingesting a Repo: guide/ingestion.md
       - Loading Context: guide/context-loading.md
+      - Framework Enrichment: guide/framework-enrichment.md
+      - Structural Analysis: guide/analysis.md
+      - Intelligence Layer: guide/intelligence.md
+      - Python SDK: guide/sdk.md
       - Graph Queries: guide/graph-queries.md
       - MCP Integration: guide/mcp-integration.md
+      - CI/CD: guide/ci-cd.md
+      - Cluster Mode: guide/cluster.md
       - Agent Hooks: guide/agent-hooks.md
       - Planopticon: guide/planopticon.md
   - Architecture:
       - Overview: architecture/overview.md
       - Graph Schema: architecture/graph-schema.md
   - API Reference:
+      - Python SDK: api/sdk.md
       - Ingestion: api/ingestion.md
+      - Analysis: api/analysis.md
       - Graph: api/graph.md
       - MCP Server: api/mcp.md
 

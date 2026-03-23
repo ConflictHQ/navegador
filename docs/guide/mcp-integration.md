@@ -92,7 +92,7 @@ The server speaks MCP over stdio. It does not bind a port.
 
 ## Available MCP tools
 
-All tools accept and return JSON.
+All tools accept and return JSON. There are 11 tools in total.
 
 | Tool | Equivalent CLI | Description |
 |---|---|---|
@@ -103,6 +103,10 @@ All tools accept and return JSON.
 | `explain` | `navegador explain` | Universal node lookup |
 | `search` | `navegador search` | Text search across graph |
 | `query` | `navegador query` | Raw Cypher passthrough |
+| `get_rationale` | `navegador explain --rationale` | Decisions and rules governing a node |
+| `find_owners` | `navegador codeowners` | People and domains that own a node |
+| `search_knowledge` | `navegador search --knowledge` | Search knowledge layer only |
+| `blast_radius` | `navegador impact` | Transitive impact set for a node |
 
 ### Tool input schemas
 
@@ -140,6 +144,71 @@ All tools accept and return JSON.
 ```json
 { "cypher": "MATCH (f:Function) RETURN f.name LIMIT 10" }
 ```
+
+**get_rationale**
+```json
+{ "name": "process_payment", "file": "src/payments/processor.py" }
+```
+
+**find_owners**
+```json
+{ "name": "AuthService", "file": "src/auth/service.py" }
+```
+
+**search_knowledge**
+```json
+{ "query": "idempotency", "limit": 10 }
+```
+
+**blast_radius**
+```json
+{ "name": "validate_token", "depth": 3 }
+```
+
+---
+
+## Read-only mode
+
+Start the MCP server in read-only mode to prevent agents from modifying the graph. This is recommended for shared or production environments.
+
+```bash
+navegador mcp --read-only
+```
+
+In read-only mode, the `ingest` tool is disabled and the `query` tool only accepts `MATCH`/`RETURN` queries. Write keywords (`CREATE`, `MERGE`, `SET`, `DELETE`) are rejected.
+
+Set in agent config:
+
+```json
+{
+  "mcpServers": {
+    "navegador": {
+      "command": "navegador",
+      "args": ["mcp", "--read-only"],
+      "env": {
+        "NAVEGADOR_DB": ".navegador/navegador.db"
+      }
+    }
+  }
+}
+```
+
+Or set `read_only = true` in `.navegador/config.toml` under `[mcp]`.
+
+---
+
+## Editor integration
+
+Instead of configuring MCP manually, use the editor setup command:
+
+```bash
+navegador editor setup claude-code
+navegador editor setup cursor
+navegador editor setup codex
+navegador editor setup windsurf
+```
+
+This writes the correct MCP config file for the selected editor and prompts for the database path.
 
 ---
 

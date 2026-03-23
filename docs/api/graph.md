@@ -59,6 +59,12 @@ class GraphStore:
     def clear(self) -> None: ...
 
     def close(self) -> None: ...
+
+    def export_jsonl(self, fp: IO[str]) -> None: ...
+    """Write all nodes and edges to a JSONL stream."""
+
+    def import_jsonl(self, fp: IO[str]) -> None: ...
+    """Read nodes and edges from a JSONL stream and merge into the graph."""
 ```
 
 ### Usage
@@ -243,6 +249,19 @@ class ContextEdge:
     edge_type: str       # e.g. "CALLS", "ANNOTATES"
     properties: dict
 ```
+
+---
+
+## Schema migrations
+
+```python
+from navegador.graph import migrate
+
+store = GraphStore.sqlite(".navegador/navegador.db")
+migrate(store)   # applies any pending schema migrations; idempotent
+```
+
+The `migrate()` function is safe to call on every startup. It compares the stored migration version against the current schema and applies only missing migrations.
 
 ---
 

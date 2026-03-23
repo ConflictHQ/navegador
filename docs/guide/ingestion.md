@@ -14,14 +14,27 @@ navegador ingest ./repo
 
 Navegador walks all source files in the repo and uses tree-sitter to extract structure. Supported languages:
 
-| Extension(s) | Language |
-|---|---|
-| `.py` | Python |
-| `.ts`, `.tsx` | TypeScript |
-| `.js`, `.jsx` | JavaScript |
-| `.go` | Go |
-| `.rs` | Rust |
-| `.java` | Java |
+| Extension(s) | Language | Extra |
+|---|---|---|
+| `.py` | Python | — |
+| `.ts`, `.tsx` | TypeScript | — |
+| `.js`, `.jsx` | JavaScript | — |
+| `.go` | Go | — |
+| `.rs` | Rust | — |
+| `.java` | Java | — |
+| `.kt`, `.kts` | Kotlin | `[languages]` |
+| `.cs` | C# | `[languages]` |
+| `.php` | PHP | `[languages]` |
+| `.rb` | Ruby | `[languages]` |
+| `.swift` | Swift | `[languages]` |
+| `.c`, `.h` | C | `[languages]` |
+| `.cpp`, `.cc`, `.cxx`, `.hpp` | C++ | `[languages]` |
+
+Install extended language support:
+
+```bash
+pip install "navegador[languages]"
+```
 
 The following directories are always skipped: `.git`, `.venv`, `venv`, `node_modules`, `__pycache__`, `dist`, `build`, `.next`, `target` (Rust/Java builds), `vendor` (Go modules), `.gradle`.
 
@@ -43,12 +56,52 @@ Doc comment formats supported per language: Python docstrings, JSDoc (`/** */`),
 | Flag | Effect |
 |---|---|
 | `--clear` | Wipe the graph before ingesting (full rebuild) |
+| `--incremental` | Only reprocess files whose content hash has changed |
+| `--watch` | Keep running and re-ingest on file changes |
+| `--redact` | Strip secrets (tokens, passwords, keys) from string literals |
+| `--monorepo` | Traverse workspace sub-packages (Turborepo, Nx, Yarn, pnpm, Cargo, Go) |
 | `--json` | Output a JSON summary of nodes and edges created |
 | `--db <path>` | Use a specific database file |
 
 ### Re-ingesting
 
-Re-run `navegador ingest` anytime to pick up changes. Nodes are upserted by identity (file path + name), so repeated ingestion is idempotent for unchanged nodes. Use `--clear` when you need a clean slate (e.g., after a large rename refactor).
+Re-run `navegador ingest` anytime to pick up changes. Nodes are upserted by identity (file path + name), so repeated ingestion is idempotent for unchanged nodes. Use `--incremental` for large repos to skip unchanged files. Use `--clear` when you need a clean slate (e.g., after a large rename refactor).
+
+### Incremental ingestion
+
+`--incremental` uses SHA-256 content hashing to skip files that haven't changed since the last ingest. The hash is stored on each `File` node. On large repos this can reduce ingest time by 90%+ after the initial run.
+
+```bash
+navegador ingest ./repo --incremental
+```
+
+### Watch mode
+
+`--watch` starts a file-system watcher and automatically re-ingests any file that changes:
+
+```bash
+navegador ingest ./repo --watch
+```
+
+Press `Ctrl-C` to stop. Watch mode uses `--incremental` automatically.
+
+### Sensitive content redaction
+
+`--redact` scans string literals for patterns that look like API keys, tokens, and passwords, and replaces their values with `[REDACTED]` in the graph. Source files are never modified.
+
+```bash
+navegador ingest ./repo --redact
+```
+
+### Monorepo support
+
+`--monorepo` detects the workspace type and traverses all sub-packages:
+
+```bash
+navegador ingest ./monorepo --monorepo
+```
+
+Supported workspace formats: Turborepo, Nx, Yarn workspaces, pnpm workspaces, Cargo workspaces, Go workspaces.
 
 ---
 

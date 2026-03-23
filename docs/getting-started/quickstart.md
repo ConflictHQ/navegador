@@ -11,7 +11,7 @@ pip install navegador
 navegador --version
 ```
 
-Python 3.12+ is required. See [Installation](installation.md) for extras and Redis setup.
+Python 3.12+ is required. For additional languages (Kotlin, C#, PHP, Ruby, Swift, C, C++) install the `[languages]` extra. See [Installation](installation.md) for all extras and Redis setup.
 
 ---
 
@@ -23,7 +23,19 @@ Point navegador at any local source tree:
 navegador ingest ./my-repo
 ```
 
-On first run this builds the graph from scratch. Re-run anytime to pick up changes. Use `--clear` to wipe and rebuild:
+On first run this builds the graph from scratch. Re-run anytime to pick up changes. Use `--incremental` to skip files that haven't changed (based on content hashing — much faster on large repos):
+
+```bash
+navegador ingest ./my-repo --incremental
+```
+
+Use `--watch` to keep the graph in sync as files change:
+
+```bash
+navegador ingest ./my-repo --watch
+```
+
+Use `--clear` to wipe and rebuild from scratch:
 
 ```bash
 navegador ingest ./my-repo --clear
@@ -35,7 +47,7 @@ Use `--json` to get a machine-readable summary of what was indexed:
 navegador ingest ./my-repo --json
 ```
 
-Navegador walks the tree, parses every `.py` and `.ts`/`.tsx` file with tree-sitter, and writes nodes and edges for: files, modules, classes, functions, methods, imports, decorators, and call relationships.
+Navegador walks the tree, parses source files in 13 languages with tree-sitter, and writes nodes and edges for: files, modules, classes, functions, methods, imports, decorators, and call relationships. Framework enrichers automatically detect and annotate Django models, FastAPI routes, React components, Rails controllers, Spring Boot beans, and more.
 
 ---
 
@@ -138,3 +150,58 @@ Options:
 | `--agent openai` | Install `openai-hook.py` + `openai-tools.json` |
 
 After bootstrap, every file the agent edits triggers a re-ingest so the graph stays in sync. See [Agent Hooks](../guide/agent-hooks.md) for manual setup and the `NAVEGADOR.md` template.
+
+---
+
+## Step 6 (optional): SDK quick start
+
+All CLI functionality is available through the Python SDK:
+
+```python
+from navegador import Navegador
+
+nav = Navegador(".navegador/navegador.db")
+
+# ingest (incremental by default in SDK)
+nav.ingest("./my-repo", incremental=True)
+
+# query
+bundle = nav.explain("AuthService")
+print(bundle.to_markdown())
+
+# analysis
+impact = nav.impact("validate_token")
+churn = nav.churn(days=30)
+cycles = nav.cycles()
+```
+
+The `Navegador` class wraps `GraphStore`, `ContextLoader`, all ingesters, and the analysis commands into one interface.
+
+---
+
+## Step 7 (optional): Code analysis
+
+Once the graph is populated, use the analysis commands to understand your codebase:
+
+```bash
+# impact of changing a function
+navegador impact validate_token
+
+# trace execution flow
+navegador trace process_payment --depth 3
+
+# find dead code
+navegador deadcode
+
+# detect dependency cycles
+navegador cycles
+
+# map tests to source files
+navegador testmap
+
+# code churn (files that change most)
+navegador churn --days 30
+
+# diff — what changed between two refs
+navegador diff HEAD~1 HEAD
+```

@@ -148,3 +148,166 @@ navegador decorated --format json login_required
 ```
 
 Returns function/class nodes with their file paths, line numbers, and the full decorator expression.
+
+---
+
+## impact — blast radius analysis
+
+Return the set of code nodes that could be affected if a given node changes, traversing CALLS, IMPORTS, and INHERITS edges transitively.
+
+```bash
+navegador impact validate_token
+navegador impact validate_token --depth 3
+navegador impact validate_token --format json
+```
+
+Useful before a refactor to understand the blast radius.
+
+---
+
+## trace — execution flow
+
+Trace the execution path through the call graph from a starting function:
+
+```bash
+navegador trace process_payment
+navegador trace process_payment --depth 4 --format json
+```
+
+Output shows the call chain as a tree, with each node annotated by file and line.
+
+---
+
+## diff — graph diff between refs
+
+Show what changed in the graph between two Git refs:
+
+```bash
+navegador diff HEAD~1 HEAD
+navegador diff main feature-branch
+```
+
+Reports added, removed, and changed nodes and edges.
+
+---
+
+## churn — code churn analysis
+
+Identify files and functions that change most frequently, based on Git history:
+
+```bash
+navegador churn
+navegador churn --days 30
+navegador churn --format json
+```
+
+High-churn nodes are often candidates for stabilization or better test coverage.
+
+---
+
+## deadcode — find unreachable code
+
+Find functions and classes with no callers and no references from outside their defining file:
+
+```bash
+navegador deadcode
+navegador deadcode --format json
+```
+
+---
+
+## cycles — dependency cycle detection
+
+Detect cycles in the IMPORTS and CALLS graphs:
+
+```bash
+navegador cycles
+navegador cycles --format json
+```
+
+Reports each cycle as an ordered list of node names.
+
+---
+
+## testmap — test-to-source mapping
+
+Map test functions to the source functions they exercise (based on naming conventions and import analysis):
+
+```bash
+navegador testmap
+navegador testmap src/auth/service.py
+navegador testmap --format json
+```
+
+Creates `TESTS` edges between test functions and their targets.
+
+---
+
+## semantic-search — vector similarity search
+
+Search using natural language against embeddings of docstrings and code. Requires `pip install "navegador[llm]"`.
+
+```bash
+navegador semantic-search "functions that validate user input"
+navegador semantic-search "payment retry logic" --limit 10
+```
+
+---
+
+## ask — NLP query interface
+
+Ask a natural language question about the codebase. Requires `pip install "navegador[llm]"`.
+
+```bash
+navegador ask "What handles authentication in this codebase?"
+navegador ask "Which functions touch the database?"
+```
+
+The answer is grounded in graph queries — not hallucinated from code text.
+
+---
+
+## rename — coordinated rename
+
+Rename a function or class across the graph and get a list of all files that reference the old name:
+
+```bash
+navegador rename validate_token validate_access_token
+```
+
+Output is a structured change plan. The command does not modify source files — it produces the list of locations to update.
+
+---
+
+## codeowners — ownership queries
+
+Query CODEOWNERS assignments and domain ownership:
+
+```bash
+navegador codeowners src/auth/service.py
+navegador codeowners AuthService
+```
+
+Returns owning teams and people from CODEOWNERS file and from `Person` nodes annotated to the matching code nodes.
+
+---
+
+## communities — module cluster detection
+
+Detect communities of highly-coupled modules using graph clustering:
+
+```bash
+navegador communities
+navegador communities --format json
+```
+
+---
+
+## explore — interactive graph explorer
+
+Open an interactive graph explorer in the terminal:
+
+```bash
+navegador explore
+navegador explore --start AuthService
+```

@@ -8,10 +8,18 @@ Most context tools for AI agents handle one or the other — either they parse c
 
 ---
 
-## Two-layer design
+## Architecture layers
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
+│  INTELLIGENCE LAYER                                              │
+│  LLM providers (Anthropic · OpenAI · Ollama)                    │
+│  Semantic search · NLP queries · Doc generation                  │
+├──────────────────────────────────────────────────────────────────┤
+│  ANALYSIS LAYER                                                  │
+│  Impact · Trace · Churn · Deadcode · Cycles · Testmap            │
+│  Diff · Rename · Communities · Blast radius                      │
+├──────────────────────────────────────────────────────────────────┤
 │  KNOWLEDGE LAYER                                                 │
 │                                                                  │
 │   Domain ──BELONGS_TO── Concept ──RELATED_TO── Rule             │
@@ -31,20 +39,39 @@ Most context tools for AI agents handle one or the other — either they parse c
 │                           CONTAINS        DEFINES               │
 │                              ↓               ↓                  │
 │                           Function ──CALLS── Function            │
-│                              │                                   │
-│                         DECORATES── Decorator                    │
+│                              │               │                  │
+│                         DECORATES─Decorator  TESTS──TestFn       │
 │                              │                                   │
 │                           IMPORTS── Import                       │
+├──────────────────────────────────────────────────────────────────┤
+│  ENRICHMENT LAYER                                                │
+│  Framework metadata (Django · FastAPI · React · Rails · Spring)  │
+│  VCS (Git · Fossil) · CODEOWNERS · ADRs · OpenAPI · GraphQL      │
+├──────────────────────────────────────────────────────────────────┤
+│  STORE LAYER                                                     │
+│  FalkorDB (falkordblite SQLite local / Redis cluster)           │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Code layer
 
-Populated automatically by `navegador ingest`. Contains the structural facts extracted from source code: which functions exist, what they call, which classes inherit from which, what decorators are applied. This layer changes whenever code changes; re-ingest is the refresh mechanism.
+Populated automatically by `navegador ingest`. Contains the structural facts extracted from source code across 13 languages: which functions exist, what they call, which classes inherit from which, what decorators are applied. Supports incremental ingestion (content hashing), watch mode, and parallel processing. This layer changes whenever code changes; re-ingest is the refresh mechanism.
 
 ### Knowledge layer
 
-Populated by humans (via `navegador add`) or semi-automatically (via wiki and Planopticon ingestion). Contains the *why*: business concepts, architectural rules, recorded decisions, domain ownership, and documentation. This layer changes slowly and deliberately.
+Populated by humans (via `navegador add`) or semi-automatically (via wiki, Planopticon, ADR, OpenAPI, and PM ingestion). Contains the *why*: business concepts, architectural rules, recorded decisions, domain ownership, and documentation. This layer changes slowly and deliberately.
+
+### Enrichment layer
+
+Framework enrichers run after AST parsing to add framework-specific metadata — Django model field types, FastAPI route paths, React component display names, etc. VCS adapters (Git, Fossil) provide blame, history, and churn data. CODEOWNERS files are parsed to populate `Person`→`File` ownership edges.
+
+### Analysis layer
+
+Graph analysis commands operate over the populated code and knowledge layers without additional ingestion. They run Cypher traversals for impact analysis, cycle detection, dead code detection, test mapping, and community detection.
+
+### Intelligence layer
+
+NLP and LLM commands (`navegador ask`, `navegador semantic-search`, `navegador docs`) use configurable LLM providers (Anthropic, OpenAI, Ollama) to answer natural language queries grounded in graph data.
 
 ### Cross-layer edges
 
@@ -75,13 +102,21 @@ Both backends implement the same `GraphStore` interface. The query path is ident
 ## Ingestion pipeline
 
 ```
-Source code (Python · TypeScript · JavaScript · Go · Rust · Java)
+Source code (13 languages via tree-sitter)
           │
           ▼
     tree-sitter parser (per-language grammar)
+    + incremental parsing (LRU cache, content hashing)
+    + parallel ingestion (worker pool)
           │
           ▼
     AST visitor (extract nodes + relationships)
+          │
+          ▼
+    Framework enrichers (Django · FastAPI · React · Rails · Spring · Laravel · …)
+          │
+          ▼
+    Graph diffing (only write changed nodes/edges)
           │
           ▼
     GraphStore.merge_node / create_edge
@@ -94,9 +129,14 @@ Source code (Python · TypeScript · JavaScript · Go · Rust · Java)
 Human curation (navegador add)
 Wiki pages (navegador wiki ingest)
 Planopticon output (navegador planopticon ingest)
+ADRs (navegador adr ingest)
+OpenAPI / GraphQL schemas (navegador api ingest)
+PM issues (navegador pm ingest --github)
+External deps (navegador deps ingest)
+Submodules (navegador submodules ingest)
           │
           ▼
-    KnowledgeIngester / WikiIngester / PlanopticonIngester
+    KnowledgeIngester / WikiIngester / PlanopticonIngester / …
           │
           ▼
     GraphStore.merge_node / create_edge
@@ -109,28 +149,54 @@ All ingesters write to the same graph. There is no separate code database and kn
 
 ---
 
-## Query path
+## Query and analysis path
 
 ```
 User / agent
      │
-     ▼  CLI command or MCP tool call
-navegador context / function / explain / search / ...
+     ▼  CLI command, MCP tool call, or Python SDK
+navegador context / function / explain / search / impact / trace / ...
      │
      ▼
-ContextLoader (builds Cypher query)
+ContextLoader / AnalysisEngine (builds Cypher query)
      │
      ▼
-GraphStore.query(cypher)
+GraphStore.query(cypher)          ← MCP: query validation + complexity check
      │
      ▼
 FalkorDB (SQLite or Redis)
      │
      ▼
-ContextBundle (structured result)
+ContextBundle / AnalysisResult (structured result)
      │
      ▼
 JSON / Markdown / rich terminal output
 ```
 
-`ContextLoader` is the query abstraction layer. Each command (`function`, `class`, `explain`, etc.) corresponds to a `ContextLoader` method that constructs the appropriate Cypher query, fetches results, and assembles a `ContextBundle`. The CLI formats the bundle for output; the MCP server returns it as JSON.
+`ContextLoader` handles context retrieval commands (`function`, `class`, `explain`, etc.). `AnalysisEngine` handles graph analysis commands (`impact`, `trace`, `deadcode`, `cycles`, `churn`, `testmap`). Both construct Cypher queries, fetch results from `GraphStore`, and return structured output. The CLI formats output for the terminal; the MCP server returns JSON; the Python SDK returns typed Python objects.
+
+---
+
+## Cluster architecture
+
+For team and CI environments, navegador supports a cluster mode backed by a shared Redis graph:
+
+```
+Multiple agents / CI runners
+          │
+          ▼
+    navegador (each instance)
+          │
+          ▼
+    ┌────────────────────────────────────────┐
+    │  Shared Redis                          │
+    │  ├── FalkorDB graph (shared state)     │
+    │  ├── Pub/sub (event broadcast)         │
+    │  ├── Task queue (ingest jobs)          │
+    │  ├── Sessions (agent state)            │
+    │  ├── Checkpoints (long-running tasks)  │
+    │  └── Observability (metrics, traces)  │
+    └────────────────────────────────────────┘
+```
+
+Configure with `[cluster]` in `.navegador/config.toml`. See [Configuration](../getting-started/configuration.md) for details.

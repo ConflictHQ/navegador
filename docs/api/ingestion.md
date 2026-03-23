@@ -37,11 +37,16 @@ class RepoIngester:
         path: str | Path,
         *,
         clear: bool = False,
+        incremental: bool = False,
+        redact: bool = False,
+        monorepo: bool = False,
     ) -> IngestionResult: ...
 
     def ingest_file(
         self,
         path: str | Path,
+        *,
+        redact: bool = False,
     ) -> IngestionResult: ...
 ```
 
@@ -55,20 +60,39 @@ ingester = RepoIngester(store)
 result = ingester.ingest("./src")
 print(f"{result.nodes_created} nodes, {result.edges_created} edges")
 
+# incremental ingest — only reprocesses files whose content hash has changed
+result = ingester.ingest("./src", incremental=True)
+
 # incremental: single file
 result = ingester.ingest_file("./src/auth/service.py")
 
 # wipe + rebuild
 result = ingester.ingest("./src", clear=True)
+
+# redact sensitive content (strips tokens, passwords, keys from string literals)
+result = ingester.ingest("./src", redact=True)
+
+# monorepo — traverse workspace sub-packages
+result = ingester.ingest("./monorepo", monorepo=True)
 ```
 
 ### Supported languages
 
-| Language | File extensions | Parser |
-|---|---|---|
-| Python | `.py` | tree-sitter-python |
-| TypeScript | `.ts`, `.tsx` | tree-sitter-typescript |
-| JavaScript | `.js`, `.jsx` | tree-sitter-javascript |
+| Language | File extensions | Parser | Extra required |
+|---|---|---|---|
+| Python | `.py` | tree-sitter-python | — (included) |
+| TypeScript | `.ts`, `.tsx` | tree-sitter-typescript | — (included) |
+| JavaScript | `.js`, `.jsx` | tree-sitter-javascript | — (included) |
+| Go | `.go` | tree-sitter-go | — (included) |
+| Rust | `.rs` | tree-sitter-rust | — (included) |
+| Java | `.java` | tree-sitter-java | — (included) |
+| Kotlin | `.kt`, `.kts` | tree-sitter-kotlin | `navegador[languages]` |
+| C# | `.cs` | tree-sitter-c-sharp | `navegador[languages]` |
+| PHP | `.php` | tree-sitter-php | `navegador[languages]` |
+| Ruby | `.rb` | tree-sitter-ruby | `navegador[languages]` |
+| Swift | `.swift` | tree-sitter-swift | `navegador[languages]` |
+| C | `.c`, `.h` | tree-sitter-c | `navegador[languages]` |
+| C++ | `.cpp`, `.cc`, `.cxx`, `.hpp` | tree-sitter-cpp | `navegador[languages]` |
 
 ### Adding a new language parser
 
@@ -96,6 +120,21 @@ PARSERS["ruby"] = RubyParser
 ```
 
 `RepoIngester` dispatches to registered parsers by file extension.
+
+### Framework enrichers
+
+After parsing, `RepoIngester` runs framework-specific enrichers that annotate nodes with framework context. Enrichers are discovered automatically based on what frameworks are detected in the repo.
+
+| Framework | What gets enriched |
+|---|---|
+| Django | Models, views, URL patterns, admin registrations |
+| FastAPI | Route handlers, dependency injections, Pydantic schemas |
+| React | Components, hooks, prop types |
+| Express | Route handlers, middleware chains |
+| React Native | Screens, navigators |
+| Rails | Controllers, models, routes |
+| Spring Boot | Beans, controllers, repositories |
+| Laravel | Controllers, models, routes |
 
 ---
 
@@ -268,3 +307,53 @@ class PlanopticonIngester:
 `input_type` values: `"auto"`, `"manifest"`, `"kg"`, `"interchange"`, `"batch"`.
 
 See [Planopticon guide](../guide/planopticon.md) for format details and entity mapping.
+
+---
+
+## Export and import
+
+Navegador can export the full graph (or a subset) to JSONL for backup, migration, or sharing. The JSONL format is one JSON object per line, where each object is either a node or an edge.
+
+```bash
+navegador export > graph.jsonl
+navegador export --nodes-only > nodes.jsonl
+navegador import graph.jsonl
+```
+
+Python API:
+
+```python
+from navegador.graph import GraphStore
+
+store = GraphStore.sqlite(".navegador/navegador.db")
+
+# export
+with open("graph.jsonl", "w") as f:
+    store.export_jsonl(f)
+
+# import into a new store
+new_store = GraphStore.sqlite(".navegador/new.db")
+with open("graph.jsonl") as f:
+    new_store.import_jsonl(f)
+```
+
+---
+
+## Schema migrations
+
+When upgrading navegador, run `navegador migrate` before re-ingesting to apply schema changes (new node properties, new edge types, index updates):
+
+```bash
+navegador migrate
+```
+
+Migrations are idempotent — safe to run multiple times. The migration state is stored in the graph itself under a `_MigrationState` node.
+
+Python API:
+
+```python
+from navegador.graph import GraphStore, migrate
+
+store = GraphStore.sqlite(".navegador/navegador.db")
+migrate(store)   # applies any pending migrations
+```
