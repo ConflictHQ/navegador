@@ -111,4 +111,4 @@ store = GraphStore.redis("redis://localhost:6379")
 
 ## License
 
-MIT — [CONFLICT LLC](https://github.com/ConflictHQ)
+MIT — [CONFLICT](https://weareconflict.com)
