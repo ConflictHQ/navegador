@@ -29,7 +29,6 @@ from typing import Any
 from navegador.graph.store import GraphStore
 from navegador.vcs import GitAdapter
 
-
 # ── Cypher helpers ────────────────────────────────────────────────────────────
 
 # All symbols (Function / Class / Method) in a given file with their line ranges
@@ -103,9 +102,7 @@ def _parse_unified_diff_hunks(diff_output: str) -> dict[str, list[tuple[int, int
                     current_new_count = 1
                 if current_file and current_new_count > 0:
                     end = current_new_start + max(current_new_count - 1, 0)
-                    result.setdefault(current_file, []).append(
-                        (current_new_start, end)
-                    )
+                    result.setdefault(current_file, []).append((current_new_start, end))
             except (ValueError, IndexError):
                 pass
 

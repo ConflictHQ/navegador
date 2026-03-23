@@ -16,7 +16,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -138,9 +138,9 @@ class WorkspaceDetector:
         # Try reading nx.json for explicit projects
         nx_json = root / "nx.json"
         try:
-            data = json.loads(nx_json.read_text(encoding="utf-8"))
+            json.loads(nx_json.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            data = {}
+            pass
 
         # Nx 16+ uses workspaceLayout or projects in project.json files
         packages: list[Path] = []
@@ -449,9 +449,7 @@ class MonorepoIngester:
                         )
                         edges_created += 1
                     except Exception:
-                        logger.debug(
-                            "Could not create DEPENDS_ON edge %s → %s", pkg_name, target
-                        )
+                        logger.debug("Could not create DEPENDS_ON edge %s → %s", pkg_name, target)
 
         return edges_created
 

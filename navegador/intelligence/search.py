@@ -141,9 +141,7 @@ class SemanticSearch:
 
         scored: list[dict[str, Any]] = []
         for row in rows:
-            node_type, name, file_path, text, emb_json = (
-                row[0], row[1], row[2], row[3], row[4]
-            )
+            node_type, name, file_path, text, emb_json = (row[0], row[1], row[2], row[3], row[4])
             if not emb_json:
                 continue
             try:

@@ -78,8 +78,7 @@ class FastAPIEnricher(FrameworkEnricher):
             for row in rows:
                 name, file_path = row[0], row[1]
                 if name and file_path:
-                    self._promote_node(name, file_path, "Route",
-                                       {"http_method": http_method})
+                    self._promote_node(name, file_path, "Route", {"http_method": http_method})
                     promoted += 1
 
         # Strategy 2: signature / docstring heuristics (no Decorator nodes)
@@ -96,8 +95,7 @@ class FastAPIEnricher(FrameworkEnricher):
                 for row in rows:
                     name, file_path = row[0], row[1]
                     if name and file_path:
-                        self._promote_node(name, file_path, "Route",
-                                           {"http_method": http_method})
+                        self._promote_node(name, file_path, "Route", {"http_method": http_method})
                         promoted += 1
 
         return promoted

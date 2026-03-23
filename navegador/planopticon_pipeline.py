@@ -20,11 +20,10 @@ Usage::
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from navegador.graph.schema import EdgeType, NodeLabel
 from navegador.graph.store import GraphStore
 
 logger = logging.getLogger(__name__)
@@ -137,9 +136,9 @@ class PlanopticonPipeline:
         """
         items: list[ActionItem] = []
 
-        source = kg_data.get("video", {}).get("title", "") or kg_data.get(
-            "project", {}
-        ).get("name", "")
+        source = kg_data.get("video", {}).get("title", "") or kg_data.get("project", {}).get(
+            "name", ""
+        )
 
         # Explicit action_items list (manifest format)
         for raw in kg_data.get("action_items", []):
@@ -203,14 +202,16 @@ class PlanopticonPipeline:
 
         timeline = []
         for row in rows:
-            timeline.append({
-                "name": row[0] or "",
-                "description": row[1] or "",
-                "domain": row[2] or "",
-                "status": row[3] or "",
-                "rationale": row[4] or "",
-                "date": row[5] or "",
-            })
+            timeline.append(
+                {
+                    "name": row[0] or "",
+                    "description": row[1] or "",
+                    "domain": row[2] or "",
+                    "status": row[3] or "",
+                    "rationale": row[4] or "",
+                    "date": row[5] or "",
+                }
+            )
         return timeline
 
     # ── Auto-link to code ─────────────────────────────────────────────────────
@@ -232,14 +233,10 @@ class PlanopticonPipeline:
         """
         # Fetch all knowledge nodes
         knowledge_cypher = (
-            "MATCH (k) "
-            "WHERE k:Concept OR k:Decision OR k:Rule "
-            "RETURN labels(k)[0], k.name"
+            "MATCH (k) WHERE k:Concept OR k:Decision OR k:Rule RETURN labels(k)[0], k.name"
         )
         code_cypher = (
-            "MATCH (c) "
-            "WHERE c:Function OR c:Class OR c:Method "
-            "RETURN labels(c)[0], c.name"
+            "MATCH (c) WHERE c:Function OR c:Class OR c:Method RETURN labels(c)[0], c.name"
         )
 
         try:
@@ -250,14 +247,10 @@ class PlanopticonPipeline:
             return 0
 
         knowledge_nodes: list[tuple[str, str]] = [
-            (str(row[0]), str(row[1]))
-            for row in (k_result.result_set or [])
-            if row[0] and row[1]
+            (str(row[0]), str(row[1])) for row in (k_result.result_set or []) if row[0] and row[1]
         ]
         code_nodes: list[tuple[str, str]] = [
-            (str(row[0]), str(row[1]))
-            for row in (c_result.result_set or [])
-            if row[0] and row[1]
+            (str(row[0]), str(row[1])) for row in (c_result.result_set or []) if row[0] and row[1]
         ]
 
         if not knowledge_nodes or not code_nodes:
@@ -267,9 +260,7 @@ class PlanopticonPipeline:
         for k_label, k_name in knowledge_nodes:
             # Extract significant tokens (length >= 4) from the knowledge name
             tokens = [
-                w.lower()
-                for w in k_name.replace("_", " ").replace("-", " ").split()
-                if len(w) >= 4
+                w.lower() for w in k_name.replace("_", " ").replace("-", " ").split() if len(w) >= 4
             ]
             if not tokens:
                 continue
@@ -279,20 +270,14 @@ class PlanopticonPipeline:
                 if any(tok in c_lower for tok in tokens):
                     # Create ANNOTATES edge from knowledge node to code node
                     cypher = (
-                        "MATCH (k:"
-                        + k_label
-                        + " {name: $kn}), (c:"
-                        + c_label
-                        + " {name: $cn}) "
+                        "MATCH (k:" + k_label + " {name: $kn}), (c:" + c_label + " {name: $cn}) "
                         "MERGE (k)-[r:ANNOTATES]->(c)"
                     )
                     try:
                         store.query(cypher, {"kn": k_name, "cn": c_name})
                         linked += 1
                     except Exception:
-                        logger.debug(
-                            "auto_link_to_code: could not link %s → %s", k_name, c_name
-                        )
+                        logger.debug("auto_link_to_code: could not link %s → %s", k_name, c_name)
 
         return linked
 

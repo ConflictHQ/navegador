@@ -64,9 +64,7 @@ def migrate(store: GraphStore) -> list[int]:
     while current < CURRENT_SCHEMA_VERSION:
         fn = _migrations.get(current)
         if fn is None:
-            raise RuntimeError(
-                f"No migration registered for version {current} -> {current + 1}"
-            )
+            raise RuntimeError(f"No migration registered for version {current} -> {current + 1}")
         logger.info("Applying migration %d -> %d", current, current + 1)
         fn(store)
         current += 1
@@ -95,7 +93,5 @@ def _migrate_0_to_1(store: GraphStore) -> None:
 def _migrate_1_to_2(store: GraphStore) -> None:
     """Add content_hash property to File nodes for incremental ingestion."""
     # Set content_hash to empty string on existing File nodes that lack it.
-    store.query(
-        "MATCH (f:File) WHERE f.content_hash IS NULL SET f.content_hash = ''"
-    )
+    store.query("MATCH (f:File) WHERE f.content_hash IS NULL SET f.content_hash = ''")
     logger.info("Added content_hash to File nodes")

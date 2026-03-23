@@ -67,21 +67,15 @@ def validate_cypher(query: str) -> None:
     for kw in _WRITE_KEYWORDS:
         pattern = re.compile(rf"\b{kw}\b")
         if pattern.search(upper):
-            raise QueryValidationError(
-                f"Write operation '{kw}' is not allowed in read-only mode."
-            )
+            raise QueryValidationError(f"Write operation '{kw}' is not allowed in read-only mode.")
 
     # Check for CALL procedure injection
     if _CALL_RE.search(stripped):
-        raise QueryValidationError(
-            "CALL procedures are not allowed in read-only mode."
-        )
+        raise QueryValidationError("CALL procedures are not allowed in read-only mode.")
 
     # Check for nested / sub-query patterns
     if _SUBQUERY_RE.search(stripped):
-        raise QueryValidationError(
-            "Nested sub-queries are not allowed in read-only mode."
-        )
+        raise QueryValidationError("Nested sub-queries are not allowed in read-only mode.")
 
 
 def check_complexity(

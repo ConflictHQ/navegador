@@ -63,9 +63,7 @@ class SymbolRenamer:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def find_references(
-        self, name: str, file_path: str = ""
-    ) -> list[dict[str, Any]]:
+    def find_references(self, name: str, file_path: str = "") -> list[dict[str, Any]]:
         """
         Return all graph nodes whose name matches *name*.
 
@@ -153,9 +151,7 @@ class SymbolRenamer:
 
     def _count_edges(self, name: str) -> int:
         """Count edges incident on nodes named *name*."""
-        cypher = (
-            "MATCH (n)-[r]-() WHERE n.name = $name RETURN count(r) AS c"
-        )
+        cypher = "MATCH (n)-[r]-() WHERE n.name = $name RETURN count(r) AS c"
         result = self.store.query(cypher, {"name": name})
         rows = result.result_set or []
         if rows:

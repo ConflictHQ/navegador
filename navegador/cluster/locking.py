@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from contextlib import contextmanager
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -129,9 +128,7 @@ class DistributedLock:
         deadline = time.monotonic() + self._timeout
         acquired = self.acquire(blocking=True, deadline=deadline)
         if not acquired:
-            raise LockTimeout(
-                f"Could not acquire lock '{self._name}' within {self._timeout}s"
-            )
+            raise LockTimeout(f"Could not acquire lock '{self._name}' within {self._timeout}s")
         return self
 
     def __exit__(self, *_: object) -> None:

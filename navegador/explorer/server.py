@@ -53,12 +53,14 @@ def _get_all_nodes(store: "GraphStore") -> list[dict]:
     for row in rows:
         nid, label, name, props = row[0], row[1], row[2], row[3]
         node_props = dict(props) if isinstance(props, dict) else {}
-        result.append({
-            "id": str(nid),
-            "label": label or "default",
-            "name": name or str(nid),
-            "props": node_props,
-        })
+        result.append(
+            {
+                "id": str(nid),
+                "label": label or "default",
+                "name": name or str(nid),
+                "props": node_props,
+            }
+        )
     return result
 
 
@@ -87,12 +89,14 @@ def _search_nodes(store: "GraphStore", query: str, limit: int = 50) -> list[dict
     )
     result = []
     for row in rows:
-        result.append({
-            "label": row[0] or "",
-            "name": row[1] or "",
-            "file_path": row[2] or "",
-            "domain": row[3] or "",
-        })
+        result.append(
+            {
+                "label": row[0] or "",
+                "name": row[1] or "",
+                "file_path": row[2] or "",
+                "domain": row[3] or "",
+            }
+        )
     return result
 
 
@@ -212,7 +216,7 @@ def _make_handler(store: "GraphStore"):
 
             # ── Node detail — /api/node/<name>
             elif path.startswith("/api/node/"):
-                raw_name = path[len("/api/node/"):]
+                raw_name = path[len("/api/node/") :]
                 name = unquote(raw_name)
                 detail = _get_node_detail(self._store, name)
                 self._send_json(detail)

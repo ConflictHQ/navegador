@@ -145,7 +145,7 @@ def create_mcp_server(store_factory, read_only: bool = False):
             ),
             Tool(
                 name="get_rationale",
-                description="Return the rationale, alternatives, and status of an architectural decision.",
+                description="Return rationale, alternatives, and status of a decision.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -177,7 +177,7 @@ def create_mcp_server(store_factory, read_only: bool = False):
             ),
             Tool(
                 name="search_knowledge",
-                description="Search concepts, rules, decisions, and wiki pages by name or description.",
+                description="Search concepts, rules, decisions, and wiki pages.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -219,10 +219,12 @@ def create_mcp_server(store_factory, read_only: bool = False):
 
         if name == "ingest_repo":
             if read_only:
-                return [TextContent(
-                    type="text",
-                    text="Error: ingest_repo is disabled in read-only mode.",
-                )]
+                return [
+                    TextContent(
+                        type="text",
+                        text="Error: ingest_repo is disabled in read-only mode.",
+                    )
+                ]
             from navegador.ingestion import RepoIngester
 
             ingester = RepoIngester(loader.store)
@@ -291,21 +293,14 @@ def create_mcp_server(store_factory, read_only: bool = False):
             )
             if not results:
                 return [TextContent(type="text", text="No owners found.")]
-            lines = [
-                f"- **{r.name}** ({r.description})" for r in results
-            ]
+            lines = [f"- **{r.name}** ({r.description})" for r in results]
             return [TextContent(type="text", text="\n".join(lines))]
 
         elif name == "search_knowledge":
-            results = loader.search_knowledge(
-                arguments["query"], limit=arguments.get("limit", 20)
-            )
+            results = loader.search_knowledge(arguments["query"], limit=arguments.get("limit", 20))
             if not results:
                 return [TextContent(type="text", text="No results.")]
-            lines = [
-                f"- **{r.type}** `{r.name}` — {r.description or ''}"
-                for r in results
-            ]
+            lines = [f"- **{r.type}** `{r.name}` — {r.description or ''}" for r in results]
             return [TextContent(type="text", text="\n".join(lines))]
 
         elif name == "blast_radius":

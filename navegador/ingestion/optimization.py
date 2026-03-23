@@ -298,7 +298,9 @@ class GraphDiffer:
             label, name, line_start = row[0], row[1], row[2]
             if name is None or line_start is None:
                 continue
-            nodes.append(NodeDescriptor(label=str(label), name=str(name), line_start=int(line_start)))
+            nodes.append(
+                NodeDescriptor(label=str(label), name=str(name), line_start=int(line_start))
+            )
         return nodes
 
 
@@ -370,9 +372,7 @@ class ParallelIngester:
 
         # Collect all candidate files up-front (fast, single-threaded).
         candidate_files = [
-            f
-            for f in self._ingester._iter_source_files(repo_path)
-            if LANGUAGE_MAP.get(f.suffix)
+            f for f in self._ingester._iter_source_files(repo_path) if LANGUAGE_MAP.get(f.suffix)
         ]
 
         aggregated: dict[str, int] = {
@@ -398,9 +398,7 @@ class ParallelIngester:
             if incremental:
                 self._ingester._clear_file_subgraph(rel_path)
 
-            parse_path, effective_root = self._ingester._maybe_redact_to_tmp(
-                source_file, repo_path
-            )
+            parse_path, effective_root = self._ingester._maybe_redact_to_tmp(source_file, repo_path)
             try:
                 parser = self._ingester._get_parser(language)
                 file_stats = parser.parse_file(parse_path, effective_root, self._store)

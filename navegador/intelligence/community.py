@@ -215,10 +215,7 @@ class CommunityDetector:
 
             # Density = actual internal edges / possible internal edges
             internal_edges = sum(
-                1
-                for nid in members_ids
-                for nb in adj.get(nid, [])
-                if nb in member_set
+                1 for nid in members_ids for nb in adj.get(nid, []) if nb in member_set
             )
             # Each undirected edge counted twice in the adjacency list
             internal_edges //= 2

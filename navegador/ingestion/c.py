@@ -20,9 +20,7 @@ def _get_c_language():
 
         return Language(tsc.language())
     except ImportError as e:
-        raise ImportError(
-            "Install tree-sitter-c: pip install tree-sitter-c"
-        ) from e
+        raise ImportError("Install tree-sitter-c: pip install tree-sitter-c") from e
 
 
 def _node_text(node, source: bytes) -> str:
@@ -141,8 +139,10 @@ class CParser(LanguageParser):
             return
         name = _node_text(name_node, source)
 
-        kind = "struct" if node.type == "struct_specifier" else (
-            "union" if node.type == "union_specifier" else "enum"
+        kind = (
+            "struct"
+            if node.type == "struct_specifier"
+            else ("union" if node.type == "union_specifier" else "enum")
         )
         store.create_node(
             NodeLabel.Class,
@@ -207,9 +207,7 @@ class CParser(LanguageParser):
             if node.type == "call_expression":
                 func = node.child_by_field_name("function")
                 if not func:
-                    func = next(
-                        (c for c in node.children if c.type == "identifier"), None
-                    )
+                    func = next((c for c in node.children if c.type == "identifier"), None)
                 if func:
                     callee = _node_text(func, source)
                     store.create_edge(

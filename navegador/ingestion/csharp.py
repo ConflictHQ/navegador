@@ -20,9 +20,7 @@ def _get_csharp_language():
 
         return Language(tscsharp.language())
     except ImportError as e:
-        raise ImportError(
-            "Install tree-sitter-c-sharp: pip install tree-sitter-c-sharp"
-        ) from e
+        raise ImportError("Install tree-sitter-c-sharp: pip install tree-sitter-c-sharp") from e
 
 
 def _node_text(node, source: bytes) -> str:
@@ -134,9 +132,7 @@ class CSharpParser(LanguageParser):
         # Walk class body for methods
         body = node.child_by_field_name("body")
         if not body:
-            body = next(
-                (c for c in node.children if c.type == "declaration_list"), None
-            )
+            body = next((c for c in node.children if c.type == "declaration_list"), None)
         if body:
             for child in body.children:
                 if child.type in ("method_declaration", "constructor_declaration"):
@@ -192,12 +188,7 @@ class CSharpParser(LanguageParser):
     ) -> None:
         raw = _node_text(node, source).strip()
         # "using System.Collections.Generic;" or "using static ..."
-        module = (
-            raw.removeprefix("using")
-            .removeprefix(" static")
-            .removesuffix(";")
-            .strip()
-        )
+        module = raw.removeprefix("using").removeprefix(" static").removesuffix(";").strip()
         if not module:
             return
         store.create_node(
@@ -233,7 +224,11 @@ class CSharpParser(LanguageParser):
                 func = node.child_by_field_name("function")
                 if not func:
                     func = next(
-                        (c for c in node.children if c.type in ("identifier", "member_access_expression")),
+                        (
+                            c
+                            for c in node.children
+                            if c.type in ("identifier", "member_access_expression")
+                        ),
                         None,
                     )
                 if func:

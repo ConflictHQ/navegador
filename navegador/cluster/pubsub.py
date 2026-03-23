@@ -94,10 +94,12 @@ class GraphNotifier:
             Number of clients that received the message.
         """
         channel = _channel_name(event_type)
-        payload = json.dumps({
-            "event_type": event_type.value if isinstance(event_type, EventType) else event_type,
-            "data": data,
-        })
+        payload = json.dumps(
+            {
+                "event_type": event_type.value if isinstance(event_type, EventType) else event_type,
+                "data": data,
+            }
+        )
         result = self._redis.publish(channel, payload)
         logger.debug("Published %s to channel %s (%d receivers)", event_type, channel, result)
         return result

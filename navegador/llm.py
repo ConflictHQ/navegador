@@ -24,7 +24,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-
 # ── Abstract base ─────────────────────────────────────────────────────────────
 
 
@@ -295,8 +294,7 @@ def get_provider(name: str, model: str = "") -> LLMProvider:
     """
     if name not in _PROVIDER_CLASS_MAP:
         raise ValueError(
-            f"Unknown LLM provider: {name!r}. "
-            f"Valid options are: {sorted(_PROVIDER_CLASS_MAP)}"
+            f"Unknown LLM provider: {name!r}. Valid options are: {sorted(_PROVIDER_CLASS_MAP)}"
         )
     cls = _PROVIDER_CLASS_MAP[name]
     return cls(model=model)

@@ -47,7 +47,9 @@ def get_eval_line(shell: str) -> str:
     Raises ValueError for unsupported shells.
     """
     if shell not in SUPPORTED_SHELLS:
-        raise ValueError(f"Unsupported shell: {shell!r}. Choose from: {', '.join(SUPPORTED_SHELLS)}")
+        raise ValueError(
+            f"Unsupported shell: {shell!r}. Choose from: {', '.join(SUPPORTED_SHELLS)}"
+        )
     return _EVAL_LINES[shell]
 
 
@@ -57,14 +59,18 @@ def get_rc_path(shell: str) -> str:
     Raises ValueError for unsupported shells.
     """
     if shell not in SUPPORTED_SHELLS:
-        raise ValueError(f"Unsupported shell: {shell!r}. Choose from: {', '.join(SUPPORTED_SHELLS)}")
+        raise ValueError(
+            f"Unsupported shell: {shell!r}. Choose from: {', '.join(SUPPORTED_SHELLS)}"
+        )
     return _RC_PATHS[shell]
 
 
 def get_install_instruction(shell: str) -> str:
     """Return a human-readable instruction for adding completions to *shell*."""
     if shell not in SUPPORTED_SHELLS:
-        raise ValueError(f"Unsupported shell: {shell!r}. Choose from: {', '.join(SUPPORTED_SHELLS)}")
+        raise ValueError(
+            f"Unsupported shell: {shell!r}. Choose from: {', '.join(SUPPORTED_SHELLS)}"
+        )
     rc = _RC_PATHS[shell]
     line = _EVAL_LINES[shell]
     return f"Add the following line to {rc}:\n\n  {line}"
@@ -84,7 +90,9 @@ def install_completion(shell: str, rc_path: str | None = None) -> Path:
         ValueError: For unsupported shells.
     """
     if shell not in SUPPORTED_SHELLS:
-        raise ValueError(f"Unsupported shell: {shell!r}. Choose from: {', '.join(SUPPORTED_SHELLS)}")
+        raise ValueError(
+            f"Unsupported shell: {shell!r}. Choose from: {', '.join(SUPPORTED_SHELLS)}"
+        )
 
     target = Path(rc_path or _RC_PATHS[shell]).expanduser()
     line = _EVAL_LINES[shell]

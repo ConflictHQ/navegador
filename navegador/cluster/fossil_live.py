@@ -9,9 +9,7 @@ SQLite-backed.
 
 from __future__ import annotations
 
-import json
 import logging
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -73,6 +71,7 @@ class FossilLiveAdapter:
                 conn = getattr(client, attr, None)
                 if conn is not None:
                     import sqlite3
+
                     if isinstance(conn, sqlite3.Connection):
                         return conn
         except Exception:
@@ -96,9 +95,7 @@ class FossilLiveAdapter:
 
         native_conn = self._extract_sqlite_conn(store)
         if native_conn is not None:
-            native_conn.execute(
-                f"ATTACH DATABASE ? AS fossil", (str(self._fossil_path),)
-            )
+            native_conn.execute("ATTACH DATABASE ? AS fossil", (str(self._fossil_path),))
             self._conn = native_conn
             self._attached = True
             logger.info("Fossil DB attached to FalkorDB SQLite: %s", self._fossil_path)
@@ -141,16 +138,18 @@ class FossilLiveAdapter:
             if hasattr(row, "keys"):
                 result.append(dict(row))
             else:
-                result.append({
-                    "type": row[0],
-                    "mtime": row[1],
-                    "objid": row[2],
-                    "uid": row[3],
-                    "user": row[4],
-                    "euser": row[5],
-                    "comment": row[6],
-                    "ecomment": row[7],
-                })
+                result.append(
+                    {
+                        "type": row[0],
+                        "mtime": row[1],
+                        "objid": row[2],
+                        "uid": row[3],
+                        "user": row[4],
+                        "euser": row[5],
+                        "comment": row[6],
+                        "ecomment": row[7],
+                    }
+                )
         return result
 
     def query_tickets(self) -> list[dict]:
@@ -234,7 +233,5 @@ class FossilLiveAdapter:
             )
             ticket_count += 1
 
-        logger.info(
-            "Fossil sync complete: %d commits, %d tickets", commit_count, ticket_count
-        )
+        logger.info("Fossil sync complete: %d commits, %d tickets", commit_count, ticket_count)
         return {"commits": commit_count, "tickets": ticket_count}

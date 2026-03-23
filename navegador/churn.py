@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 
-
 # ── Data models ───────────────────────────────────────────────────────────────
 
 
@@ -257,17 +256,14 @@ class ChurnAnalyzer:
         # -- Update File node churn scores ------------------------------------
         for entry in self.file_churn():
             cypher = (
-                "MATCH (f:File {file_path: $fp}) "
-                "SET f.churn_score = $score, f.lines_changed = $lc"
+                "MATCH (f:File {file_path: $fp}) SET f.churn_score = $score, f.lines_changed = $lc"
             )
             result = store.query(
                 cypher,
                 {"fp": entry.file_path, "score": entry.commit_count, "lc": entry.lines_changed},
             )
             # FalkorDB returns stats; count rows affected if available
-            if getattr(result, "nodes_modified", None) or getattr(
-                result, "properties_set", None
-            ):
+            if getattr(result, "nodes_modified", None) or getattr(result, "properties_set", None):
                 churn_updated += 1
             else:
                 # Fallback: assume the match succeeded if no error was raised

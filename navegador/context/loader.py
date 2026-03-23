@@ -341,9 +341,7 @@ class ContextLoader:
 
     def find_owners(self, name: str, file_path: str = "") -> list[ContextNode]:
         """Find people assigned to a named node."""
-        result = self.store.query(
-            queries.FIND_OWNERS, {"name": name, "file_path": file_path}
-        )
+        result = self.store.query(queries.FIND_OWNERS, {"name": name, "file_path": file_path})
         return [
             ContextNode(
                 type="Person",

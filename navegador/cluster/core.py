@@ -109,14 +109,16 @@ class ClusterManager:
         if edges_result.result_set:
             for row in edges_result.result_set:
                 src, rel_type, rel, dst = row
-                edges.append({
-                    "src_labels": list(src.labels),
-                    "src_props": dict(src.properties),
-                    "rel_type": rel_type,
-                    "rel_props": dict(rel.properties) if rel.properties else {},
-                    "dst_labels": list(dst.labels),
-                    "dst_props": dict(dst.properties),
-                })
+                edges.append(
+                    {
+                        "src_labels": list(src.labels),
+                        "src_props": dict(src.properties),
+                        "rel_type": rel_type,
+                        "rel_props": dict(rel.properties) if rel.properties else {},
+                        "dst_labels": list(dst.labels),
+                        "dst_props": dict(dst.properties),
+                    }
+                )
 
         return {"nodes": nodes, "edges": edges}
 
@@ -169,11 +171,14 @@ class ClusterManager:
         pipe.set(_SNAPSHOT_KEY, serialized)
         new_version = self._redis_version() + 1
         pipe.set(_VERSION_KEY, new_version)
-        pipe.hset(_META_KEY, mapping={
-            "last_push": time.time(),
-            "node_count": len(data["nodes"]),
-            "edge_count": len(data["edges"]),
-        })
+        pipe.hset(
+            _META_KEY,
+            mapping={
+                "last_push": time.time(),
+                "node_count": len(data["nodes"]),
+                "edge_count": len(data["edges"]),
+            },
+        )
         pipe.execute()
         self._set_local_version(new_version)
         logger.info(
@@ -198,7 +203,9 @@ class ClusterManager:
             logger.info("Shared graph is newer (%d > %d); pulling.", shared_ver, local_ver)
             self.snapshot_to_local()
         else:
-            logger.info("Local graph is current or ahead (%d >= %d); pushing.", local_ver, shared_ver)
+            logger.info(
+                "Local graph is current or ahead (%d >= %d); pushing.", local_ver, shared_ver
+            )
             self.push_to_shared()
 
     def status(self) -> dict[str, Any]:

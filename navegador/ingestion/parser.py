@@ -153,6 +153,7 @@ class RepoIngester:
                 # Remove the temporary redacted directory if one was created
                 if effective_root is not repo_path:
                     import shutil
+
                     shutil.rmtree(effective_root, ignore_errors=True)
 
         logger.info(

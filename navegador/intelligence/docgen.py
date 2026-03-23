@@ -105,9 +105,7 @@ class DocGenerator:
             ``None`` (default) template-based generation is used.
     """
 
-    def __init__(
-        self, store: "GraphStore", provider: "LLMProvider | None" = None
-    ) -> None:
+    def __init__(self, store: "GraphStore", provider: "LLMProvider | None" = None) -> None:
         self._store = store
         self._provider = provider
 
@@ -169,9 +167,7 @@ class DocGenerator:
             return "\n".join(lines)
 
         for row in rows:
-            sym_type, name, docstring, signature, line = (
-                row[0], row[1], row[2], row[3], row[4]
-            )
+            sym_type, name, docstring, signature, line = (row[0], row[1], row[2], row[3], row[4])
             lines.append(f"## {sym_type}: `{name}`")
             if line is not None:
                 lines.append(f"_Line {line}_")
@@ -202,9 +198,7 @@ class DocGenerator:
             lines.append(f"## `{fp}`")
             lines.append("")
             for row in file_rows:
-                sym_type, name, _, docstring, signature = (
-                    row[0], row[1], row[2], row[3], row[4]
-                )
+                sym_type, name, _, docstring, signature = (row[0], row[1], row[2], row[3], row[4])
                 lines.append(f"### {sym_type}: `{name}`")
                 if signature:
                     lines += ["", f"```python\n{signature}\n```"]

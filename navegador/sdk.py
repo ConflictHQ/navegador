@@ -96,9 +96,7 @@ class Navegador:
         """
         from navegador.ingestion import RepoIngester
 
-        return RepoIngester(self._store).ingest(
-            repo_path, clear=clear, incremental=incremental
-        )
+        return RepoIngester(self._store).ingest(repo_path, clear=clear, incremental=incremental)
 
     # ── Context loading ───────────────────────────────────────────────────────
 
@@ -116,9 +114,7 @@ class Navegador:
 
         return ContextLoader(self._store).load_file(file_path)
 
-    def function_context(
-        self, name: str, file_path: str = "", depth: int = 2
-    ) -> Any:
+    def function_context(self, name: str, file_path: str = "", depth: int = 2) -> Any:
         """
         Return a ContextBundle for a function — callers, callees, decorators.
 
@@ -132,9 +128,7 @@ class Navegador:
         """
         from navegador.context.loader import ContextLoader
 
-        return ContextLoader(self._store).load_function(
-            name, file_path=file_path, depth=depth
-        )
+        return ContextLoader(self._store).load_function(name, file_path=file_path, depth=depth)
 
     def class_context(self, name: str, file_path: str = "") -> Any:
         """

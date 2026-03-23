@@ -34,8 +34,13 @@ def export_graph(store: GraphStore, output_path: str | Path) -> dict[str, int]:
 
     # Sort for deterministic output
     nodes.sort(key=lambda n: (n["label"], json.dumps(n["props"], sort_keys=True)))
-    edges.sort(key=lambda e: (e["type"], json.dumps(e["from"], sort_keys=True),
-                               json.dumps(e["to"], sort_keys=True)))
+    edges.sort(
+        key=lambda e: (
+            e["type"],
+            json.dumps(e["from"], sort_keys=True),
+            json.dumps(e["to"], sort_keys=True),
+        )
+    )
 
     with output_path.open("w", encoding="utf-8") as f:
         for node in nodes:
@@ -89,9 +94,7 @@ def import_graph(store: GraphStore, input_path: str | Path, clear: bool = True) 
 
 def _export_nodes(store: GraphStore) -> list[dict]:
     """Export all nodes with their labels and properties."""
-    result = store.query(
-        "MATCH (n) RETURN labels(n)[0] AS label, properties(n) AS props"
-    )
+    result = store.query("MATCH (n) RETURN labels(n)[0] AS label, properties(n) AS props")
     nodes = []
     for row in result.result_set or []:
         label = row[0]
@@ -111,12 +114,14 @@ def _export_edges(store: GraphStore) -> list[dict]:
     )
     edges = []
     for row in result.result_set or []:
-        edges.append({
-            "kind": "edge",
-            "type": row[0],
-            "from": {"label": row[1], "name": row[2], "path": row[3]},
-            "to": {"label": row[4], "name": row[5], "path": row[6]},
-        })
+        edges.append(
+            {
+                "kind": "edge",
+                "type": row[0],
+                "from": {"label": row[1], "name": row[2], "path": row[3]},
+                "to": {"label": row[4], "name": row[5], "path": row[6]},
+            }
+        )
     return edges
 
 
@@ -145,8 +150,8 @@ def _import_edge(store: GraphStore, record: dict) -> None:
     from_info = record["from"]
     to_info = record["to"]
 
-    from_key = f"name: $from_name"
-    to_key = f"name: $to_name"
+    from_key = "name: $from_name"
+    to_key = "name: $to_name"
 
     params = {
         "from_name": from_info["name"],

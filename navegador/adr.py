@@ -26,9 +26,7 @@ logger = logging.getLogger(__name__)
 # ── Regex helpers ─────────────────────────────────────────────────────────────
 
 _H1 = re.compile(r"^#\s+(.+)$", re.MULTILINE)
-_STATUS = re.compile(
-    r"^#{1,3}\s+Status\s*\n+(.+?)(?=\n#{1,3}\s|\Z)", re.MULTILINE | re.DOTALL
-)
+_STATUS = re.compile(r"^#{1,3}\s+Status\s*\n+(.+?)(?=\n#{1,3}\s|\Z)", re.MULTILINE | re.DOTALL)
 _RATIONALE = re.compile(
     r"^#{1,3}\s+Rationale\s*\n+(.+?)(?=\n#{1,3}\s|\Z)",
     re.MULTILINE | re.DOTALL,

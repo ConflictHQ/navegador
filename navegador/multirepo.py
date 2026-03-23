@@ -29,13 +29,12 @@ Usage::
 
 from __future__ import annotations
 
-import json
 import logging
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from navegador.graph.schema import EdgeType, NodeLabel
+from navegador.graph.schema import NodeLabel
 from navegador.graph.store import GraphStore
 
 logger = logging.getLogger(__name__)
@@ -105,9 +104,7 @@ class WorkspaceManager:
                 "file_path": resolved,
             },
         )
-        logger.info(
-            "WorkspaceManager (%s): registered %s → %s", self.mode.value, name, resolved
-        )
+        logger.info("WorkspaceManager (%s): registered %s → %s", self.mode.value, name, resolved)
 
     def list_repos(self) -> list[dict[str, str]]:
         """Return all registered repositories."""
@@ -155,9 +152,7 @@ class WorkspaceManager:
                 stats = ingester.ingest(path, clear=False)
                 summary[name] = stats
             except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "WorkspaceManager: failed to ingest %s: %s", name, exc
-                )
+                logger.error("WorkspaceManager: failed to ingest %s: %s", name, exc)
                 summary[name] = {"error": str(exc)}
 
         return summary
@@ -193,9 +188,7 @@ class WorkspaceManager:
                         r["repo"] = name
                         all_results.append(r)
             except Exception:
-                logger.debug(
-                    "WorkspaceManager: search failed for repo %s", name, exc_info=True
-                )
+                logger.debug("WorkspaceManager: search failed for repo %s", name, exc_info=True)
 
         return all_results[:limit]
 
@@ -265,9 +258,7 @@ class MultiRepoManager:
 
     def list_repos(self) -> list[dict[str, Any]]:
         """Return all registered repositories."""
-        result = self.store.query(
-            "MATCH (r:Repository) RETURN r.name, r.path ORDER BY r.name"
-        )
+        result = self.store.query("MATCH (r:Repository) RETURN r.name, r.path ORDER BY r.name")
         rows = result.result_set or []
         return [{"name": row[0], "path": row[1]} for row in rows]
 
@@ -322,7 +313,4 @@ class MultiRepoManager:
         )
         result = self.store.query(cypher, {"q": query})
         rows = result.result_set or []
-        return [
-            {"label": row[0], "name": row[1], "file_path": row[2]}
-            for row in rows
-        ]
+        return [{"label": row[0], "name": row[1], "file_path": row[2]} for row in rows]

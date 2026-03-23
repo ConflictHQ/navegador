@@ -144,8 +144,17 @@ def init(path: str, redis_url: str, llm_provider: str, llm_model: str, cluster: 
     is_flag=True,
     help="Detect and ingest as a monorepo workspace (Turborepo, Nx, Yarn, pnpm, Cargo, Go).",
 )
-def ingest(repo_path: str, db: str, clear: bool, incremental: bool, watch: bool,
-           interval: float, as_json: bool, redact: bool, monorepo: bool):
+def ingest(
+    repo_path: str,
+    db: str,
+    clear: bool,
+    incremental: bool,
+    watch: bool,
+    interval: float,
+    as_json: bool,
+    redact: bool,
+    monorepo: bool,
+):
     """Ingest a repository's code into the graph (AST + call graph)."""
     if monorepo:
         from navegador.monorepo import MonorepoIngester
@@ -179,9 +188,7 @@ def ingest(repo_path: str, db: str, clear: bool, incremental: bool, watch: bool,
             changed = stats["files"]
             skipped = stats["skipped"]
             if changed:
-                console.print(
-                    f"  [green]{changed} changed[/green], {skipped} unchanged"
-                )
+                console.print(f"  [green]{changed} changed[/green], {skipped} unchanged")
             return True  # keep watching
 
         try:
@@ -729,8 +736,10 @@ def migrate(db: str, check: bool):
     from navegador.graph.migrations import (
         CURRENT_SCHEMA_VERSION,
         get_schema_version,
-        migrate as do_migrate,
         needs_migration,
+    )
+    from navegador.graph.migrations import (
+        migrate as do_migrate,
     )
 
     store = _get_store(db)
@@ -877,11 +886,7 @@ def enrich(db: str, framework_name: str, as_json: bool):
         targets = {framework_name: available[framework_name]}
     else:
         # Auto-detect: only run enrichers whose detect() returns True.
-        targets = {
-            name: cls
-            for name, cls in available.items()
-            if cls(store).detect()
-        }
+        targets = {name: cls for name, cls in available.items() if cls(store).detect()}
         if not targets and not as_json:
             console.print("[yellow]No frameworks detected in the graph.[/yellow]")
             return
@@ -1101,9 +1106,7 @@ def ci_check(db: str):
         current = get_schema_version(store)
         data = {"schema_version": current, "current_schema_version": CURRENT_SCHEMA_VERSION}
         if needs_migration(store):
-            reporter.add_warning(
-                f"Schema migration needed: v{current} → v{CURRENT_SCHEMA_VERSION}"
-            )
+            reporter.add_warning(f"Schema migration needed: v{current} → v{CURRENT_SCHEMA_VERSION}")
     except Exception as exc:  # noqa: BLE001
         reporter.add_error(str(exc))
 
@@ -1153,9 +1156,7 @@ def completions(shell: str, do_install: bool, rc_path: str):
         rc = rc_path or get_rc_path(shell)
         console.print(f"Add the following line to [bold]{rc}[/bold]:\n")
         click.echo(f"  {line}")
-        console.print(
-            f"\nOr run: [bold]navegador completions {shell} --install[/bold]"
-        )
+        console.print(f"\nOr run: [bold]navegador completions {shell} --install[/bold]")
 
 
 # ── Churn / behavioural coupling ─────────────────────────────────────────────
@@ -1295,8 +1296,7 @@ def churn(
     is_flag=True,
     default=False,
     help=(
-        "Start in read-only mode: disables ingest_repo and blocks write "
-        "operations in query_graph."
+        "Start in read-only mode: disables ingest_repo and blocks write operations in query_graph."
     ),
 )
 def mcp(db: str, read_only: bool):
@@ -1339,9 +1339,7 @@ def impact(name: str, file_path: str, depth: int, db: str, as_json: bool):
         click.echo(json.dumps(result.to_dict(), indent=2))
         return
 
-    console.print(
-        f"[bold]Blast radius:[/bold] [cyan]{name}[/cyan] (depth={depth})"
-    )
+    console.print(f"[bold]Blast radius:[/bold] [cyan]{name}[/cyan] (depth={depth})")
     if not result.affected_nodes:
         console.print("[yellow]No affected nodes found.[/yellow]")
         return
@@ -1352,9 +1350,7 @@ def impact(name: str, file_path: str, depth: int, db: str, as_json: bool):
     table.add_column("File")
     table.add_column("Line", justify="right")
     for node in result.affected_nodes:
-        table.add_row(
-            node["type"], node["name"], node["file_path"], str(node["line_start"] or "")
-        )
+        table.add_row(node["type"], node["name"], node["file_path"], str(node["line_start"] or ""))
     console.print(table)
 
     if result.affected_files:
@@ -1395,14 +1391,12 @@ def trace(name: str, file_path: str, depth: int, db: str, as_json: bool):
         console.print(f"[yellow]No call chains found from[/yellow] [cyan]{name}[/cyan].")
         return
 
-    console.print(
-        f"[bold]Call chains from[/bold] [cyan]{name}[/cyan] — {len(chains)} path(s)"
-    )
+    console.print(f"[bold]Call chains from[/bold] [cyan]{name}[/cyan] — {len(chains)} path(s)")
     for i, chain in enumerate(chains, 1):
         steps = chain.to_list()
-        path_str = " → ".join(
-            [steps[0]["caller"]] + [s["callee"] for s in steps]
-        ) if steps else name
+        path_str = (
+            " → ".join([steps[0]["caller"]] + [s["callee"] for s in steps]) if steps else name
+        )
         console.print(f"  {i}. {path_str}")
 
 
@@ -1435,7 +1429,9 @@ def deadcode(db: str, as_json: bool):
     )
 
     if report.unreachable_functions:
-        fn_table = Table(title=f"Unreachable functions/methods ({len(report.unreachable_functions)})")
+        fn_table = Table(
+            title=f"Unreachable functions/methods ({len(report.unreachable_functions)})"
+        )
         fn_table.add_column("Type", style="cyan")
         fn_table.add_column("Name", style="bold")
         fn_table.add_column("File")
@@ -1509,10 +1505,10 @@ def testmap(db: str, as_json: bool):
 
 @main.command()
 @DB_OPTION
-@click.option("--imports", "check_imports", is_flag=True, default=False,
-              help="Check import cycles only.")
-@click.option("--calls", "check_calls", is_flag=True, default=False,
-              help="Check call cycles only.")
+@click.option(
+    "--imports", "check_imports", is_flag=True, default=False, help="Check import cycles only."
+)
+@click.option("--calls", "check_calls", is_flag=True, default=False, help="Check call cycles only.")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 def cycles(db: str, check_imports: bool, check_calls: bool, as_json: bool):
     """Detect circular dependencies in import and call graphs.
@@ -1531,9 +1527,7 @@ def cycles(db: str, check_imports: bool, check_calls: bool, as_json: bool):
 
     if as_json:
         click.echo(
-            json.dumps(
-                {"import_cycles": import_cycles, "call_cycles": call_cycles}, indent=2
-            )
+            json.dumps({"import_cycles": import_cycles, "call_cycles": call_cycles}, indent=2)
         )
         return
 
@@ -1818,16 +1812,22 @@ def pm():
 
 
 @pm.command("ingest")
-@click.option("--github", "github_repo", default="", metavar="OWNER/REPO",
-              help="GitHub repository in owner/repo format.")
-@click.option("--token", default="", envvar="GITHUB_TOKEN",
-              help="GitHub personal access token.")
-@click.option("--state", default="open",
-              type=click.Choice(["open", "closed", "all"]),
-              show_default=True,
-              help="GitHub issue state filter.")
-@click.option("--limit", default=100, show_default=True,
-              help="Maximum number of issues to fetch.")
+@click.option(
+    "--github",
+    "github_repo",
+    default="",
+    metavar="OWNER/REPO",
+    help="GitHub repository in owner/repo format.",
+)
+@click.option("--token", default="", envvar="GITHUB_TOKEN", help="GitHub personal access token.")
+@click.option(
+    "--state",
+    default="open",
+    type=click.Choice(["open", "closed", "all"]),
+    show_default=True,
+    help="GitHub issue state filter.",
+)
+@click.option("--limit", default=100, show_default=True, help="Maximum number of issues to fetch.")
 @DB_OPTION
 @click.option("--json", "as_json", is_flag=True)
 def pm_ingest(github_repo: str, token: str, state: str, limit: int, db: str, as_json: bool):
@@ -1840,7 +1840,9 @@ def pm_ingest(github_repo: str, token: str, state: str, limit: int, db: str, as_
       navegador pm ingest --github owner/repo --state all --limit 200
     """
     if not github_repo:
-        raise click.UsageError("Provide --github <owner/repo> (more backends coming in a future release).")
+        raise click.UsageError(
+            "Provide --github <owner/repo> (more backends coming in a future release)."
+        )
 
     from navegador.pm import TicketIngester
 
@@ -1869,7 +1871,8 @@ def deps():
 @deps.command("ingest")
 @click.argument("path", type=click.Path(exists=True))
 @click.option(
-    "--type", "dep_type",
+    "--type",
+    "dep_type",
     type=click.Choice(["auto", "npm", "pip", "cargo"]),
     default="auto",
     show_default=True,
@@ -1924,8 +1927,7 @@ def deps_ingest(path: str, dep_type: str, db: str, as_json: bool):
         click.echo(json.dumps(stats, indent=2))
     else:
         console.print(
-            f"[green]Dependencies ingested[/green] ({dep_type}): "
-            f"{stats['packages']} packages"
+            f"[green]Dependencies ingested[/green] ({dep_type}): {stats['packages']} packages"
         )
 
 
@@ -2031,9 +2033,7 @@ def workspace_ingest(repos: tuple, mode: str, db: str, clear: bool, as_json: boo
     wm = WorkspaceManager(_get_store(db), mode=WorkspaceMode(mode))
     for repo_spec in repos:
         if "=" not in repo_spec:
-            raise click.UsageError(
-                f"Invalid repo spec {repo_spec!r}. Expected NAME=PATH format."
-            )
+            raise click.UsageError(f"Invalid repo spec {repo_spec!r}. Expected NAME=PATH format.")
         name, path = repo_spec.split("=", 1)
         wm.add_repo(name.strip(), path.strip())
 
@@ -2098,7 +2098,9 @@ def semantic_search(
 
     store = _get_store(db)
     provider = (
-        get_provider(llm_provider, model=llm_model) if llm_provider else auto_provider(model=llm_model)
+        get_provider(llm_provider, model=llm_model)
+        if llm_provider
+        else auto_provider(model=llm_model)
     )
     ss = SemanticSearch(store, provider)
 
@@ -2222,7 +2224,9 @@ def ask(question: str, db: str, llm_provider: str, llm_model: str):
 
     store = _get_store(db)
     provider = (
-        get_provider(llm_provider, model=llm_model) if llm_provider else auto_provider(model=llm_model)
+        get_provider(llm_provider, model=llm_model)
+        if llm_provider
+        else auto_provider(model=llm_model)
     )
     engine = NLPEngine(store, provider)
 
@@ -2246,9 +2250,7 @@ def ask(question: str, db: str, llm_provider: str, llm_model: str):
 )
 @click.option("--model", "llm_model", default="", help="LLM model name.")
 @click.option("--file", "file_path", default="", help="Narrow to a specific file.")
-def generate_docs_cmd(
-    name: str, db: str, llm_provider: str, llm_model: str, file_path: str
-):
+def generate_docs_cmd(name: str, db: str, llm_provider: str, llm_model: str, file_path: str):
     """Generate LLM-powered documentation for a named symbol.
 
     \b
@@ -2261,7 +2263,9 @@ def generate_docs_cmd(
 
     store = _get_store(db)
     provider = (
-        get_provider(llm_provider, model=llm_model) if llm_provider else auto_provider(model=llm_model)
+        get_provider(llm_provider, model=llm_model)
+        if llm_provider
+        else auto_provider(model=llm_model)
     )
     engine = NLPEngine(store, provider)
 
@@ -2286,9 +2290,7 @@ def generate_docs_cmd(
 )
 @click.option("--model", "llm_model", default="", help="LLM model name.")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON (wraps markdown in a dict).")
-def docs(
-    target: str, db: str, project: bool, llm_provider: str, llm_model: str, as_json: bool
-):
+def docs(target: str, db: str, project: bool, llm_provider: str, llm_model: str, as_json: bool):
     """Generate markdown documentation from the graph.
 
     TARGET can be a file path or a module name (dotted or partial).

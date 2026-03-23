@@ -148,9 +148,7 @@ class TestMapper:
                     prod_file=prod_file,
                     prod_type=prod_type,
                     source=(
-                        "calls"
-                        if self._resolve_via_calls(test_name, test_file)
-                        else "heuristic"
+                        "calls" if self._resolve_via_calls(test_name, test_file) else "heuristic"
                     ),
                 )
                 links.append(link)
@@ -185,13 +183,10 @@ class TestMapper:
             return []
 
         return [
-            {"name": row[0] or "", "file_path": row[1] or "", "line_start": row[2]}
-            for row in rows
+            {"name": row[0] or "", "file_path": row[1] or "", "line_start": row[2]} for row in rows
         ]
 
-    def _resolve_via_calls(
-        self, test_name: str, test_file: str
-    ) -> tuple[str, str, str] | None:
+    def _resolve_via_calls(self, test_name: str, test_file: str) -> tuple[str, str, str] | None:
         """Return (type, name, file_path) of the first non-test callee, or None."""
         try:
             result = self.store.query(
@@ -215,7 +210,7 @@ class TestMapper:
         if not test_name.startswith("test_"):
             return None
 
-        stripped = test_name[len("test_"):]
+        stripped = test_name[len("test_") :]
         parts = stripped.split("_")
 
         # Try full stripped name first, then progressively shorter prefixes

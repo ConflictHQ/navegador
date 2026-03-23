@@ -14,7 +14,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 from typing import Any
 
@@ -115,9 +114,7 @@ class CodeownersIngester:
 
     # ── Parsing ───────────────────────────────────────────────────────────────
 
-    def _parse_codeowners(
-        self, path: Path
-    ) -> list[tuple[str, list[str]]]:
+    def _parse_codeowners(self, path: Path) -> list[tuple[str, list[str]]]:
         """
         Parse a CODEOWNERS file at *path*.
 

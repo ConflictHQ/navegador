@@ -20,9 +20,7 @@ def _get_ruby_language():
 
         return Language(tsruby.language())
     except ImportError as e:
-        raise ImportError(
-            "Install tree-sitter-ruby: pip install tree-sitter-ruby"
-        ) from e
+        raise ImportError("Install tree-sitter-ruby: pip install tree-sitter-ruby") from e
 
 
 def _node_text(node, source: bytes) -> str:
@@ -277,9 +275,7 @@ class RubyParser(LanguageParser):
             if node.type == "call":
                 method_node = node.child_by_field_name("method")
                 if not method_node:
-                    method_node = next(
-                        (c for c in node.children if c.type == "identifier"), None
-                    )
+                    method_node = next((c for c in node.children if c.type == "identifier"), None)
                 if method_node:
                     callee = _node_text(method_node, source)
                     if callee not in ("require", "require_relative", "load"):

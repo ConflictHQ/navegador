@@ -23,7 +23,7 @@ class SensitiveMatch:
     pattern_name: str
     line_number: int
     match_text: str  # the matched text — stored already-redacted
-    severity: str    # "high" or "medium"
+    severity: str  # "high" or "medium"
 
 
 # ---------------------------------------------------------------------------
@@ -70,9 +70,7 @@ _PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
     # Password in assignment
     (
         "password_assignment",
-        re.compile(
-            r'(?i)(?:password|passwd|secret)\s*[=:]\s*["\']([^"\']{4,})["\']'
-        ),
+        re.compile(r'(?i)(?:password|passwd|secret)\s*[=:]\s*["\']([^"\']{4,})["\']'),
         "high",
     ),
     # PEM private key header
@@ -123,7 +121,6 @@ class SensitiveContentDetector:
         ``[REDACTED]`` so callers never need to touch the raw secret.
         """
         findings: list[SensitiveMatch] = []
-        lines = text.splitlines()
 
         for pattern_name, regex, severity in _PATTERNS:
             for m in regex.finditer(text):

@@ -130,9 +130,7 @@ class NLPEngine:
             A human-readable answer string.
         """
         # Step 1: translate question → Cypher
-        cypher_prompt = _NL_TO_CYPHER_PROMPT.format(
-            schema=_SCHEMA_SUMMARY, question=question
-        )
+        cypher_prompt = _NL_TO_CYPHER_PROMPT.format(schema=_SCHEMA_SUMMARY, question=question)
         cypher = self._provider.complete(cypher_prompt).strip()
 
         # Strip any accidental markdown fences the model may still produce
@@ -144,15 +142,12 @@ class NLPEngine:
             rows = result.result_set or []
         except Exception as exc:  # noqa: BLE001
             return (
-                f"Failed to execute the generated Cypher query.\n\n"
-                f"Query: {cypher}\n\nError: {exc}"
+                f"Failed to execute the generated Cypher query.\n\nQuery: {cypher}\n\nError: {exc}"
             )
 
         # Step 3: format result
         rows_text = json.dumps(rows[:50], indent=2, default=str)
-        fmt_prompt = _FORMAT_RESULT_PROMPT.format(
-            question=question, cypher=cypher, rows=rows_text
-        )
+        fmt_prompt = _FORMAT_RESULT_PROMPT.format(question=question, cypher=cypher, rows=rows_text)
         return self._provider.complete(fmt_prompt)
 
     # ── Community naming ──────────────────────────────────────────────────
@@ -223,22 +218,18 @@ LIMIT 1
 
         if rows:
             row = rows[0]
-            node_type, _, fp, docstring, signature = (
-                row[0], row[1], row[2], row[3], row[4]
-            )
+            node_type, _, fp, docstring, signature = (row[0], row[1], row[2], row[3], row[4])
 
         # Fetch callers
         callers_result = self._store.query(
-            "MATCH (caller)-[:CALLS]->(n {name: $name}) "
-            "RETURN caller.name LIMIT 10",
+            "MATCH (caller)-[:CALLS]->(n {name: $name}) RETURN caller.name LIMIT 10",
             {"name": name},
         )
         callers = [r[0] for r in (callers_result.result_set or []) if r[0]]
 
         # Fetch callees
         callees_result = self._store.query(
-            "MATCH (n {name: $name})-[:CALLS]->(callee) "
-            "RETURN callee.name LIMIT 10",
+            "MATCH (n {name: $name})-[:CALLS]->(callee) RETURN callee.name LIMIT 10",
             {"name": name},
         )
         callees = [r[0] for r in (callees_result.result_set or []) if r[0]]

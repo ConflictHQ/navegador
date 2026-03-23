@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -65,8 +65,7 @@ class WorkPartitioner:
     def _get_all_file_paths(self) -> list[str]:
         """Retrieve distinct file paths recorded in the graph."""
         result = self._store.query(
-            "MATCH (n) WHERE n.file_path IS NOT NULL "
-            "RETURN DISTINCT n.file_path AS fp ORDER BY fp"
+            "MATCH (n) WHERE n.file_path IS NOT NULL RETURN DISTINCT n.file_path AS fp ORDER BY fp"
         )
         if not result.result_set:
             return []
@@ -87,7 +86,7 @@ class WorkPartitioner:
         chunk_size = math.ceil(len(items) / n)
         buckets = []
         for i in range(0, len(items), chunk_size):
-            buckets.append(items[i: i + chunk_size])
+            buckets.append(items[i : i + chunk_size])
         # Pad with empty lists if fewer chunks than agents
         while len(buckets) < n:
             buckets.append([])

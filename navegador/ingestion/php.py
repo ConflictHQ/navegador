@@ -24,9 +24,7 @@ def _get_php_language():
             raise ImportError("tree_sitter_php has no language() or language_php() callable")
         return Language(lang_fn())
     except ImportError as e:
-        raise ImportError(
-            "Install tree-sitter-php: pip install tree-sitter-php"
-        ) from e
+        raise ImportError("Install tree-sitter-php: pip install tree-sitter-php") from e
 
 
 def _node_text(node, source: bytes) -> str:

@@ -27,14 +27,14 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_QUEUE_KEY = "navegador:taskqueue:pending"          # Redis list (RPUSH/BLPOP)
-_TASK_KEY_PREFIX = "navegador:task:"                # Hash per task
+_QUEUE_KEY = "navegador:taskqueue:pending"  # Redis list (RPUSH/BLPOP)
+_TASK_KEY_PREFIX = "navegador:task:"  # Hash per task
 _INPROGRESS_KEY = "navegador:taskqueue:inprogress"  # Set of in-progress task IDs
 
 
@@ -164,11 +164,14 @@ class TaskQueue:
         task_id = task_id_raw.decode() if isinstance(task_id_raw, bytes) else task_id_raw
         now = time.time()
         pipe = self._redis.pipeline()
-        pipe.hset(_task_key(task_id), mapping={
-            "status": TaskStatus.IN_PROGRESS.value,
-            "agent_id": agent_id,
-            "updated_at": now,
-        })
+        pipe.hset(
+            _task_key(task_id),
+            mapping={
+                "status": TaskStatus.IN_PROGRESS.value,
+                "agent_id": agent_id,
+                "updated_at": now,
+            },
+        )
         pipe.sadd(_INPROGRESS_KEY, task_id)
         pipe.execute()
 
@@ -181,11 +184,14 @@ class TaskQueue:
         """Mark a task as successfully completed."""
         result_encoded = json.dumps(result) if result is not None else ""
         pipe = self._redis.pipeline()
-        pipe.hset(_task_key(task_id), mapping={
-            "status": TaskStatus.DONE.value,
-            "result": result_encoded,
-            "updated_at": time.time(),
-        })
+        pipe.hset(
+            _task_key(task_id),
+            mapping={
+                "status": TaskStatus.DONE.value,
+                "result": result_encoded,
+                "updated_at": time.time(),
+            },
+        )
         pipe.srem(_INPROGRESS_KEY, task_id)
         pipe.execute()
         logger.debug("Task %s completed", task_id)
@@ -193,11 +199,14 @@ class TaskQueue:
     def fail(self, task_id: str, error: str) -> None:
         """Mark a task as failed with an error message."""
         pipe = self._redis.pipeline()
-        pipe.hset(_task_key(task_id), mapping={
-            "status": TaskStatus.FAILED.value,
-            "error": error,
-            "updated_at": time.time(),
-        })
+        pipe.hset(
+            _task_key(task_id),
+            mapping={
+                "status": TaskStatus.FAILED.value,
+                "error": error,
+                "updated_at": time.time(),
+            },
+        )
         pipe.srem(_INPROGRESS_KEY, task_id)
         pipe.execute()
         logger.debug("Task %s failed: %s", task_id, error)

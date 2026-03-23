@@ -20,9 +20,7 @@ def _get_kotlin_language():
 
         return Language(tskotlin.language())
     except ImportError as e:
-        raise ImportError(
-            "Install tree-sitter-kotlin: pip install tree-sitter-kotlin"
-        ) from e
+        raise ImportError("Install tree-sitter-kotlin: pip install tree-sitter-kotlin") from e
 
 
 def _node_text(node, source: bytes) -> str:
@@ -87,9 +85,7 @@ class KotlinParser(LanguageParser):
         name_node = node.child_by_field_name("name")
         if not name_node:
             # fallback: first simple_identifier child
-            name_node = next(
-                (c for c in node.children if c.type == "simple_identifier"), None
-            )
+            name_node = next((c for c in node.children if c.type == "simple_identifier"), None)
         if not name_node:
             return
         name = _node_text(name_node, source)
@@ -117,9 +113,7 @@ class KotlinParser(LanguageParser):
         # Walk class body for member functions
         body = node.child_by_field_name("body")
         if not body:
-            body = next(
-                (c for c in node.children if c.type in ("class_body", "object_body")), None
-            )
+            body = next((c for c in node.children if c.type in ("class_body", "object_body")), None)
         if body:
             for child in body.children:
                 if child.type == "function_declaration":
@@ -136,9 +130,7 @@ class KotlinParser(LanguageParser):
     ) -> None:
         name_node = node.child_by_field_name("name")
         if not name_node:
-            name_node = next(
-                (c for c in node.children if c.type == "simple_identifier"), None
-            )
+            name_node = next((c for c in node.children if c.type == "simple_identifier"), None)
         if not name_node:
             return
         name = _node_text(name_node, source)
@@ -213,7 +205,11 @@ class KotlinParser(LanguageParser):
                 func = node.child_by_field_name("calleeExpression")
                 if not func:
                     func = next(
-                        (c for c in node.children if c.type in ("simple_identifier", "navigation_expression")),
+                        (
+                            c
+                            for c in node.children
+                            if c.type in ("simple_identifier", "navigation_expression")
+                        ),
                         None,
                     )
                 if func:
@@ -231,8 +227,6 @@ class KotlinParser(LanguageParser):
 
         body = fn_node.child_by_field_name("body")
         if not body:
-            body = next(
-                (c for c in fn_node.children if c.type in ("function_body", "block")), None
-            )
+            body = next((c for c in fn_node.children if c.type in ("function_body", "block")), None)
         if body:
             walk(body)

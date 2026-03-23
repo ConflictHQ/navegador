@@ -51,8 +51,7 @@ class EditorIntegration:
         """
         if editor not in SUPPORTED_EDITORS:
             raise ValueError(
-                f"Unsupported editor {editor!r}. "
-                f"Choose from: {', '.join(SUPPORTED_EDITORS)}"
+                f"Unsupported editor {editor!r}. Choose from: {', '.join(SUPPORTED_EDITORS)}"
             )
         return _mcp_block(self.db)
 
@@ -64,8 +63,7 @@ class EditorIntegration:
         """Return the relative config file path for *editor*."""
         if editor not in SUPPORTED_EDITORS:
             raise ValueError(
-                f"Unsupported editor {editor!r}. "
-                f"Choose from: {', '.join(SUPPORTED_EDITORS)}"
+                f"Unsupported editor {editor!r}. Choose from: {', '.join(SUPPORTED_EDITORS)}"
             )
         return _CONFIG_PATHS[editor]
 

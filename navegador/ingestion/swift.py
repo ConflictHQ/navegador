@@ -20,9 +20,7 @@ def _get_swift_language():
 
         return Language(tsswift.language())
     except ImportError as e:
-        raise ImportError(
-            "Install tree-sitter-swift: pip install tree-sitter-swift"
-        ) from e
+        raise ImportError("Install tree-sitter-swift: pip install tree-sitter-swift") from e
 
 
 def _node_text(node, source: bytes) -> str:
@@ -139,7 +137,12 @@ class SwiftParser(LanguageParser):
         body = node.child_by_field_name("body")
         if not body:
             body = next(
-                (c for c in node.children if c.type in ("class_body", "struct_body", "enum_body", "protocol_body", "extension_body")),
+                (
+                    c
+                    for c in node.children
+                    if c.type
+                    in ("class_body", "struct_body", "enum_body", "protocol_body", "extension_body")
+                ),
                 None,
             )
         if body:
@@ -234,7 +237,11 @@ class SwiftParser(LanguageParser):
                 func = node.child_by_field_name("function")
                 if not func:
                     func = next(
-                        (c for c in node.children if c.type in ("simple_identifier", "navigation_expression")),
+                        (
+                            c
+                            for c in node.children
+                            if c.type in ("simple_identifier", "navigation_expression")
+                        ),
                         None,
                     )
                 if func:

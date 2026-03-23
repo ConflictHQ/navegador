@@ -20,7 +20,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from navegador.graph.schema import EdgeType, NodeLabel
 from navegador.graph.store import GraphStore
 
 logger = logging.getLogger(__name__)
@@ -96,9 +95,7 @@ class APISchemaIngester:
 
         # ── Component schemas / definitions ───────────────────────────────────
         component_schemas = (
-            (spec.get("components") or {}).get("schemas")
-            or spec.get("definitions")
-            or {}
+            (spec.get("components") or {}).get("schemas") or spec.get("definitions") or {}
         )
         for schema_name, schema_body in component_schemas.items():
             if not isinstance(schema_body, dict):
@@ -233,6 +230,7 @@ class APISchemaIngester:
         """
         try:
             import yaml  # type: ignore[import]
+
             return yaml.safe_load(text)
         except ImportError:
             pass

@@ -30,9 +30,7 @@ NODE_COLORS = {
     "default": "#aaaaaa",
 }
 
-_COLORS_JS = "\n".join(
-    f"    '{label}': '{color}'," for label, color in NODE_COLORS.items()
-)
+_COLORS_JS = "\n".join(f"    '{label}': '{color}'," for label, color in NODE_COLORS.items())
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">

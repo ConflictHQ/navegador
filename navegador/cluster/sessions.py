@@ -29,7 +29,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_SESSIONS_KEY = "navegador:sessions"          # Redis hash: session_id -> JSON
+_SESSIONS_KEY = "navegador:sessions"  # Redis hash: session_id -> JSON
 _SESSION_INDEX_KEY = "navegador:sessions:ids"  # Redis set: all session IDs
 
 

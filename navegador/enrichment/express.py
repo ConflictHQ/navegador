@@ -11,8 +11,18 @@ Promotes generic Function/Class nodes to semantic Express types:
 from navegador.enrichment.base import EnrichmentResult, FrameworkEnricher
 
 # HTTP method prefixes that indicate a route definition
-_ROUTE_PREFIXES = ("app.get", "app.post", "app.put", "app.delete", "app.patch", "router.get",
-                   "router.post", "router.put", "router.delete", "router.patch")
+_ROUTE_PREFIXES = (
+    "app.get",
+    "app.post",
+    "app.put",
+    "app.delete",
+    "app.patch",
+    "router.get",
+    "router.post",
+    "router.put",
+    "router.delete",
+    "router.patch",
+)
 
 
 class ExpressEnricher(FrameworkEnricher):
@@ -30,55 +40,67 @@ class ExpressEnricher(FrameworkEnricher):
         result = EnrichmentResult()
 
         # ── Routes: app.<method> or router.<method> patterns ─────────────────
-        route_rows = self.store.query(
-            "MATCH (n) WHERE (n.name STARTS WITH 'app.get' "
-            "OR n.name STARTS WITH 'app.post' "
-            "OR n.name STARTS WITH 'app.put' "
-            "OR n.name STARTS WITH 'app.delete' "
-            "OR n.name STARTS WITH 'app.patch' "
-            "OR n.name STARTS WITH 'router.get' "
-            "OR n.name STARTS WITH 'router.post' "
-            "OR n.name STARTS WITH 'router.put' "
-            "OR n.name STARTS WITH 'router.delete' "
-            "OR n.name STARTS WITH 'router.patch') "
-            "AND n.file_path IS NOT NULL "
-            "RETURN n.name, n.file_path",
-        ).result_set or []
+        route_rows = (
+            self.store.query(
+                "MATCH (n) WHERE (n.name STARTS WITH 'app.get' "
+                "OR n.name STARTS WITH 'app.post' "
+                "OR n.name STARTS WITH 'app.put' "
+                "OR n.name STARTS WITH 'app.delete' "
+                "OR n.name STARTS WITH 'app.patch' "
+                "OR n.name STARTS WITH 'router.get' "
+                "OR n.name STARTS WITH 'router.post' "
+                "OR n.name STARTS WITH 'router.put' "
+                "OR n.name STARTS WITH 'router.delete' "
+                "OR n.name STARTS WITH 'router.patch') "
+                "AND n.file_path IS NOT NULL "
+                "RETURN n.name, n.file_path",
+            ).result_set
+            or []
+        )
         for name, file_path in route_rows:
             self._promote_node(name, file_path, "ExpressRoute")
             result.promoted += 1
         result.patterns_found["routes"] = len(route_rows)
 
         # ── Middleware: app.use calls ─────────────────────────────────────────
-        middleware_rows = self.store.query(
-            "MATCH (n) WHERE (n.name STARTS WITH 'app.use' "
-            "OR n.name STARTS WITH 'router.use') "
-            "AND n.file_path IS NOT NULL "
-            "RETURN n.name, n.file_path",
-        ).result_set or []
+        middleware_rows = (
+            self.store.query(
+                "MATCH (n) WHERE (n.name STARTS WITH 'app.use' "
+                "OR n.name STARTS WITH 'router.use') "
+                "AND n.file_path IS NOT NULL "
+                "RETURN n.name, n.file_path",
+            ).result_set
+            or []
+        )
         for name, file_path in middleware_rows:
             self._promote_node(name, file_path, "ExpressMiddleware")
             result.promoted += 1
         result.patterns_found["middleware"] = len(middleware_rows)
 
         # ── Controllers: nodes whose file_path contains /controllers/ ─────────
-        controller_rows = self.store.query(
-            "MATCH (n) WHERE n.file_path CONTAINS '/controllers/' "
-            "AND n.name IS NOT NULL "
-            "RETURN n.name, n.file_path",
-        ).result_set or []
+        controller_rows = (
+            self.store.query(
+                "MATCH (n) WHERE n.file_path CONTAINS '/controllers/' "
+                "AND n.name IS NOT NULL "
+                "RETURN n.name, n.file_path",
+            ).result_set
+            or []
+        )
         for name, file_path in controller_rows:
             self._promote_node(name, file_path, "ExpressController")
             result.promoted += 1
         result.patterns_found["controllers"] = len(controller_rows)
 
         # ── Routers: Router() / express.Router() instantiations ──────────────
-        router_rows = self.store.query(
-            "MATCH (n) WHERE (n.name = 'Router' OR n.name CONTAINS 'Router()' "
-            "OR n.name CONTAINS 'express.Router') "
-            "AND n.file_path IS NOT NULL "
-            "RETURN n.name, n.file_path",
-        ).result_set or []
+        router_rows = (
+            self.store.query(
+                "MATCH (n) WHERE (n.name = 'Router' OR n.name CONTAINS 'Router()' "
+                "OR n.name CONTAINS 'express.Router') "
+                "AND n.file_path IS NOT NULL "
+                "RETURN n.name, n.file_path",
+            ).result_set
+            or []
+        )
         for name, file_path in router_rows:
             self._promote_node(name, file_path, "ExpressRouter")
             result.promoted += 1

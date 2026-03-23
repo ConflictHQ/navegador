@@ -12,9 +12,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
-
 
 # ── Exit codes ────────────────────────────────────────────────────────────────
 
@@ -178,9 +176,7 @@ class CICDReporter:
             return
 
         lines: list[str] = []
-        status_icon = {"success": "✅", "warning": "⚠️", "error": "❌"}.get(
-            payload["status"], "ℹ️"
-        )
+        status_icon = {"success": "✅", "warning": "⚠️", "error": "❌"}.get(payload["status"], "ℹ️")
         lines.append(f"## Navegador — {status_icon} {payload['status'].capitalize()}\n")
 
         if payload.get("data"):

@@ -13,7 +13,7 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)

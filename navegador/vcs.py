@@ -19,7 +19,6 @@ import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-
 # ── Abstract base ──────────────────────────────────────────────────────────────
 
 
@@ -125,13 +124,15 @@ class GitAdapter(VCSAdapter):
         Each entry has the keys: ``hash``, ``author``, ``date``, ``message``.
         """
         fmt = "%H%x1f%an%x1f%ai%x1f%s"
-        result = self._run([
-            "log",
-            f"--max-count={limit}",
-            f"--format={fmt}",
-            "--",
-            file_path,
-        ])
+        result = self._run(
+            [
+                "log",
+                f"--max-count={limit}",
+                f"--format={fmt}",
+                "--",
+                file_path,
+            ]
+        )
 
         entries: list[dict] = []
         for line in result.stdout.strip().splitlines():
@@ -139,12 +140,14 @@ class GitAdapter(VCSAdapter):
                 continue
             parts = line.split("\x1f", 3)
             if len(parts) == 4:
-                entries.append({
-                    "hash": parts[0],
-                    "author": parts[1],
-                    "date": parts[2],
-                    "message": parts[3],
-                })
+                entries.append(
+                    {
+                        "hash": parts[0],
+                        "author": parts[1],
+                        "date": parts[2],
+                        "message": parts[3],
+                    }
+                )
         return entries
 
     def blame(self, file_path: str) -> list[dict]:
@@ -184,17 +187,19 @@ def _parse_porcelain_blame(output: str) -> list[dict]:
             while i < len(lines) and not lines[i].startswith("\t"):
                 kv = lines[i]
                 if kv.startswith("author "):
-                    current_author = kv[len("author "):]
+                    current_author = kv[len("author ") :]
                 i += 1
             # The content line starts with a tab
             if i < len(lines) and lines[i].startswith("\t"):
                 content = lines[i][1:]  # strip leading tab
-                entries.append({
-                    "line": line_number,
-                    "hash": current_hash,
-                    "author": current_author,
-                    "content": content,
-                })
+                entries.append(
+                    {
+                        "line": line_number,
+                        "hash": current_hash,
+                        "author": current_author,
+                        "content": content,
+                    }
+                )
                 i += 1
         else:
             i += 1
@@ -225,10 +230,7 @@ class FossilAdapter(VCSAdapter):
 
     def is_repo(self) -> bool:
         """Return True when *repo_path* looks like a Fossil checkout."""
-        return (
-            (self.repo_path / ".fslckout").exists()
-            or (self.repo_path / "_FOSSIL_").exists()
-        )
+        return (self.repo_path / ".fslckout").exists() or (self.repo_path / "_FOSSIL_").exists()
 
     def current_branch(self) -> str:
         """
@@ -267,12 +269,17 @@ class FossilAdapter(VCSAdapter):
         parses the output into a list of dicts with keys:
         ``hash``, ``author``, ``date``, ``message``.
         """
-        result = self._run([
-            "timeline",
-            "--limit", str(limit),
-            "--type", "ci",
-            "--path", file_path,
-        ])
+        result = self._run(
+            [
+                "timeline",
+                "--limit",
+                str(limit),
+                "--type",
+                "ci",
+                "--path",
+                file_path,
+            ]
+        )
         return _parse_fossil_timeline(result.stdout)
 
     def blame(self, file_path: str) -> list[dict]:
@@ -319,12 +326,14 @@ def _parse_fossil_timeline(output: str) -> list[dict]:
         )
         if m:
             time_part, hash_part, message, author = m.groups()
-            entries.append({
-                "hash": hash_part,
-                "author": author or "",
-                "date": f"{current_date} {time_part}".strip(),
-                "message": message.rstrip(),
-            })
+            entries.append(
+                {
+                    "hash": hash_part,
+                    "author": author or "",
+                    "date": f"{current_date} {time_part}".strip(),
+                    "message": message.rstrip(),
+                }
+            )
 
     return entries
 
@@ -351,12 +360,14 @@ def _parse_fossil_annotate(output: str) -> list[dict]:
         if m:
             version, author, content = m.groups()
             line_number += 1
-            entries.append({
-                "line": line_number,
-                "hash": version,
-                "author": author,
-                "content": content,
-            })
+            entries.append(
+                {
+                    "line": line_number,
+                    "hash": version,
+                    "author": author,
+                    "content": content,
+                }
+            )
 
     return entries
 

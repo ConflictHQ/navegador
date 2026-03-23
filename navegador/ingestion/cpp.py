@@ -20,9 +20,7 @@ def _get_cpp_language():
 
         return Language(tscpp.language())
     except ImportError as e:
-        raise ImportError(
-            "Install tree-sitter-cpp: pip install tree-sitter-cpp"
-        ) from e
+        raise ImportError("Install tree-sitter-cpp: pip install tree-sitter-cpp") from e
 
 
 def _node_text(node, source: bytes) -> str:
@@ -80,9 +78,7 @@ class CppParser(LanguageParser):
             # Recurse into namespace body
             body = node.child_by_field_name("body")
             if not body:
-                body = next(
-                    (c for c in node.children if c.type == "declaration_list"), None
-                )
+                body = next((c for c in node.children if c.type == "declaration_list"), None)
             if body:
                 for child in body.children:
                     self._walk(child, source, file_path, store, stats, class_name)
@@ -97,9 +93,7 @@ class CppParser(LanguageParser):
     ) -> None:
         name_node = node.child_by_field_name("name")
         if not name_node:
-            name_node = next(
-                (c for c in node.children if c.type == "type_identifier"), None
-            )
+            name_node = next((c for c in node.children if c.type == "type_identifier"), None)
         if not name_node:
             return
         name = _node_text(name_node, source)
@@ -127,9 +121,7 @@ class CppParser(LanguageParser):
         # Base classes
         base_clause = node.child_by_field_name("base_clause")
         if not base_clause:
-            base_clause = next(
-                (c for c in node.children if c.type == "base_class_clause"), None
-            )
+            base_clause = next((c for c in node.children if c.type == "base_class_clause"), None)
         if base_clause:
             for child in base_clause.children:
                 if child.type == "type_identifier":
@@ -264,7 +256,11 @@ class CppParser(LanguageParser):
                 func = node.child_by_field_name("function")
                 if not func:
                     func = next(
-                        (c for c in node.children if c.type in ("identifier", "qualified_identifier", "field_expression")),
+                        (
+                            c
+                            for c in node.children
+                            if c.type in ("identifier", "qualified_identifier", "field_expression")
+                        ),
                         None,
                     )
                 if func:

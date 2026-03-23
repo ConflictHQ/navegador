@@ -103,10 +103,7 @@ class TicketIngester:
             headers["Authorization"] = f"Bearer {token}"
 
         per_page = min(limit, 100)
-        url = (
-            f"https://api.github.com/repos/{repo}/issues"
-            f"?state={state}&per_page={per_page}&page=1"
-        )
+        url = f"https://api.github.com/repos/{repo}/issues?state={state}&per_page={per_page}&page=1"
 
         try:
             req = urllib.request.Request(url, headers=headers)
@@ -228,13 +225,9 @@ class TicketIngester:
         -------
         int — number of edges created
         """
-        ticket_cypher = (
-            "MATCH (t:Rule) WHERE t.domain = $domain "
-            "RETURN t.name, t.description"
-        )
+        ticket_cypher = "MATCH (t:Rule) WHERE t.domain = $domain RETURN t.name, t.description"
         code_cypher = (
-            "MATCH (c) WHERE c:Function OR c:Class OR c:Method "
-            "RETURN labels(c)[0], c.name"
+            "MATCH (c) WHERE c:Function OR c:Class OR c:Method RETURN labels(c)[0], c.name"
         )
 
         try:
@@ -245,14 +238,10 @@ class TicketIngester:
             return 0
 
         tickets = [
-            (str(row[0]), str(row[1] or ""))
-            for row in (t_result.result_set or [])
-            if row[0]
+            (str(row[0]), str(row[1] or "")) for row in (t_result.result_set or []) if row[0]
         ]
         code_nodes = [
-            (str(row[0]), str(row[1]))
-            for row in (c_result.result_set or [])
-            if row[0] and row[1]
+            (str(row[0]), str(row[1])) for row in (c_result.result_set or []) if row[0] and row[1]
         ]
 
         if not tickets or not code_nodes:
@@ -261,29 +250,21 @@ class TicketIngester:
         linked = 0
         for t_name, t_desc in tickets:
             combined = f"{t_name} {t_desc}"
-            tokens = {
-                w.lower()
-                for w in re.split(r"[\s\W]+", combined)
-                if len(w) >= 4
-            }
+            tokens = {w.lower() for w in re.split(r"[\s\W]+", combined) if len(w) >= 4}
             if not tokens:
                 continue
 
             for c_label, c_name in code_nodes:
                 if any(tok in c_name.lower() for tok in tokens):
                     cypher = (
-                        "MATCH (t:Rule {name: $tn}), (c:"
-                        + c_label
-                        + " {name: $cn}) "
+                        "MATCH (t:Rule {name: $tn}), (c:" + c_label + " {name: $cn}) "
                         "MERGE (t)-[r:ANNOTATES]->(c)"
                     )
                     try:
                         self.store.query(cypher, {"tn": t_name, "cn": c_name})
                         linked += 1
                     except Exception:
-                        logger.debug(
-                            "TicketIngester: could not link %s → %s", t_name, c_name
-                        )
+                        logger.debug("TicketIngester: could not link %s → %s", t_name, c_name)
         return linked
 
     @staticmethod
