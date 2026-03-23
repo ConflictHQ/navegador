@@ -348,6 +348,154 @@ class TestIngesterContinueBranch:
 
 # ── LanguageParser base class ─────────────────────────────────────────────────
 
+# ── Incremental ingestion ─────────────────────────────────────────────────────
+
+class TestIncrementalIngestion:
+    def test_incremental_returns_skipped_count(self):
+        store = _make_store()
+        ingester = RepoIngester(store)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stats = ingester.ingest(tmpdir, incremental=True)
+            assert "skipped" in stats
+
+    def test_incremental_skips_unchanged_file(self):
+        store = _make_store()
+        ingester = RepoIngester(store)
+        mock_parser = MagicMock()
+        mock_parser.parse_file.return_value = {"functions": 1, "classes": 0, "edges": 0}
+        ingester._parsers["python"] = mock_parser
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            py_file = Path(tmpdir) / "app.py"
+            py_file.write_text("def foo(): pass")
+
+            # First ingest: file is new, should be parsed
+            stats1 = ingester.ingest(tmpdir, incremental=True)
+            assert stats1["files"] == 1
+            assert stats1["skipped"] == 0
+
+            # Simulate stored hash matching
+            from navegador.ingestion.parser import _file_hash
+            current_hash = _file_hash(py_file)
+            rel_path = "app.py"
+
+            # Mock _file_unchanged to return True
+            ingester._file_unchanged = MagicMock(return_value=True)
+            stats2 = ingester.ingest(tmpdir, incremental=True)
+            assert stats2["files"] == 0
+            assert stats2["skipped"] == 1
+
+    def test_incremental_reparses_changed_file(self):
+        store = _make_store()
+        ingester = RepoIngester(store)
+        mock_parser = MagicMock()
+        mock_parser.parse_file.return_value = {"functions": 1, "classes": 0, "edges": 0}
+        ingester._parsers["python"] = mock_parser
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            py_file = Path(tmpdir) / "app.py"
+            py_file.write_text("def foo(): pass")
+
+            ingester._file_unchanged = MagicMock(return_value=False)
+            ingester._clear_file_subgraph = MagicMock()
+            stats = ingester.ingest(tmpdir, incremental=True)
+            assert stats["files"] == 1
+            ingester._clear_file_subgraph.assert_called_once()
+
+    def test_non_incremental_does_not_check_hash(self):
+        store = _make_store()
+        ingester = RepoIngester(store)
+        mock_parser = MagicMock()
+        mock_parser.parse_file.return_value = {"functions": 1, "classes": 0, "edges": 0}
+        ingester._parsers["python"] = mock_parser
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "app.py").write_text("def foo(): pass")
+            ingester._file_unchanged = MagicMock()
+            ingester.ingest(tmpdir, incremental=False)
+            ingester._file_unchanged.assert_not_called()
+
+    def test_file_hash_is_deterministic(self):
+        from navegador.ingestion.parser import _file_hash
+        with tempfile.TemporaryDirectory() as tmpdir:
+            f = Path(tmpdir) / "test.py"
+            f.write_text("x = 1")
+            h1 = _file_hash(f)
+            h2 = _file_hash(f)
+            assert h1 == h2
+            assert len(h1) == 64  # SHA-256 hex
+
+    def test_file_hash_changes_on_content_change(self):
+        from navegador.ingestion.parser import _file_hash
+        with tempfile.TemporaryDirectory() as tmpdir:
+            f = Path(tmpdir) / "test.py"
+            f.write_text("x = 1")
+            h1 = _file_hash(f)
+            f.write_text("x = 2")
+            h2 = _file_hash(f)
+            assert h1 != h2
+
+
+class TestFileUnchanged:
+    def test_returns_false_for_new_file(self):
+        store = _make_store()
+        store.query.return_value = MagicMock(result_set=[])
+        ingester = RepoIngester(store)
+        assert ingester._file_unchanged("app.py", "abc123") is False
+
+    def test_returns_false_for_null_hash(self):
+        store = _make_store()
+        store.query.return_value = MagicMock(result_set=[[None]])
+        ingester = RepoIngester(store)
+        assert ingester._file_unchanged("app.py", "abc123") is False
+
+    def test_returns_true_when_hash_matches(self):
+        store = _make_store()
+        store.query.return_value = MagicMock(result_set=[["abc123"]])
+        ingester = RepoIngester(store)
+        assert ingester._file_unchanged("app.py", "abc123") is True
+
+    def test_returns_false_when_hash_differs(self):
+        store = _make_store()
+        store.query.return_value = MagicMock(result_set=[["old_hash"]])
+        ingester = RepoIngester(store)
+        assert ingester._file_unchanged("app.py", "new_hash") is False
+
+
+class TestWatch:
+    def test_watch_raises_on_missing_dir(self):
+        store = _make_store()
+        ingester = RepoIngester(store)
+        with pytest.raises(FileNotFoundError):
+            ingester.watch("/nonexistent/repo")
+
+    def test_watch_calls_callback_and_stops_on_false(self):
+        store = _make_store()
+        ingester = RepoIngester(store)
+        call_count = [0]
+
+        def callback(stats):
+            call_count[0] += 1
+            return False  # stop immediately
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ingester.watch(tmpdir, interval=0.01, callback=callback)
+        assert call_count[0] == 1
+
+    def test_watch_runs_multiple_cycles(self):
+        store = _make_store()
+        ingester = RepoIngester(store)
+        call_count = [0]
+
+        def callback(stats):
+            call_count[0] += 1
+            return call_count[0] < 3  # run 3 times then stop
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ingester.watch(tmpdir, interval=0.01, callback=callback)
+        assert call_count[0] == 3
+
+
 class TestLanguageParserBase:
     def test_parse_file_raises_not_implemented(self):
         from pathlib import Path

@@ -76,6 +76,44 @@ class TestIngestCommand:
                 data = json.loads(result.output)
                 assert data["files"] == 5
 
+    def test_incremental_flag_passes_through(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("src").mkdir()
+            with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+                 patch("navegador.ingestion.RepoIngester") as MockRI:
+                MockRI.return_value.ingest.return_value = {
+                    "files": 2, "functions": 5, "classes": 1, "edges": 3, "skipped": 8
+                }
+                result = runner.invoke(main, ["ingest", "src", "--incremental"])
+                assert result.exit_code == 0
+                MockRI.return_value.ingest.assert_called_once()
+                _, kwargs = MockRI.return_value.ingest.call_args
+                assert kwargs["incremental"] is True
+
+    def test_watch_flag_calls_watch(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("src").mkdir()
+            with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+                 patch("navegador.ingestion.RepoIngester") as MockRI:
+                # watch should be called, simulate immediate stop
+                MockRI.return_value.watch.side_effect = KeyboardInterrupt()
+                result = runner.invoke(main, ["ingest", "src", "--watch", "--interval", "0.1"])
+                assert result.exit_code == 0
+                MockRI.return_value.watch.assert_called_once()
+
+    def test_watch_with_interval(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("src").mkdir()
+            with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+                 patch("navegador.ingestion.RepoIngester") as MockRI:
+                MockRI.return_value.watch.side_effect = KeyboardInterrupt()
+                runner.invoke(main, ["ingest", "src", "--watch", "--interval", "5.0"])
+                _, kwargs = MockRI.return_value.watch.call_args
+                assert kwargs["interval"] == 5.0
+
 
 # ── context ───────────────────────────────────────────────────────────────────
 

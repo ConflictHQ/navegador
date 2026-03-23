@@ -212,6 +212,18 @@ RETURN labels(n)[0] AS node_type, n.name AS node_name,
        p.name AS owner, p.email AS email, p.role AS role, p.team AS team
 """
 
+# ── Incremental ingestion ─────────────────────────────────────────────────────
+
+FILE_HASH = """
+MATCH (f:File {path: $path})
+RETURN f.content_hash AS hash
+"""
+
+DELETE_FILE_SUBGRAPH = """
+MATCH (f:File {path: $path})-[:CONTAINS]->(child)
+DETACH DELETE child
+"""
+
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 NODE_TYPE_COUNTS = """

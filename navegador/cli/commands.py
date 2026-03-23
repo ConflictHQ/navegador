@@ -106,20 +106,42 @@ def init(path: str, redis_url: str):
 @click.argument("repo_path", type=click.Path(exists=True))
 @DB_OPTION
 @click.option("--clear", is_flag=True, help="Clear existing graph before ingesting.")
+@click.option("--incremental", is_flag=True, help="Only re-parse changed files.")
+@click.option("--watch", is_flag=True, help="Watch for changes and re-ingest incrementally.")
+@click.option("--interval", default=2.0, show_default=True, help="Watch poll interval (seconds).")
 @click.option("--json", "as_json", is_flag=True, help="Output stats as JSON.")
-def ingest(repo_path: str, db: str, clear: bool, as_json: bool):
+def ingest(repo_path: str, db: str, clear: bool, incremental: bool, watch: bool,
+           interval: float, as_json: bool):
     """Ingest a repository's code into the graph (AST + call graph)."""
     from navegador.ingestion import RepoIngester
 
     store = _get_store(db)
     ingester = RepoIngester(store)
 
+    if watch:
+        console.print(f"[bold]Watching[/bold] {repo_path} (interval={interval}s, Ctrl-C to stop)")
+
+        def _on_cycle(stats):
+            changed = stats["files"]
+            skipped = stats["skipped"]
+            if changed:
+                console.print(
+                    f"  [green]{changed} changed[/green], {skipped} unchanged"
+                )
+            return True  # keep watching
+
+        try:
+            ingester.watch(repo_path, interval=interval, callback=_on_cycle)
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Watch stopped.[/yellow]")
+        return
+
     if as_json:
-        stats = ingester.ingest(repo_path, clear=clear)
+        stats = ingester.ingest(repo_path, clear=clear, incremental=incremental)
         click.echo(json.dumps(stats, indent=2))
     else:
         with console.status(f"[bold]Ingesting[/bold] {repo_path}..."):
-            stats = ingester.ingest(repo_path, clear=clear)
+            stats = ingester.ingest(repo_path, clear=clear, incremental=incremental)
         table = Table(title="Ingestion complete")
         table.add_column("Metric", style="cyan")
         table.add_column("Count", justify="right", style="green")

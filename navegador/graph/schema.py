@@ -62,7 +62,7 @@ class EdgeType(StrEnum):
 NODE_PROPS = {
     # Code layer
     NodeLabel.Repository: ["name", "path", "language", "description"],
-    NodeLabel.File: ["name", "path", "language", "size", "line_count"],
+    NodeLabel.File: ["name", "path", "language", "size", "line_count", "content_hash"],
     NodeLabel.Module: ["name", "file_path", "docstring"],
     NodeLabel.Class: ["name", "file_path", "line_start", "line_end", "docstring", "source"],
     NodeLabel.Function: [
