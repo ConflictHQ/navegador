@@ -19,13 +19,13 @@ Navegador parses your source code into a property graph and layers your team's k
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  KNOWLEDGE LAYER                                                │
-│  Concepts · Rules · Decisions · WikiPages · People · Domains   │
+│  Concepts · Rules · Decisions · WikiPages · People · Domains    │
 │                                                                 │
-│         ↕  GOVERNS / IMPLEMENTS / DOCUMENTS / ANNOTATES        │
+│         ↕  GOVERNS / IMPLEMENTS / DOCUMENTS / ANNOTATES         │
 │                                                                 │
 │  CODE LAYER                                                     │
-│  Repository · File · Module · Class · Function · Method        │
-│  Variable · Import · Decorator · (call graphs, hierarchies)    │
+│  Repository · File · Module · Class · Function · Method         │
+│  Variable · Import · Decorator · (call graphs, hierarchies)     │
 └─────────────────────────────────────────────────────────────────┘
               stored in FalkorDB  (SQLite local · Redis prod)
 ```
