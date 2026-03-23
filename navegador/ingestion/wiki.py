@@ -147,7 +147,7 @@ class WikiIngester:
                     stats["pages"] += 1
                     stats["links"] += links
             except Exception as exc:
-                logger.debug("Skipping %s: %s", path, exc)
+                logger.warning("Skipping %s: %s", path, exc)
 
         logger.info("Wiki (GitHub API): %d pages, %d links", stats["pages"], stats["links"])
         return stats
@@ -202,5 +202,5 @@ class WikiIngester:
                 label, {"name": node_name},
             )
             return 1
-        except (ValueError, Exception):
+        except ValueError:
             return 0

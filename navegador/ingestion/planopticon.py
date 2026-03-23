@@ -351,7 +351,7 @@ class PlanopticonIngester:
             self.store.query(cypher, {"src": src, "tgt": tgt})
             self._stats["edges"] = self._stats.get("edges", 0) + 1
         except Exception:
-            logger.debug("Could not create edge %s -[%s]-> %s", src, edge_type, tgt)
+            logger.warning("Could not create edge %s -[%s]-> %s", src, edge_type, tgt)
 
     def _ingest_key_points(self, key_points: list[dict], source: str) -> None:
         for kp in key_points:
@@ -474,17 +474,10 @@ class PlanopticonIngester:
                 label, {"name": name},
             )
         except Exception:
-            pass
+            logger.debug("Could not link %s to wiki page %s", name, source_id)
 
     def _load_json(self, path: Path) -> Any:
-        try:
-            return json.loads(Path(path).read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            logger.warning("File not found: %s", path)
-            return {}
-        except json.JSONDecodeError as e:
-            logger.warning("Invalid JSON at %s: %s", path, e)
-            return {}
+        return json.loads(Path(path).read_text(encoding="utf-8"))
 
     def _reset_stats(self) -> dict[str, int]:
         self._stats = {"nodes": 0, "edges": 0}

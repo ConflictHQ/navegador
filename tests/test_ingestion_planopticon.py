@@ -5,6 +5,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from navegador.graph.schema import NodeLabel
 from navegador.ingestion.planopticon import (
     EDGE_MAP,
@@ -216,11 +218,11 @@ class TestIngestKg:
             stats = ingester.ingest_kg(p)
             assert stats["edges"] == 0
 
-    def test_missing_file_returns_empty_stats(self):
+    def test_missing_file_raises(self):
         store = _make_store()
         ingester = PlanopticonIngester(store)
-        stats = ingester.ingest_kg("/nonexistent/kg.json")
-        assert stats["nodes"] == 0
+        with pytest.raises(FileNotFoundError):
+            ingester.ingest_kg("/nonexistent/kg.json")
 
     def test_returns_stats_dict(self):
         store = _make_store()
@@ -411,7 +413,7 @@ class TestIngestBatch:
             stats = ingester.ingest_batch(p)
             assert "nodes" in stats
 
-    def test_skips_missing_manifest_gracefully(self):
+    def test_missing_manifest_raises(self):
         store = _make_store()
         ingester = PlanopticonIngester(store)
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -422,8 +424,8 @@ class TestIngestBatch:
             }
             p = Path(tmpdir) / "batch.json"
             p.write_text(json.dumps(batch))
-            # Should not raise
-            ingester.ingest_batch(p)
+            with pytest.raises(FileNotFoundError):
+                ingester.ingest_batch(p)
 
     def test_merges_stats_across_videos(self):
         store = _make_store()
@@ -463,20 +465,20 @@ class TestInternalHelpers:
         assert ingester._stats["edges"] == 3
         assert ingester._stats["pages"] == 1
 
-    def test_load_json_missing_file(self):
+    def test_load_json_missing_file_raises(self):
         store = _make_store()
         ingester = PlanopticonIngester(store)
-        result = ingester._load_json(Path("/nonexistent/file.json"))
-        assert result == {}
+        with pytest.raises(FileNotFoundError):
+            ingester._load_json(Path("/nonexistent/file.json"))
 
-    def test_load_json_invalid_json(self):
+    def test_load_json_invalid_json_raises(self):
         store = _make_store()
         ingester = PlanopticonIngester(store)
         with tempfile.TemporaryDirectory() as tmpdir:
             p = Path(tmpdir) / "bad.json"
             p.write_text("{ not valid json }")
-            result = ingester._load_json(p)
-            assert result == {}
+            with pytest.raises((json.JSONDecodeError, ValueError)):
+                ingester._load_json(p)
 
 
 # ── ingest_interchange relationship/source branches (lines 201, 209) ──────────

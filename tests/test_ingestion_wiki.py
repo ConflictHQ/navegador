@@ -167,13 +167,20 @@ class TestTryLink:
         assert result == 1
         store.create_edge.assert_called_once()
 
-    def test_returns_zero_on_exception(self):
+    def test_returns_zero_on_unknown_label(self):
+        store = MagicMock()
+        store.query.return_value = MagicMock(result_set=[["UnknownLabel", "node"]])
+        ingester = WikiIngester(store)
+        result = ingester._try_link("page", "node")
+        assert result == 0
+
+    def test_propagates_store_error(self):
         store = MagicMock()
         store.query.return_value = MagicMock(result_set=[["Concept", "node"]])
         store.create_edge.side_effect = Exception("DB error")
         ingester = WikiIngester(store)
-        result = ingester._try_link("page", "node")
-        assert result == 0
+        with pytest.raises(Exception, match="DB error"):
+            ingester._try_link("page", "node")
 
 
 # ── GitHub clone (ingest_github) ──────────────────────────────────────────────
