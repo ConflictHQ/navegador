@@ -31,6 +31,9 @@ class ContextNode:
     description: str | None = None
     domain: str | None = None
     status: str | None = None
+    rationale: str | None = None
+    alternatives: str | None = None
+    date: str | None = None
 
 
 @dataclass
@@ -291,6 +294,77 @@ class ContextLoader:
         return [
             ContextNode(
                 type=row[0], name=row[1], file_path=row[2], line_start=row[3], docstring=row[4]
+            )
+            for row in (result.result_set or [])
+        ]
+
+    # ── Knowledge: decision rationale ────────────────────────────────────────
+
+    def load_decision(self, name: str) -> ContextBundle:
+        """Decision rationale, alternatives, status, and related nodes."""
+        result = self.store.query(queries.DECISION_RATIONALE, {"name": name})
+        rows = result.result_set or []
+
+        if not rows:
+            return ContextBundle(
+                target=ContextNode(type="Decision", name=name),
+                metadata={"query": "decision_rationale", "found": False},
+            )
+
+        row = rows[0]
+        target = ContextNode(
+            type="Decision",
+            name=row[0],
+            description=row[1],
+            status=row[4],
+            domain=row[6],
+        )
+        target.rationale = row[2]
+        target.alternatives = row[3]
+        target.date = row[5]
+
+        nodes: list[ContextNode] = []
+        edges: list[dict[str, str]] = []
+
+        for tname in row[7] or []:
+            nodes.append(ContextNode(type="Node", name=tname))
+            edges.append({"from": name, "type": "DOCUMENTS", "to": tname})
+        for pname in row[8] or []:
+            nodes.append(ContextNode(type="Person", name=pname))
+            edges.append({"from": name, "type": "DECIDED_BY", "to": pname})
+
+        return ContextBundle(
+            target=target, nodes=nodes, edges=edges, metadata={"query": "decision_rationale"}
+        )
+
+    # ── Knowledge: find owners ────────────────────────────────────────────────
+
+    def find_owners(self, name: str, file_path: str = "") -> list[ContextNode]:
+        """Find people assigned to a named node."""
+        result = self.store.query(
+            queries.FIND_OWNERS, {"name": name, "file_path": file_path}
+        )
+        return [
+            ContextNode(
+                type="Person",
+                name=row[2],
+                description=f"role={row[4]}, team={row[5]}",
+            )
+            for row in (result.result_set or [])
+        ]
+
+    # ── Knowledge: search ────────────────────────────────────────────────────
+
+    def search_knowledge(self, query: str, limit: int = 20) -> list[ContextNode]:
+        """Search concepts, rules, decisions, and wiki pages."""
+        result = self.store.query(queries.KNOWLEDGE_SEARCH, {"query": query, "limit": limit})
+        return [
+            ContextNode(
+                type=row[0],
+                name=row[1],
+                description=row[2],
+                domain=row[3],
+                status=row[4],
             )
             for row in (result.result_set or [])
         ]

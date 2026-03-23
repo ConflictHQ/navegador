@@ -139,6 +139,50 @@ def create_mcp_server(store_factory):
                 description="Return node and edge counts for the current graph.",
                 inputSchema={"type": "object", "properties": {}},
             ),
+            Tool(
+                name="get_rationale",
+                description="Return the rationale, alternatives, and status of an architectural decision.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Decision name."},
+                        "format": {
+                            "type": "string",
+                            "enum": ["json", "markdown"],
+                            "default": "markdown",
+                        },
+                    },
+                    "required": ["name"],
+                },
+            ),
+            Tool(
+                name="find_owners",
+                description="Find people (owners, stakeholders) assigned to a node.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Node name."},
+                        "file_path": {
+                            "type": "string",
+                            "description": "Narrow to a specific file.",
+                            "default": "",
+                        },
+                    },
+                    "required": ["name"],
+                },
+            ),
+            Tool(
+                name="search_knowledge",
+                description="Search concepts, rules, decisions, and wiki pages by name or description.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query."},
+                        "limit": {"type": "integer", "default": 20},
+                    },
+                    "required": ["query"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -191,6 +235,35 @@ def create_mcp_server(store_factory):
                 "edges": loader.store.edge_count(),
             }
             return [TextContent(type="text", text=json.dumps(stats, indent=2))]
+
+        elif name == "get_rationale":
+            bundle = loader.load_decision(arguments["name"])
+            fmt = arguments.get("format", "markdown")
+            text = bundle.to_markdown() if fmt == "markdown" else bundle.to_json()
+            return [TextContent(type="text", text=text)]
+
+        elif name == "find_owners":
+            results = loader.find_owners(
+                arguments["name"], file_path=arguments.get("file_path", "")
+            )
+            if not results:
+                return [TextContent(type="text", text="No owners found.")]
+            lines = [
+                f"- **{r.name}** ({r.description})" for r in results
+            ]
+            return [TextContent(type="text", text="\n".join(lines))]
+
+        elif name == "search_knowledge":
+            results = loader.search_knowledge(
+                arguments["query"], limit=arguments.get("limit", 20)
+            )
+            if not results:
+                return [TextContent(type="text", text="No results.")]
+            lines = [
+                f"- **{r.type}** `{r.name}` — {r.description or ''}"
+                for r in results
+            ]
+            return [TextContent(type="text", text="\n".join(lines))]
 
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
 

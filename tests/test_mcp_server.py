@@ -45,7 +45,10 @@ class _ServerFixture:
         loader.load_file.return_value = _bundle("file_target")
         loader.load_function.return_value = _bundle("fn_target")
         loader.load_class.return_value = _bundle("cls_target")
+        loader.load_decision.return_value = _bundle("decision_target")
         loader.search.return_value = []
+        loader.find_owners.return_value = []
+        loader.search_knowledge.return_value = []
         return loader
 
     def _build(self):
@@ -110,9 +113,9 @@ class TestListTools:
         self.fx = _ServerFixture()
 
     @pytest.mark.asyncio
-    async def test_returns_seven_tools(self):
+    async def test_returns_ten_tools(self):
         tools = await self.fx.list_tools_fn()
-        assert len(tools) == 7
+        assert len(tools) == 10
 
     @pytest.mark.asyncio
     async def test_tool_names(self):
@@ -126,6 +129,9 @@ class TestListTools:
             "search_symbols",
             "query_graph",
             "graph_stats",
+            "get_rationale",
+            "find_owners",
+            "search_knowledge",
         }
 
     @pytest.mark.asyncio
@@ -339,6 +345,86 @@ class TestCallToolGraphStats:
         data = json.loads(result[0]["text"])
         assert data["nodes"] == 42
         assert data["edges"] == 17
+
+
+# ── call_tool — unknown tool ──────────────────────────────────────────────────
+
+# ── call_tool — get_rationale ────────────────────────────────────────────────
+
+class TestCallToolGetRationale:
+    def setup_method(self):
+        self.fx = _ServerFixture()
+
+    @pytest.mark.asyncio
+    async def test_returns_markdown_by_default(self):
+        result = await self.fx.call_tool_fn("get_rationale", {"name": "Use FalkorDB"})
+        self.fx.loader.load_decision.assert_called_once_with("Use FalkorDB")
+        assert "decision_target" in result[0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_returns_json_when_requested(self):
+        result = await self.fx.call_tool_fn(
+            "get_rationale", {"name": "Use FalkorDB", "format": "json"}
+        )
+        data = json.loads(result[0]["text"])
+        assert data["target"]["name"] == "decision_target"
+
+
+# ── call_tool — find_owners ──────────────────────────────────────────────────
+
+class TestCallToolFindOwners:
+    def setup_method(self):
+        self.fx = _ServerFixture()
+
+    @pytest.mark.asyncio
+    async def test_returns_no_owners_message(self):
+        result = await self.fx.call_tool_fn("find_owners", {"name": "AuthService"})
+        assert result[0]["text"] == "No owners found."
+
+    @pytest.mark.asyncio
+    async def test_formats_owners(self):
+        owner = ContextNode(name="Alice", type="Person", description="role=lead, team=auth")
+        self.fx.loader.find_owners.return_value = [owner]
+        result = await self.fx.call_tool_fn("find_owners", {"name": "AuthService"})
+        assert "Alice" in result[0]["text"]
+        assert "role=lead" in result[0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_passes_file_path(self):
+        await self.fx.call_tool_fn(
+            "find_owners", {"name": "AuthService", "file_path": "auth.py"}
+        )
+        self.fx.loader.find_owners.assert_called_once_with("AuthService", file_path="auth.py")
+
+
+# ── call_tool — search_knowledge ─────────────────────────────────────────────
+
+class TestCallToolSearchKnowledge:
+    def setup_method(self):
+        self.fx = _ServerFixture()
+
+    @pytest.mark.asyncio
+    async def test_returns_no_results_message(self):
+        result = await self.fx.call_tool_fn("search_knowledge", {"query": "xyz"})
+        assert result[0]["text"] == "No results."
+
+    @pytest.mark.asyncio
+    async def test_formats_results(self):
+        hit = ContextNode(name="JWT", type="Concept", description="Stateless auth token")
+        self.fx.loader.search_knowledge.return_value = [hit]
+        result = await self.fx.call_tool_fn("search_knowledge", {"query": "JWT"})
+        assert "JWT" in result[0]["text"]
+        assert "Concept" in result[0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_passes_limit(self):
+        await self.fx.call_tool_fn("search_knowledge", {"query": "auth", "limit": 5})
+        self.fx.loader.search_knowledge.assert_called_once_with("auth", limit=5)
+
+    @pytest.mark.asyncio
+    async def test_limit_defaults_to_twenty(self):
+        await self.fx.call_tool_fn("search_knowledge", {"query": "auth"})
+        self.fx.loader.search_knowledge.assert_called_once_with("auth", limit=20)
 
 
 # ── call_tool — unknown tool ──────────────────────────────────────────────────

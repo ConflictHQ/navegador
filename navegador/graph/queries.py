@@ -187,6 +187,31 @@ RETURN type(r) AS rel, labels(neighbor)[0] AS neighbor_type,
 ORDER BY rel, neighbor_name
 """
 
+# ── Knowledge: decision rationale ─────────────────────────────────────────────
+
+DECISION_RATIONALE = """
+MATCH (d:Decision {name: $name})
+OPTIONAL MATCH (d)-[:DOCUMENTS]->(target)
+OPTIONAL MATCH (d)-[:DECIDED_BY]->(person:Person)
+OPTIONAL MATCH (d)-[:BELONGS_TO]->(domain:Domain)
+RETURN
+    d.name AS name, d.description AS description,
+    d.rationale AS rationale, d.alternatives AS alternatives,
+    d.status AS status, d.date AS date, d.domain AS domain,
+    collect(DISTINCT target.name) AS documents,
+    collect(DISTINCT person.name) AS decided_by,
+    collect(DISTINCT domain.name) AS domains
+"""
+
+# ── Knowledge: find owners (ASSIGNED_TO → Person) ────────────────────────────
+
+FIND_OWNERS = """
+MATCH (n)-[:ASSIGNED_TO]->(p:Person)
+WHERE n.name = $name AND ($file_path = '' OR n.file_path = $file_path)
+RETURN labels(n)[0] AS node_type, n.name AS node_name,
+       p.name AS owner, p.email AS email, p.role AS role, p.team AS team
+"""
+
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 NODE_TYPE_COUNTS = """

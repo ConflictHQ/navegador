@@ -464,3 +464,112 @@ class TestContextLoaderConceptBranches:
         assert "GOVERNS" in types
         assert "DOCUMENTS" in types
         assert "IMPLEMENTS" in types
+
+
+# ── load_decision ───────────────────────────────────────────────────────────
+
+class TestContextLoaderDecision:
+    def test_load_decision_not_found(self):
+        store = _mock_store([])
+        loader = ContextLoader(store)
+        bundle = loader.load_decision("Nonexistent")
+        assert bundle.metadata.get("found") is False
+        assert bundle.target.type == "Decision"
+
+    def test_load_decision_found(self):
+        rows = [[
+            "Use FalkorDB",
+            "Graph DB for navegador",
+            "Cypher queries, SQLite backend",
+            "Neo4j, ArangoDB",
+            "accepted",
+            "2026-03-01",
+            "infrastructure",
+            [],  # documents
+            [],  # decided_by
+            [],  # domains
+        ]]
+        store = _mock_store(rows)
+        loader = ContextLoader(store)
+        bundle = loader.load_decision("Use FalkorDB")
+        assert bundle.target.name == "Use FalkorDB"
+        assert bundle.target.rationale == "Cypher queries, SQLite backend"
+        assert bundle.target.alternatives == "Neo4j, ArangoDB"
+        assert bundle.target.status == "accepted"
+
+    def test_load_decision_with_related_nodes(self):
+        rows = [[
+            "Use FalkorDB",
+            "Graph DB",
+            "Cypher",
+            "Neo4j",
+            "accepted",
+            "2026-03-01",
+            "infra",
+            ["GraphStore"],       # documents
+            ["Alice"],            # decided_by
+            ["infrastructure"],   # domains
+        ]]
+        store = _mock_store(rows)
+        loader = ContextLoader(store)
+        bundle = loader.load_decision("Use FalkorDB")
+        names = {n.name for n in bundle.nodes}
+        assert "GraphStore" in names
+        assert "Alice" in names
+        edge_types = {e["type"] for e in bundle.edges}
+        assert "DOCUMENTS" in edge_types
+        assert "DECIDED_BY" in edge_types
+
+
+# ── find_owners ──────────────────────────────────────────────────────────────
+
+class TestContextLoaderFindOwners:
+    def test_find_owners_empty(self):
+        store = _mock_store([])
+        loader = ContextLoader(store)
+        results = loader.find_owners("AuthService")
+        assert results == []
+
+    def test_find_owners_returns_people(self):
+        rows = [["Class", "AuthService", "Alice", "alice@example.com", "lead", "auth"]]
+        store = _mock_store(rows)
+        loader = ContextLoader(store)
+        results = loader.find_owners("AuthService")
+        assert len(results) == 1
+        assert results[0].name == "Alice"
+        assert results[0].type == "Person"
+
+    def test_find_owners_passes_file_path(self):
+        store = _mock_store([])
+        loader = ContextLoader(store)
+        loader.find_owners("foo", file_path="src/foo.py")
+        store.query.assert_called_once()
+        args = store.query.call_args
+        assert args[0][1]["file_path"] == "src/foo.py"
+
+
+# ── search_knowledge ────────────────────────────────────────────────────────
+
+class TestContextLoaderSearchKnowledge:
+    def test_search_knowledge_empty(self):
+        store = _mock_store([])
+        loader = ContextLoader(store)
+        results = loader.search_knowledge("xyz")
+        assert results == []
+
+    def test_search_knowledge_returns_nodes(self):
+        rows = [["Concept", "JWT", "Stateless token auth", "auth", "active"]]
+        store = _mock_store(rows)
+        loader = ContextLoader(store)
+        results = loader.search_knowledge("JWT")
+        assert len(results) == 1
+        assert results[0].name == "JWT"
+        assert results[0].type == "Concept"
+        assert results[0].domain == "auth"
+
+    def test_search_knowledge_passes_limit(self):
+        store = _mock_store([])
+        loader = ContextLoader(store)
+        loader.search_knowledge("auth", limit=5)
+        args = store.query.call_args
+        assert args[0][1]["limit"] == 5
