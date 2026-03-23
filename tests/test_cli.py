@@ -476,3 +476,142 @@ class TestHelp:
         runner = CliRunner()
         result = runner.invoke(main, ["planopticon", "--help"])
         assert result.exit_code == 0
+
+
+# ── _get_store with custom db path (lines 31-32) ──────────────────────────────
+
+class TestGetStoreCustomPath:
+    def test_get_store_calls_get_store_with_custom_path(self):
+        """_get_store body: custom path is forwarded to config.get_store."""
+        from navegador.cli.commands import _get_store
+        with patch("navegador.config.get_store", return_value=_mock_store()) as mock_gs:
+            _get_store("/custom/path.db")
+            mock_gs.assert_called_once_with("/custom/path.db")
+
+    def test_get_store_passes_none_for_default_path(self):
+        from navegador.cli.commands import _get_store
+        from navegador.config import DEFAULT_DB_PATH
+        with patch("navegador.config.get_store", return_value=_mock_store()) as mock_gs:
+            _get_store(DEFAULT_DB_PATH)
+            mock_gs.assert_called_once_with(None)
+
+
+# ── search table output with results (lines 208-216) ─────────────────────────
+
+class TestSearchTableOutput:
+    def test_search_renders_table_with_results(self):
+        runner = CliRunner()
+        node = _node("process_payment", "Function", "payments.py")
+        with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+             patch("navegador.context.ContextLoader") as MockCL:
+            MockCL.return_value.search.return_value = [node]
+            result = runner.invoke(main, ["search", "payment"])
+            assert result.exit_code == 0
+            assert "process_payment" in result.output
+
+
+# ── decorated table output with results (lines 237-248) ──────────────────────
+
+class TestDecoratedTableOutput:
+    def test_decorated_no_results_table(self):
+        runner = CliRunner()
+        with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+             patch("navegador.context.ContextLoader") as MockCL:
+            MockCL.return_value.decorated_by.return_value = []
+            result = runner.invoke(main, ["decorated", "login_required"])
+            assert result.exit_code == 0
+            assert "login_required" in result.output
+
+    def test_decorated_renders_table_with_results(self):
+        runner = CliRunner()
+        node = _node("my_view", "Function", "views.py")
+        with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+             patch("navegador.context.ContextLoader") as MockCL:
+            MockCL.return_value.decorated_by.return_value = [node]
+            result = runner.invoke(main, ["decorated", "login_required"])
+            assert result.exit_code == 0
+            assert "my_view" in result.output
+
+
+# ── wiki ingest without --api flag (line 410) ─────────────────────────────────
+
+class TestWikiIngestGithubNoApi:
+    def test_ingest_github_without_api_flag(self):
+        runner = CliRunner()
+        with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+             patch("navegador.ingestion.WikiIngester") as MockWI:
+            MockWI.return_value.ingest_github.return_value = {"pages": 5, "links": 3}
+            result = runner.invoke(main, ["wiki", "ingest", "--repo", "owner/repo"])
+            assert result.exit_code == 0
+            MockWI.return_value.ingest_github.assert_called_once()
+            assert "5" in result.output
+
+
+# ── planopticon dir with no recognised files (line 497) ──────────────────────
+
+class TestPlanopticonIngestNoKnownFiles:
+    def test_empty_directory_raises_usage_error(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("output").mkdir()
+            # No manifest.json, knowledge_graph.json, or interchange.json
+            Path("output/readme.txt").write_text("nothing")
+            with patch("navegador.cli.commands._get_store", return_value=_mock_store()):
+                result = runner.invoke(main, ["planopticon", "ingest", "output"])
+            assert result.exit_code != 0
+
+
+# ── planopticon auto-detect interchange/batch (lines 505, 507) ───────────────
+
+class TestPlanopticonAutoDetect:
+    def test_auto_detect_interchange(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("interchange.json").write_text("{}")
+            with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+                 patch("navegador.ingestion.PlanopticonIngester") as MockPI:
+                MockPI.return_value.ingest_interchange.return_value = {"nodes": 0, "edges": 0}
+                result = runner.invoke(main, ["planopticon", "ingest", "interchange.json"])
+                assert result.exit_code == 0
+                MockPI.return_value.ingest_interchange.assert_called_once()
+
+    def test_auto_detect_batch(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("batch.json").write_text("{}")
+            with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+                 patch("navegador.ingestion.PlanopticonIngester") as MockPI:
+                MockPI.return_value.ingest_batch.return_value = {"nodes": 0, "edges": 0}
+                result = runner.invoke(main, ["planopticon", "ingest", "batch.json"])
+                assert result.exit_code == 0
+                MockPI.return_value.ingest_batch.assert_called_once()
+
+
+# ── mcp command (lines 538-549) ───────────────────────────────────────────────
+
+class TestMcpCommand:
+    def test_mcp_command_runs_server(self):
+        from contextlib import asynccontextmanager
+
+        runner = CliRunner()
+
+        @asynccontextmanager
+        async def _fake_stdio():
+            yield (MagicMock(), MagicMock())
+
+        async def _fake_run(*args, **kwargs):
+            pass
+
+        mock_server = MagicMock()
+        mock_server.create_initialization_options.return_value = {}
+        mock_server.run = _fake_run
+
+        with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+             patch.dict("sys.modules", {
+                 "mcp": MagicMock(),
+                 "mcp.server": MagicMock(),
+                 "mcp.server.stdio": MagicMock(stdio_server=_fake_stdio),
+             }), \
+             patch("navegador.mcp.create_mcp_server", return_value=mock_server):
+            result = runner.invoke(main, ["mcp"])
+        assert result.exit_code == 0

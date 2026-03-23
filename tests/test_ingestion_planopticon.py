@@ -477,3 +477,168 @@ class TestInternalHelpers:
             p.write_text("{ not valid json }")
             result = ingester._load_json(p)
             assert result == {}
+
+
+# ── ingest_interchange relationship/source branches (lines 201, 209) ──────────
+
+class TestInterchangeRelationshipsAndSources:
+    def test_ingests_relationships_in_interchange(self):
+        store = _make_store()
+        ingester = PlanopticonIngester(store)
+        data = {
+            "project": {"name": "Proj", "tags": []},
+            "entities": [],
+            "relationships": [
+                {"source": "Alice", "target": "Bob", "type": "related_to"}
+            ],
+            "artifacts": [],
+            "sources": [],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "interchange.json"
+            p.write_text(json.dumps(data))
+            stats = ingester.ingest_interchange(p)
+        store.query.assert_called()
+        assert stats["edges"] >= 1
+
+    def test_ingests_sources_in_interchange(self):
+        store = _make_store()
+        ingester = PlanopticonIngester(store)
+        data = {
+            "project": {"name": "Proj", "tags": []},
+            "entities": [],
+            "relationships": [],
+            "artifacts": [],
+            "sources": [{"title": "Design Doc", "url": "http://ex.com"}],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "interchange.json"
+            p.write_text(json.dumps(data))
+            ingester.ingest_interchange(p)
+        labels = [c[0][0] for c in store.create_node.call_args_list]
+        assert NodeLabel.WikiPage in labels
+
+
+# ── _ingest_kg_node with domain (lines 274-275) ───────────────────────────────
+
+class TestIngestKgNodeWithDomain:
+    def test_concept_with_domain_creates_domain_link(self):
+        store = _make_store()
+        ingester = PlanopticonIngester(store)
+        ingester._ingest_kg_node({"type": "concept", "name": "Auth", "domain": "Security"})
+        domain_calls = [c[0][0] for c in store.create_node.call_args_list]
+        assert NodeLabel.Domain in domain_calls
+        store.create_edge.assert_called()
+
+
+# ── _ingest_planning_entity guards and domain (lines 293, 325-326) ────────────
+
+class TestIngestPlanningEntityBranches:
+    def test_skips_entity_with_empty_name(self):
+        store = _make_store()
+        ingester = PlanopticonIngester(store)
+        ingester._ingest_planning_entity({"planning_type": "decision", "name": ""})
+        store.create_node.assert_not_called()
+
+    def test_entity_with_domain_creates_domain_link(self):
+        store = _make_store()
+        ingester = PlanopticonIngester(store)
+        ingester._ingest_planning_entity({
+            "planning_type": "decision",
+            "name": "Switch to Postgres",
+            "domain": "Infrastructure",
+        })
+        domain_calls = [c[0][0] for c in store.create_node.call_args_list]
+        assert NodeLabel.Domain in domain_calls
+        store.create_edge.assert_called()
+
+
+# ── _ingest_kg_relationship exception handler (lines 353-354) ─────────────────
+
+class TestIngestKgRelationshipException:
+    def test_exception_in_query_is_swallowed(self):
+        store = _make_store()
+        store.query.side_effect = Exception("graph error")
+        ingester = PlanopticonIngester(store)
+        # Should not raise
+        ingester._ingest_kg_relationship({"source": "A", "target": "B", "type": "related_to"})
+        assert ingester._stats.get("edges", 0) == 0
+
+
+# ── _ingest_key_points empty-point skip (line 360) ───────────────────────────
+
+class TestIngestKeyPointsEmptySkip:
+    def test_skips_empty_point(self):
+        store = _make_store()
+        ingester = PlanopticonIngester(store)
+        ingester._ingest_key_points([{"point": "", "topic": "foo"}], "source")
+        store.create_node.assert_not_called()
+
+
+# ── _ingest_action_items empty-action skip (line 383) ────────────────────────
+
+class TestIngestActionItemsEmptySkip:
+    def test_skips_empty_action(self):
+        store = _make_store()
+        ingester = PlanopticonIngester(store)
+        ingester._ingest_action_items([{"action": "", "assignee": "Bob"}], "source")
+        store.create_node.assert_not_called()
+
+
+# ── diagram element empty-string skip (line 426) ─────────────────────────────
+
+class TestDiagramElementEmptySkip:
+    def test_skips_empty_diagram_element(self):
+        store = _make_store()
+        ingester = PlanopticonIngester(store)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "manifest.json"
+            p.write_text(json.dumps({
+                "video": {"title": "T", "url": "http://x.com"},
+                "key_points": [],
+                "action_items": [],
+                "diagrams": [{
+                    "diagram_type": "sequence",
+                    "timestamp": 0,
+                    "description": "D",
+                    "mermaid": "",
+                    "elements": ["", "  "],  # all empty/whitespace
+                }],
+            }))
+            ingester.ingest_manifest(p)
+        # Only WikiPage for the diagram itself; no Concept for elements
+        concept_calls = [c for c in store.create_node.call_args_list
+                         if c[0][0] == NodeLabel.Concept]
+        assert len(concept_calls) == 0
+
+
+# ── _ingest_source empty name guard (line 440) ───────────────────────────────
+
+class TestIngestSourceEmptyName:
+    def test_skips_source_with_no_name(self):
+        store = _make_store()
+        ingester = PlanopticonIngester(store)
+        ingester._ingest_source({"title": "", "source_id": None, "url": ""})
+        store.create_node.assert_not_called()
+
+
+# ── _ingest_artifact empty name guard (line 453) ─────────────────────────────
+
+class TestIngestArtifactEmptyName:
+    def test_skips_artifact_with_no_name(self):
+        store = _make_store()
+        ingester = PlanopticonIngester(store)
+        ingester._ingest_artifact({"name": ""}, "project")
+        store.create_node.assert_not_called()
+
+
+# ── _lazy_wiki_link exception handler (lines 476-477) ────────────────────────
+
+class TestLazyWikiLinkException:
+    def test_exception_in_create_edge_is_swallowed(self):
+        from navegador.graph.schema import NodeLabel
+        store = _make_store()
+        store.create_edge.side_effect = Exception("no such node")
+        ingester = PlanopticonIngester(store)
+        # Should not raise
+        ingester._lazy_wiki_link("AuthService", NodeLabel.Concept, "source-123")
