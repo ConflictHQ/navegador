@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "navegador"
-version = "0.1.0"
+version = "0.7.0"
 description = "AST + knowledge graph context engine for AI coding agents"
 readme = "README.md"
 license = "MIT"
@@ -12,7 +12,7 @@ requires-python = ">=3.12"
 authors = [
     { name = "CONFLICT LLC" },
 ]
-keywords = ["ast", "knowledge-graph", "code-analysis", "ai-agents", "mcp", "context-management", "falkordb", "go", "rust", "java", "typescript"]
+keywords = ["ast", "knowledge-graph", "code-analysis", "ai-agents", "mcp", "context-management", "falkordb", "go", "rust", "java", "typescript", "kotlin", "csharp", "php", "ruby", "swift", "c", "cpp"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -52,6 +52,21 @@ redis = [
     # Use Redis-backed FalkorDB in production
     "redis>=5.0.0",
 ]
+languages = [
+    # Additional tree-sitter grammars (core 6 are in dependencies)
+    "tree-sitter-kotlin>=0.23.0",
+    "tree-sitter-c-sharp>=0.23.0",
+    "tree-sitter-php>=0.23.0",
+    "tree-sitter-ruby>=0.23.0",
+    "tree-sitter-swift>=0.23.0",
+    "tree-sitter-c>=0.23.0",
+    "tree-sitter-cpp>=0.23.0",
+]
+llm = [
+    # LLM provider SDKs (install the ones you use)
+    "anthropic>=0.39.0",
+    "openai>=1.0.0",
+]
 dev = [
     "pytest>=7.3.0",
     "pytest-cov>=4.1.0",
@@ -66,6 +81,8 @@ docs = [
 ]
 all = [
     "navegador[redis]",
+    "navegador[languages]",
+    "navegador[llm]",
     "navegador[dev]",
     "navegador[docs]",
 ]

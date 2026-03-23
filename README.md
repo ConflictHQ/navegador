@@ -81,8 +81,12 @@ Available MCP tools:
 | `load_function_context` | What a function calls and what calls it |
 | `load_class_context` | Class methods, inheritance, subclasses |
 | `search_symbols` | Fuzzy search for functions/classes by name |
-| `query_graph` | Raw Cypher passthrough |
+| `query_graph` | Raw Cypher passthrough (with security hardening) |
 | `graph_stats` | Node and edge counts |
+| `get_rationale` | Decision rationale, alternatives, and status |
+| `find_owners` | People assigned to any node |
+| `search_knowledge` | Search concepts, rules, decisions, wiki |
+| `blast_radius` | Impact analysis — what's affected by a change |
 
 ---
 
@@ -146,6 +150,94 @@ store = GraphStore.redis("redis://localhost:6379")  # production
 | Go | ✅ |
 | Rust | ✅ |
 | Java | ✅ |
+| Kotlin | ✅ |
+| C# | ✅ |
+| PHP | ✅ |
+| Ruby | ✅ |
+| Swift | ✅ |
+| C / C++ | ✅ |
+
+---
+
+## Framework enrichment
+
+After ingesting code, navegador can promote generic AST nodes to framework-specific semantic types:
+
+```bash
+navegador enrich                          # auto-detect frameworks
+navegador enrich --framework django       # target a specific framework
+```
+
+Supported frameworks: **Django**, **FastAPI**, **React / Next.js**, **Express.js**, **React Native**, **Rails**, **Spring Boot**, **Laravel**
+
+---
+
+## Structural analysis
+
+```bash
+navegador impact AuthService --depth 3    # blast radius
+navegador trace handle_request            # execution flow from entry point
+navegador deadcode                        # unreachable functions/classes
+navegador cycles                          # circular dependencies
+navegador testmap                         # link tests to production code
+navegador diff                            # map uncommitted changes to graph
+navegador churn .                         # behavioural coupling from git history
+```
+
+---
+
+## Intelligence layer
+
+```bash
+navegador semantic-search "authentication flow"   # embedding-based search
+navegador communities                              # detect code communities
+navegador ask "what calls the payment service?"    # natural language queries
+navegador docs src/auth.py                         # generate documentation
+```
+
+Requires an LLM provider: `pip install navegador[llm]`
+
+---
+
+## Python SDK
+
+```python
+from navegador import Navegador
+
+nav = Navegador.sqlite(".navegador/graph.db")
+nav.ingest("./myrepo")
+nav.add_concept("Payment", description="Payment processing", domain="billing")
+
+results = nav.search("auth")
+bundle = nav.explain("AuthService")
+owners = nav.find_owners("AuthService")
+```
+
+---
+
+## Cluster mode (agent swarms)
+
+For multi-agent setups sharing a Redis-backed graph:
+
+```bash
+navegador init --redis redis://host:6379 --cluster
+```
+
+Features: shared graph with local snapshots, pub/sub notifications, task queues, distributed locking, session namespacing, checkpoints, agent messaging, observability dashboard.
+
+---
+
+## Additional integrations
+
+```bash
+navegador codeowners ./myrepo             # parse CODEOWNERS → ownership graph
+navegador adr ingest docs/decisions/      # Architecture Decision Records
+navegador api ingest openapi.yaml         # OpenAPI / GraphQL schemas
+navegador deps ingest package.json        # external dependency tracking
+navegador pm ingest --github org/repo     # GitHub issues → knowledge graph
+navegador editor setup claude-code        # generate MCP config for editors
+navegador explore                         # browser-based graph visualization
+```
 
 ---
 

@@ -6,10 +6,10 @@ AST + knowledge graph context engine for AI coding agents. Parses codebases into
 
 ## Stack
 
-- **Python 3.10+**, standalone (no Django dependency)
-- **tree-sitter** for multi-language AST parsing (`tree-sitter-python`, `tree-sitter-typescript`)
+- **Python 3.12+**, standalone (no Django dependency)
+- **tree-sitter** for multi-language AST parsing (13 languages)
 - **FalkorDB** graph DB with **falkordblite** (SQLite via redislite) for local use
-- **MCP** (`mcp` Python SDK) for AI agent integration
+- **MCP** (`mcp` Python SDK) for AI agent integration (11 tools)
 - **Click + Rich** for CLI
 - **Pydantic** for data models
 - **Ruff** for linting/formatting
@@ -18,11 +18,23 @@ AST + knowledge graph context engine for AI coding agents. Parses codebases into
 
 ```
 navegador/
-  cli/         — Click commands (ingest, context, search, stats, mcp)
-  graph/       — GraphStore + schema + Cypher query templates
-  ingestion/   — RepoIngester + language parsers (python.py, typescript.py)
-  context/     — ContextLoader + ContextBundle (JSON/markdown output)
-  mcp/         — MCP server with 7 tools
+  cli/           — Click commands (50+ subcommands)
+  graph/         — GraphStore + schema + queries + migrations + export
+  ingestion/     — RepoIngester + 13 language parsers + optimization
+  context/       — ContextLoader + ContextBundle (JSON/markdown)
+  mcp/           — MCP server with 11 tools + security hardening
+  enrichment/    — FrameworkEnricher base + 8 framework enrichers
+  analysis/      — impact, flow tracing, dead code, cycles, test mapping
+  intelligence/  — semantic search, community detection, NLP, doc generation
+  cluster/       — Redis pub/sub, task queue, locking, sessions, messaging
+  sdk.py         — Python SDK (Navegador class)
+  llm.py         — LLM provider abstraction (Anthropic, OpenAI, Ollama)
+  vcs.py         — VCS abstraction (Git, Fossil)
+  diff.py        — Git diff → graph impact mapping
+  churn.py       — Behavioural coupling from git history
+  monorepo.py    — Workspace detection + ingestion
+  security.py    — Sensitive content detection + redaction
+  explorer/      — HTTP server + browser-based graph visualization
 ```
 
 ## FalkorDB connection
@@ -44,6 +56,12 @@ client = falkordb.FalkorDB.from_url("redis://localhost:6379")
 2. Implement `parse_file(path, repo_root, store) -> dict[str, int]`
 3. Add the extension + language key to `LANGUAGE_MAP` in `parser.py`
 4. Register in `RepoIngester._get_parser()`
+
+## Adding a new framework enricher
+
+1. Create `navegador/enrichment/<framework>.py` subclassing `FrameworkEnricher`
+2. Implement `framework_name`, `detection_patterns`, `enrich()`
+3. The CLI auto-discovers enrichers via `pkgutil` — no registration needed
 
 ## Adding a new MCP tool
 
