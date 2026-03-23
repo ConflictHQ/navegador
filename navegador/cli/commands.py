@@ -1262,3 +1262,740 @@ def mcp(db: str, read_only: bool):
             await server.run(read_stream, write_stream, server.create_initialization_options())
 
     asyncio.run(_run())
+
+
+# ── ANALYSIS: impact ──────────────────────────────────────────────────────────
+
+
+@main.command()
+@click.argument("name")
+@click.option("--file", "file_path", default="", help="Narrow to a specific file.")
+@click.option("--depth", default=3, show_default=True, help="Traversal depth.")
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+def impact(name: str, file_path: str, depth: int, db: str, as_json: bool):
+    """Blast-radius analysis — what does changing NAME affect?
+
+    Traverses CALLS, REFERENCES, INHERITS, IMPLEMENTS, ANNOTATES edges
+    outward to find all downstream symbols and files affected by a change.
+    """
+    from navegador.analysis.impact import ImpactAnalyzer
+
+    result = ImpactAnalyzer(_get_store(db)).blast_radius(name, file_path=file_path, depth=depth)
+
+    if as_json:
+        click.echo(json.dumps(result.to_dict(), indent=2))
+        return
+
+    console.print(
+        f"[bold]Blast radius:[/bold] [cyan]{name}[/cyan] (depth={depth})"
+    )
+    if not result.affected_nodes:
+        console.print("[yellow]No affected nodes found.[/yellow]")
+        return
+
+    table = Table(title=f"Affected nodes ({len(result.affected_nodes)})")
+    table.add_column("Type", style="cyan")
+    table.add_column("Name", style="bold")
+    table.add_column("File")
+    table.add_column("Line", justify="right")
+    for node in result.affected_nodes:
+        table.add_row(
+            node["type"], node["name"], node["file_path"], str(node["line_start"] or "")
+        )
+    console.print(table)
+
+    if result.affected_files:
+        console.print(f"\n[bold]Affected files ({len(result.affected_files)}):[/bold]")
+        for fp in result.affected_files:
+            console.print(f"  {fp}")
+
+    if result.affected_knowledge:
+        console.print(f"\n[bold]Affected knowledge ({len(result.affected_knowledge)}):[/bold]")
+        for kn in result.affected_knowledge:
+            console.print(f"  [{kn['type']}] {kn['name']}")
+
+
+# ── ANALYSIS: flow trace ──────────────────────────────────────────────────────
+
+
+@main.command()
+@click.argument("name")
+@click.option("--file", "file_path", default="", help="Narrow to a specific file.")
+@click.option("--depth", default=10, show_default=True, help="Maximum call depth.")
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+def trace(name: str, file_path: str, depth: int, db: str, as_json: bool):
+    """Execution flow trace — follow call chains from an entry point.
+
+    Traverses CALLS edges forward from NAME, returning all execution paths
+    up to the given depth.
+    """
+    from navegador.analysis.flow import FlowTracer
+
+    chains = FlowTracer(_get_store(db)).trace(name, file_path=file_path, max_depth=depth)
+
+    if as_json:
+        click.echo(json.dumps([c.to_list() for c in chains], indent=2))
+        return
+
+    if not chains:
+        console.print(f"[yellow]No call chains found from[/yellow] [cyan]{name}[/cyan].")
+        return
+
+    console.print(
+        f"[bold]Call chains from[/bold] [cyan]{name}[/cyan] — {len(chains)} path(s)"
+    )
+    for i, chain in enumerate(chains, 1):
+        steps = chain.to_list()
+        path_str = " → ".join(
+            [steps[0]["caller"]] + [s["callee"] for s in steps]
+        ) if steps else name
+        console.print(f"  {i}. {path_str}")
+
+
+# ── ANALYSIS: dead code ───────────────────────────────────────────────────────
+
+
+@main.command()
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+def deadcode(db: str, as_json: bool):
+    """Detect dead code — unreachable functions, classes, and orphan files.
+
+    A function/class is dead if nothing calls, references, or imports it.
+    An orphan file is one that no other file imports.
+    """
+    from navegador.analysis.deadcode import DeadCodeDetector
+
+    report = DeadCodeDetector(_get_store(db)).detect()
+
+    if as_json:
+        click.echo(json.dumps(report.to_dict(), indent=2))
+        return
+
+    summary = report.to_dict()["summary"]
+    console.print(
+        f"[bold]Dead code report:[/bold] "
+        f"{summary['unreachable_functions']} dead functions, "
+        f"{summary['unreachable_classes']} dead classes, "
+        f"{summary['orphan_files']} orphan files"
+    )
+
+    if report.unreachable_functions:
+        fn_table = Table(title=f"Unreachable functions/methods ({len(report.unreachable_functions)})")
+        fn_table.add_column("Type", style="cyan")
+        fn_table.add_column("Name", style="bold")
+        fn_table.add_column("File")
+        fn_table.add_column("Line", justify="right")
+        for fn in report.unreachable_functions:
+            fn_table.add_row(fn["type"], fn["name"], fn["file_path"], str(fn["line_start"] or ""))
+        console.print(fn_table)
+
+    if report.unreachable_classes:
+        cls_table = Table(title=f"Unreachable classes ({len(report.unreachable_classes)})")
+        cls_table.add_column("Name", style="bold")
+        cls_table.add_column("File")
+        cls_table.add_column("Line", justify="right")
+        for cls in report.unreachable_classes:
+            cls_table.add_row(cls["name"], cls["file_path"], str(cls["line_start"] or ""))
+        console.print(cls_table)
+
+    if report.orphan_files:
+        console.print(f"\n[bold]Orphan files ({len(report.orphan_files)}):[/bold]")
+        for fp in report.orphan_files:
+            console.print(f"  {fp}")
+
+    if not any([report.unreachable_functions, report.unreachable_classes, report.orphan_files]):
+        console.print("[green]No dead code found.[/green]")
+
+
+# ── ANALYSIS: test mapping ────────────────────────────────────────────────────
+
+
+@main.command()
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+def testmap(db: str, as_json: bool):
+    """Map test functions to production code via TESTS edges.
+
+    Finds functions starting with test_, resolves the production symbol
+    via CALLS edges and name heuristics, then writes TESTS edges to the graph.
+    """
+    from navegador.analysis.testmap import TestMapper
+
+    result = TestMapper(_get_store(db)).map_tests()
+
+    if as_json:
+        click.echo(json.dumps(result.to_dict(), indent=2))
+        return
+
+    console.print(
+        f"[bold]Test map:[/bold] {len(result.links)} linked, "
+        f"{len(result.unmatched_tests)} unmatched, "
+        f"{result.edges_created} TESTS edges created"
+    )
+
+    if result.links:
+        table = Table(title=f"Test -> production links ({len(result.links)})")
+        table.add_column("Test", style="cyan")
+        table.add_column("Production symbol", style="bold")
+        table.add_column("File")
+        table.add_column("Source")
+        for lnk in result.links:
+            table.add_row(lnk.test_name, lnk.prod_name, lnk.prod_file, lnk.source)
+        console.print(table)
+
+    if result.unmatched_tests:
+        console.print(f"\n[yellow]Unmatched tests ({len(result.unmatched_tests)}):[/yellow]")
+        for t in result.unmatched_tests:
+            console.print(f"  {t['name']}  ({t['file_path']})")
+
+
+# ── ANALYSIS: cycles ──────────────────────────────────────────────────────────
+
+
+@main.command()
+@DB_OPTION
+@click.option("--imports", "check_imports", is_flag=True, default=False,
+              help="Check import cycles only.")
+@click.option("--calls", "check_calls", is_flag=True, default=False,
+              help="Check call cycles only.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+def cycles(db: str, check_imports: bool, check_calls: bool, as_json: bool):
+    """Detect circular dependencies in import and call graphs.
+
+    By default checks both import cycles and call cycles.
+    Use --imports or --calls to restrict to one graph.
+    """
+    from navegador.analysis.cycles import CycleDetector
+
+    detector = CycleDetector(_get_store(db))
+    run_imports = check_imports or (not check_imports and not check_calls)
+    run_calls = check_calls or (not check_imports and not check_calls)
+
+    import_cycles = detector.detect_import_cycles() if run_imports else []
+    call_cycles = detector.detect_call_cycles() if run_calls else []
+
+    if as_json:
+        click.echo(
+            json.dumps(
+                {"import_cycles": import_cycles, "call_cycles": call_cycles}, indent=2
+            )
+        )
+        return
+
+    if not import_cycles and not call_cycles:
+        console.print("[green]No circular dependencies found.[/green]")
+        return
+
+    if import_cycles:
+        table = Table(title=f"Import cycles ({len(import_cycles)})")
+        table.add_column("#", justify="right")
+        table.add_column("Cycle")
+        for i, cycle in enumerate(import_cycles, 1):
+            table.add_row(str(i), " -> ".join(cycle) + f" -> {cycle[0]}")
+        console.print(table)
+
+    if call_cycles:
+        table = Table(title=f"Call cycles ({len(call_cycles)})")
+        table.add_column("#", justify="right")
+        table.add_column("Cycle")
+        for i, cycle in enumerate(call_cycles, 1):
+            table.add_row(str(i), " -> ".join(cycle) + f" -> {cycle[0]}")
+        console.print(table)
+
+
+# ── Multi-repo (#16) ─────────────────────────────────────────────────────────
+
+
+@main.group()
+def repo():
+    """Manage and query across multiple repositories."""
+
+
+@repo.command("add")
+@click.argument("name")
+@click.argument("path", type=click.Path())
+@DB_OPTION
+def repo_add(name: str, path: str, db: str):
+    """Register a repository by NAME and PATH."""
+    from navegador.multirepo import MultiRepoManager
+
+    mgr = MultiRepoManager(_get_store(db))
+    mgr.add_repo(name, path)
+    console.print(f"[green]Repo registered:[/green] {name} → {path}")
+
+
+@repo.command("list")
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True)
+def repo_list(db: str, as_json: bool):
+    """List all registered repositories."""
+    from navegador.multirepo import MultiRepoManager
+
+    repos = MultiRepoManager(_get_store(db)).list_repos()
+    if as_json:
+        click.echo(json.dumps(repos, indent=2))
+        return
+    if not repos:
+        console.print("[yellow]No repositories registered.[/yellow]")
+        return
+    table = Table(title="Registered repositories")
+    table.add_column("Name", style="cyan")
+    table.add_column("Path")
+    for r in repos:
+        table.add_row(r["name"], r["path"])
+    console.print(table)
+
+
+@repo.command("ingest-all")
+@DB_OPTION
+@click.option("--clear", is_flag=True, help="Clear graph before ingesting.")
+@click.option("--json", "as_json", is_flag=True)
+def repo_ingest_all(db: str, clear: bool, as_json: bool):
+    """Ingest all registered repositories."""
+    from navegador.multirepo import MultiRepoManager
+
+    mgr = MultiRepoManager(_get_store(db))
+    with console.status("[bold]Ingesting all repos…[/bold]"):
+        summary = mgr.ingest_all(clear=clear)
+    if as_json:
+        click.echo(json.dumps(summary, indent=2))
+        return
+    for name, stats in summary.items():
+        table = Table(title=f"Repo: {name}")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Count", justify="right", style="green")
+        for k, v in stats.items():
+            table.add_row(str(k).capitalize(), str(v))
+        console.print(table)
+
+
+@repo.command("search")
+@click.argument("query")
+@DB_OPTION
+@click.option("--limit", default=20, show_default=True)
+@click.option("--json", "as_json", is_flag=True)
+def repo_search(query: str, db: str, limit: int, as_json: bool):
+    """Search across all registered repositories."""
+    from navegador.multirepo import MultiRepoManager
+
+    results = MultiRepoManager(_get_store(db)).cross_repo_search(query, limit=limit)
+    if as_json:
+        click.echo(json.dumps(results, indent=2))
+        return
+    if not results:
+        console.print("[yellow]No results.[/yellow]")
+        return
+    table = Table(title=f"Cross-repo search: {query!r}")
+    table.add_column("Label", style="cyan")
+    table.add_column("Name", style="bold")
+    table.add_column("File/Path")
+    for r in results:
+        table.add_row(r["label"], r["name"], r["file_path"])
+    console.print(table)
+
+
+# ── Rename (#26) ──────────────────────────────────────────────────────────────
+
+
+@main.command()
+@click.argument("old_name")
+@click.argument("new_name")
+@DB_OPTION
+@click.option("--preview", is_flag=True, help="Show what would change without applying.")
+@click.option("--json", "as_json", is_flag=True)
+def rename(old_name: str, new_name: str, db: str, preview: bool, as_json: bool):
+    """Rename a symbol across the graph (coordinated rename).
+
+    \b
+    Examples:
+      navegador rename old_func new_func --preview
+      navegador rename MyClass RenamedClass
+    """
+    from navegador.refactor import SymbolRenamer
+
+    renamer = SymbolRenamer(_get_store(db))
+    if preview:
+        result = renamer.preview_rename(old_name, new_name)
+        data = {
+            "old_name": result.old_name,
+            "new_name": result.new_name,
+            "affected_files": result.affected_files,
+            "affected_nodes": len(result.affected_nodes),
+            "edges_updated": result.edges_updated,
+        }
+    else:
+        result = renamer.apply_rename(old_name, new_name)
+        data = {
+            "old_name": result.old_name,
+            "new_name": result.new_name,
+            "affected_files": result.affected_files,
+            "affected_nodes": len(result.affected_nodes),
+            "edges_updated": result.edges_updated,
+        }
+
+    if as_json:
+        click.echo(json.dumps(data, indent=2))
+        return
+
+    action = "Preview" if preview else "Renamed"
+    console.print(f"[green]{action}:[/green] {old_name!r} → {new_name!r}")
+    console.print(f"  Nodes affected : {data['affected_nodes']}")
+    console.print(f"  Edges updated  : {data['edges_updated']}")
+    if data["affected_files"]:
+        console.print("  Files:")
+        for f in data["affected_files"]:
+            console.print(f"    {f}")
+
+
+# ── CODEOWNERS (#39) ──────────────────────────────────────────────────────────
+
+
+@main.command()
+@click.argument("repo_path", type=click.Path(exists=True))
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True)
+def codeowners(repo_path: str, db: str, as_json: bool):
+    """Parse CODEOWNERS and map ownership to Person nodes."""
+    from navegador.codeowners import CodeownersIngester
+
+    stats = CodeownersIngester(_get_store(db)).ingest(repo_path)
+    if as_json:
+        click.echo(json.dumps(stats, indent=2))
+        return
+    console.print(
+        f"[green]CODEOWNERS ingested:[/green] "
+        f"{stats['owners']} owners, {stats['patterns']} patterns, {stats['edges']} edges"
+    )
+
+
+# ── ADR (#40) ─────────────────────────────────────────────────────────────────
+
+
+@main.group()
+def adr():
+    """Ingest Architecture Decision Records (ADRs) into the knowledge graph."""
+
+
+@adr.command("ingest")
+@click.argument("adr_dir", type=click.Path(exists=True))
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True)
+def adr_ingest(adr_dir: str, db: str, as_json: bool):
+    """Parse ADR markdown files and create Decision nodes."""
+    from navegador.adr import ADRIngester
+
+    stats = ADRIngester(_get_store(db)).ingest(adr_dir)
+    if as_json:
+        click.echo(json.dumps(stats, indent=2))
+        return
+    console.print(
+        f"[green]ADRs ingested:[/green] {stats['decisions']} decisions, {stats['skipped']} skipped"
+    )
+
+
+# ── API schema (#41) ─────────────────────────────────────────────────────────
+
+
+@main.group()
+def api():
+    """Ingest API schema files (OpenAPI, GraphQL) into the graph."""
+
+
+@api.command("ingest")
+@click.argument("path", type=click.Path(exists=True))
+@DB_OPTION
+@click.option(
+    "--type",
+    "schema_type",
+    type=click.Choice(["openapi", "graphql", "auto"]),
+    default="auto",
+    show_default=True,
+    help="Schema type. auto detects from file extension.",
+)
+@click.option("--json", "as_json", is_flag=True)
+def api_ingest(path: str, db: str, schema_type: str, as_json: bool):
+    """Parse an OpenAPI or GraphQL schema and create API endpoint nodes.
+
+    \b
+    Examples:
+      navegador api ingest openapi.yaml
+      navegador api ingest schema.graphql --type graphql
+      navegador api ingest swagger.json --type openapi
+    """
+    from pathlib import Path as P
+
+    from navegador.api_schema import APISchemaIngester
+
+    ingester = APISchemaIngester(_get_store(db))
+    p = P(path)
+
+    if schema_type == "auto":
+        if p.suffix.lower() in (".graphql", ".gql"):
+            schema_type = "graphql"
+        else:
+            schema_type = "openapi"
+
+    if schema_type == "graphql":
+        stats = ingester.ingest_graphql(path)
+        label = "GraphQL"
+    else:
+        stats = ingester.ingest_openapi(path)
+        label = "OpenAPI"
+
+    if as_json:
+        click.echo(json.dumps(stats, indent=2))
+        return
+
+    table = Table(title=f"{label} schema ingested")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Count", justify="right", style="green")
+    for k, v in stats.items():
+        table.add_row(k.replace("_", " ").capitalize(), str(v))
+    console.print(table)
+
+
+# ── PM: project management ticket ingestion (#53) ─────────────────────────────
+
+
+@main.group()
+def pm():
+    """Ingest project management tickets (GitHub Issues, Linear, Jira)."""
+
+
+@pm.command("ingest")
+@click.option("--github", "github_repo", default="", metavar="OWNER/REPO",
+              help="GitHub repository in owner/repo format.")
+@click.option("--token", default="", envvar="GITHUB_TOKEN",
+              help="GitHub personal access token.")
+@click.option("--state", default="open",
+              type=click.Choice(["open", "closed", "all"]),
+              show_default=True,
+              help="GitHub issue state filter.")
+@click.option("--limit", default=100, show_default=True,
+              help="Maximum number of issues to fetch.")
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True)
+def pm_ingest(github_repo: str, token: str, state: str, limit: int, db: str, as_json: bool):
+    """Ingest tickets from a PM tool into the knowledge graph.
+
+    \b
+    Examples:
+      navegador pm ingest --github owner/repo
+      navegador pm ingest --github owner/repo --token ghp_...
+      navegador pm ingest --github owner/repo --state all --limit 200
+    """
+    if not github_repo:
+        raise click.UsageError("Provide --github <owner/repo> (more backends coming in a future release).")
+
+    from navegador.pm import TicketIngester
+
+    ing = TicketIngester(_get_store(db))
+    stats = ing.ingest_github_issues(github_repo, token=token, state=state, limit=limit)
+
+    if as_json:
+        click.echo(json.dumps(stats, indent=2))
+    else:
+        table = Table(title=f"PM import: {github_repo}")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Count", justify="right", style="green")
+        for k, v in stats.items():
+            table.add_row(k.capitalize(), str(v))
+        console.print(table)
+
+
+# ── Dependencies: external package ingestion (#58) ────────────────────────────
+
+
+@main.group()
+def deps():
+    """Ingest external package dependencies (npm, pip, cargo)."""
+
+
+@deps.command("ingest")
+@click.argument("path", type=click.Path(exists=True))
+@click.option(
+    "--type", "dep_type",
+    type=click.Choice(["auto", "npm", "pip", "cargo"]),
+    default="auto",
+    show_default=True,
+    help="Manifest type. auto detects from filename.",
+)
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True)
+def deps_ingest(path: str, dep_type: str, db: str, as_json: bool):
+    """Ingest external dependencies from a package manifest.
+
+    \b
+    PATH can be:
+      package.json         (npm)
+      requirements.txt     (pip)
+      pyproject.toml       (pip)
+      Cargo.toml           (cargo)
+
+    \b
+    Examples:
+      navegador deps ingest package.json
+      navegador deps ingest requirements.txt
+      navegador deps ingest Cargo.toml --type cargo
+    """
+    from pathlib import Path as P
+
+    from navegador.dependencies import DependencyIngester
+
+    ing = DependencyIngester(_get_store(db))
+    p = P(path)
+
+    if dep_type == "auto":
+        name = p.name.lower()
+        if name == "package.json":
+            dep_type = "npm"
+        elif name in ("requirements.txt", "pyproject.toml"):
+            dep_type = "pip"
+        elif name == "cargo.toml":
+            dep_type = "cargo"
+        else:
+            raise click.UsageError(
+                f"Cannot auto-detect type for {p.name!r}. Use --type npm|pip|cargo."
+            )
+
+    dispatch = {
+        "npm": ing.ingest_npm,
+        "pip": ing.ingest_pip,
+        "cargo": ing.ingest_cargo,
+    }
+    stats = dispatch[dep_type](path)
+
+    if as_json:
+        click.echo(json.dumps(stats, indent=2))
+    else:
+        console.print(
+            f"[green]Dependencies ingested[/green] ({dep_type}): "
+            f"{stats['packages']} packages"
+        )
+
+
+# ── Submodules: ingest parent + submodules (#61) ──────────────────────────────
+
+
+@main.group()
+def submodules():
+    """Ingest a parent repository and all its git submodules."""
+
+
+@submodules.command("ingest")
+@click.argument("repo_path", type=click.Path(exists=True))
+@DB_OPTION
+@click.option("--clear", is_flag=True, help="Clear existing graph before ingesting.")
+@click.option("--json", "as_json", is_flag=True)
+def submodules_ingest(repo_path: str, db: str, clear: bool, as_json: bool):
+    """Ingest a repository and all its git submodules as linked nodes.
+
+    \b
+    Examples:
+      navegador submodules ingest .
+      navegador submodules ingest /path/to/repo --clear
+    """
+    from navegador.submodules import SubmoduleIngester
+
+    ing = SubmoduleIngester(_get_store(db))
+    stats = ing.ingest_with_submodules(repo_path, clear=clear)
+
+    if as_json:
+        click.echo(json.dumps(stats, indent=2))
+    else:
+        sub_names = list(stats.get("submodules", {}).keys())
+        console.print(
+            f"[green]Submodule ingestion complete[/green]: "
+            f"{stats.get('total_files', 0)} total files, "
+            f"{len(sub_names)} submodule(s)"
+        )
+        if sub_names:
+            console.print("  Submodules: " + ", ".join(sub_names))
+
+
+@submodules.command("list")
+@click.argument("repo_path", type=click.Path(exists=True), default=".")
+def submodules_list(repo_path: str):
+    """List git submodules found in REPO_PATH."""
+    from navegador.submodules import SubmoduleIngester
+
+    subs = SubmoduleIngester.__new__(SubmoduleIngester)
+    subs.store = None  # type: ignore[assignment]
+    items = subs.detect_submodules(repo_path)
+
+    if not items:
+        console.print("[yellow]No submodules found (no .gitmodules).[/yellow]")
+        return
+
+    table = Table(title=f"Submodules in {repo_path}")
+    table.add_column("Name", style="cyan")
+    table.add_column("Path")
+    table.add_column("URL")
+    for item in items:
+        table.add_row(item["name"], item["path"], item.get("url", ""))
+    console.print(table)
+
+
+# ── Workspace: multi-repo (#62) ────────────────────────────────────────────────
+
+
+@main.group()
+def workspace():
+    """Manage a multi-repo workspace (unified or federated graph)."""
+
+
+@workspace.command("ingest")
+@click.argument("repos", nargs=-1, metavar="NAME=PATH ...")
+@click.option(
+    "--mode",
+    type=click.Choice(["unified", "federated"]),
+    default="unified",
+    show_default=True,
+    help="Graph mode: unified (shared graph) or federated (per-repo graphs).",
+)
+@DB_OPTION
+@click.option("--clear", is_flag=True)
+@click.option("--json", "as_json", is_flag=True)
+def workspace_ingest(repos: tuple, mode: str, db: str, clear: bool, as_json: bool):
+    """Ingest multiple repositories as a workspace.
+
+    \b
+    REPOS is a list of NAME=PATH pairs, e.g.:
+      navegador workspace ingest backend=/path/to/backend frontend=/path/to/frontend
+
+    \b
+    Examples:
+      navegador workspace ingest backend=. frontend=../frontend --mode unified
+      navegador workspace ingest api=./api worker=./worker --mode federated
+    """
+    from navegador.multirepo import WorkspaceManager, WorkspaceMode
+
+    if not repos:
+        raise click.UsageError("Provide at least one NAME=PATH repo.")
+
+    wm = WorkspaceManager(_get_store(db), mode=WorkspaceMode(mode))
+    for repo_spec in repos:
+        if "=" not in repo_spec:
+            raise click.UsageError(
+                f"Invalid repo spec {repo_spec!r}. Expected NAME=PATH format."
+            )
+        name, path = repo_spec.split("=", 1)
+        wm.add_repo(name.strip(), path.strip())
+
+    stats = wm.ingest_all(clear=clear)
+
+    if as_json:
+        click.echo(json.dumps(stats, indent=2))
+    else:
+        for repo_name, repo_stats in stats.items():
+            if "error" in repo_stats:
+                console.print(f"[red]Error ingesting {repo_name}:[/red] {repo_stats['error']}")
+            else:
+                console.print(
+                    f"[green]{repo_name}[/green]: "
+                    f"{repo_stats.get('files', 0)} files, "
+                    f"{repo_stats.get('nodes', 0)} nodes"
+                )

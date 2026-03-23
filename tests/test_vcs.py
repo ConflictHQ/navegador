@@ -251,29 +251,58 @@ class TestFossilAdapterIsRepo:
         assert FossilAdapter(git_repo).is_repo() is False
 
 
-# ── FossilAdapter stubs raise NotImplementedError ─────────────────────────────
+# ── FossilAdapter implemented methods (#55) ────────────────────────────────────
+#
+# These methods are now fully implemented; they call `fossil` via subprocess.
+# Since fossil may not be installed in CI, we mock subprocess.run.
 
 
-class TestFossilAdapterStubs:
+class TestFossilAdapterImplemented:
+    """FossilAdapter methods are implemented — they call fossil via subprocess."""
+
     @pytest.fixture()
     def adapter(self, fossil_dir: Path) -> FossilAdapter:
         return FossilAdapter(fossil_dir)
 
-    def test_current_branch_raises(self, adapter: FossilAdapter):
-        with pytest.raises(NotImplementedError, match="current_branch"):
-            adapter.current_branch()
+    def test_current_branch_returns_string(self, adapter: FossilAdapter):
+        from unittest.mock import MagicMock, patch
 
-    def test_changed_files_raises(self, adapter: FossilAdapter):
-        with pytest.raises(NotImplementedError, match="changed_files"):
-            adapter.changed_files()
+        mock_result = MagicMock()
+        mock_result.stdout = "trunk\n"
+        with patch("subprocess.run", return_value=mock_result):
+            branch = adapter.current_branch()
+        assert branch == "trunk"
 
-    def test_file_history_raises(self, adapter: FossilAdapter):
-        with pytest.raises(NotImplementedError, match="file_history"):
-            adapter.file_history("README.md")
+    def test_changed_files_returns_list(self, adapter: FossilAdapter):
+        from unittest.mock import MagicMock, patch
 
-    def test_blame_raises(self, adapter: FossilAdapter):
-        with pytest.raises(NotImplementedError, match="blame"):
-            adapter.blame("README.md")
+        mock_result = MagicMock()
+        mock_result.stdout = "EDITED  src/main.py\n"
+        with patch("subprocess.run", return_value=mock_result):
+            files = adapter.changed_files()
+        assert isinstance(files, list)
+        assert "src/main.py" in files
+
+    def test_file_history_returns_list(self, adapter: FossilAdapter):
+        from unittest.mock import MagicMock, patch
+
+        mock_result = MagicMock()
+        mock_result.stdout = (
+            "=== 2024-01-15 ===\n"
+            "14:23:07 [abc123] Fix bug. (user: alice, tags: trunk)\n"
+        )
+        with patch("subprocess.run", return_value=mock_result):
+            history = adapter.file_history("README.md")
+        assert isinstance(history, list)
+
+    def test_blame_returns_list(self, adapter: FossilAdapter):
+        from unittest.mock import MagicMock, patch
+
+        mock_result = MagicMock()
+        mock_result.stdout = "1.1          alice 2024-01-15:  # line content\n"
+        with patch("subprocess.run", return_value=mock_result):
+            result = adapter.blame("README.md")
+        assert isinstance(result, list)
 
 
 # ── detect_vcs factory ─────────────────────────────────────────────────────────

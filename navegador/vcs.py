@@ -207,16 +207,21 @@ def _parse_porcelain_blame(output: str) -> list[dict]:
 
 class FossilAdapter(VCSAdapter):
     """
-    VCS adapter stub for Fossil repositories.
+    VCS adapter for Fossil repositories.
 
-    ``is_repo()`` is fully implemented; all other methods raise
-    ``NotImplementedError`` until a full implementation is added.
+    ``is_repo()`` checks for ``.fslckout`` / ``_FOSSIL_`` sentinel files.
+    All other methods run ``fossil`` sub-commands via subprocess.
     """
 
-    _NOT_IMPLEMENTED_MSG = (
-        "FossilAdapter.{method} is not yet implemented. "
-        "Contributions welcome — see CONTRIBUTING.md for the VCS adapter guide."
-    )
+    def _run(self, args: list[str], check: bool = True) -> subprocess.CompletedProcess:
+        """Run a fossil sub-command inside *repo_path* and return the result."""
+        return subprocess.run(
+            ["fossil", *args],
+            cwd=self.repo_path,
+            capture_output=True,
+            text=True,
+            check=check,
+        )
 
     def is_repo(self) -> bool:
         """Return True when *repo_path* looks like a Fossil checkout."""
@@ -226,24 +231,134 @@ class FossilAdapter(VCSAdapter):
         )
 
     def current_branch(self) -> str:
-        raise NotImplementedError(
-            self._NOT_IMPLEMENTED_MSG.format(method="current_branch")
-        )
+        """
+        Return the name of the current Fossil branch.
+
+        Runs ``fossil branch current`` and returns its output stripped of
+        whitespace.
+        """
+        result = self._run(["branch", "current"])
+        return result.stdout.strip()
 
     def changed_files(self, since: str = "") -> list[str]:
-        raise NotImplementedError(
-            self._NOT_IMPLEMENTED_MSG.format(method="changed_files")
-        )
+        """
+        Return a list of file paths that have changed.
+
+        Runs ``fossil changes --differ`` which reports files that differ
+        from the current check-in.  The *since* parameter is not used by
+        Fossil's change model and is accepted for interface compatibility.
+        """
+        result = self._run(["changes", "--differ"])
+        files: list[str] = []
+        for line in result.stdout.splitlines():
+            # fossil changes output: "<STATUS>  <path>"
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                files.append(parts[1].strip())
+            elif parts:
+                files.append(parts[0].strip())
+        return [f for f in files if f]
 
     def file_history(self, file_path: str, limit: int = 10) -> list[dict]:
-        raise NotImplementedError(
-            self._NOT_IMPLEMENTED_MSG.format(method="file_history")
-        )
+        """
+        Return up to *limit* timeline entries for *file_path*.
+
+        Runs ``fossil timeline --limit <n> --type ci --path <file>`` and
+        parses the output into a list of dicts with keys:
+        ``hash``, ``author``, ``date``, ``message``.
+        """
+        result = self._run([
+            "timeline",
+            "--limit", str(limit),
+            "--type", "ci",
+            "--path", file_path,
+        ])
+        return _parse_fossil_timeline(result.stdout)
 
     def blame(self, file_path: str) -> list[dict]:
-        raise NotImplementedError(
-            self._NOT_IMPLEMENTED_MSG.format(method="blame")
+        """
+        Return per-line blame data for *file_path*.
+
+        Runs ``fossil annotate --log <file>`` and returns a list of dicts with
+        keys: ``line``, ``hash``, ``author``, ``content``.
+        """
+        result = self._run(["annotate", "--log", file_path])
+        return _parse_fossil_annotate(result.stdout)
+
+
+def _parse_fossil_timeline(output: str) -> list[dict]:
+    """
+    Parse ``fossil timeline`` output into a list of entry dicts.
+
+    Fossil timeline lines look like::
+
+        === 2024-01-15 ===
+        14:23:07 [abc123def456] Commit message here. (user: alice, tags: trunk)
+
+    We emit one dict per timeline entry.
+    """
+    entries: list[dict] = []
+    current_date = ""
+
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        # Date header: "=== 2024-01-15 ==="
+        if line.startswith("===") and line.endswith("==="):
+            current_date = line.strip("= ").strip()
+            continue
+
+        # Entry line: "HH:MM:SS [hashprefix] message (user: ..., tags: ...)"
+        import re
+
+        m = re.match(
+            r"(\d{2}:\d{2}:\d{2})\s+\[([0-9a-f]+)\]\s+(.*?)(?:\s+\(user:\s*(\w+).*\))?$",
+            line,
         )
+        if m:
+            time_part, hash_part, message, author = m.groups()
+            entries.append({
+                "hash": hash_part,
+                "author": author or "",
+                "date": f"{current_date} {time_part}".strip(),
+                "message": message.rstrip(),
+            })
+
+    return entries
+
+
+def _parse_fossil_annotate(output: str) -> list[dict]:
+    """
+    Parse ``fossil annotate --log`` output into a list of blame dicts.
+
+    Each line looks like::
+
+        1.1          alice 2024-01-15:  actual line content
+
+    We return one dict per source line with keys:
+    ``line``, ``hash``, ``author``, ``content``.
+    """
+    import re
+
+    entries: list[dict] = []
+    line_number = 0
+
+    for raw in output.splitlines():
+        # Pattern: "<version>  <author> <date>:  <content>"
+        m = re.match(r"(\S+)\s+(\S+)\s+\S+:\s+(.*)", raw)
+        if m:
+            version, author, content = m.groups()
+            line_number += 1
+            entries.append({
+                "line": line_number,
+                "hash": version,
+                "author": author,
+                "content": content,
+            })
+
+    return entries
 
 
 # ── Factory ────────────────────────────────────────────────────────────────────
