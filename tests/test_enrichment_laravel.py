@@ -41,21 +41,21 @@ class TestLaravelEnricherIdentity:
     def test_is_framework_enricher_subclass(self):
         assert issubclass(LaravelEnricher, FrameworkEnricher)
 
-    def test_detection_patterns_contains_artisan(self):
-        store = _mock_store()
-        assert "artisan" in LaravelEnricher(store).detection_patterns
-
     def test_detection_patterns_contains_illuminate(self):
         store = _mock_store()
         assert "Illuminate" in LaravelEnricher(store).detection_patterns
 
-    def test_detection_patterns_contains_http_controllers(self):
+    def test_detection_files_contains_artisan(self):
         store = _mock_store()
-        assert "app/Http/Controllers" in LaravelEnricher(store).detection_patterns
+        assert "artisan" in LaravelEnricher(store).detection_files
 
-    def test_detection_patterns_has_three_entries(self):
+    def test_detection_patterns_has_one_entry(self):
         store = _mock_store()
-        assert len(LaravelEnricher(store).detection_patterns) == 3
+        assert len(LaravelEnricher(store).detection_patterns) == 1
+
+    def test_detection_files_is_nonempty(self):
+        store = _mock_store()
+        assert len(LaravelEnricher(store).detection_files) >= 1
 
 
 # ── enrich() return type ──────────────────────────────────────────────────────

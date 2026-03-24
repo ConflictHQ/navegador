@@ -59,10 +59,6 @@ class TestDetectionPatterns:
         enricher = ReactNativeEnricher(_mock_store())
         assert "react-native" in enricher.detection_patterns
 
-    def test_contains_React_Native_titlecase(self):
-        enricher = ReactNativeEnricher(_mock_store())
-        assert "React Native" in enricher.detection_patterns
-
     def test_contains_expo(self):
         enricher = ReactNativeEnricher(_mock_store())
         assert "expo" in enricher.detection_patterns
@@ -70,6 +66,10 @@ class TestDetectionPatterns:
     def test_returns_list(self):
         enricher = ReactNativeEnricher(_mock_store())
         assert isinstance(enricher.detection_patterns, list)
+
+    def test_has_at_least_two_patterns(self):
+        enricher = ReactNativeEnricher(_mock_store())
+        assert len(enricher.detection_patterns) >= 2
 
 
 # ── detect() ─────────────────────────────────────────────────────────────────

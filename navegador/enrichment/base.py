@@ -34,27 +34,50 @@ class FrameworkEnricher(ABC):
     @property
     @abstractmethod
     def detection_patterns(self) -> list[str]:
-        """File/import patterns that indicate this framework is in use.
+        """Import module names that indicate this framework is in use.
 
-        E.g. ['manage.py', 'django.conf.settings'] for Django.
+        Detection queries Import nodes for exact module matches, so use
+        the actual package name (e.g. 'django', 'fastapi', 'express').
         """
+
+    @property
+    def detection_files(self) -> list[str]:
+        """Filenames whose presence confirms the framework.
+
+        Override this to add file-based detection (e.g. 'manage.py' for
+        Django, 'Gemfile' for Rails). File names are matched exactly
+        against File node names — not as substrings.
+        """
+        return []
 
     @abstractmethod
     def enrich(self) -> EnrichmentResult:
         """Run enrichment on the current graph."""
 
     def detect(self) -> bool:
-        """Check if the framework is present in the graph by looking for detection patterns."""
+        """Check if the framework is present by looking for real imports and marker files."""
+        # Check Import nodes for actual framework imports
         for pattern in self.detection_patterns:
             result = self.store.query(
-                "MATCH (n) WHERE n.name CONTAINS $pattern OR "
-                "(n.file_path IS NOT NULL AND n.file_path CONTAINS $pattern) "
-                "RETURN count(n) AS c LIMIT 1",
-                {"pattern": pattern},
+                "MATCH (n:Import) WHERE n.name = $name OR n.module = $name "
+                "RETURN count(n) AS c",
+                {"name": pattern},
             )
             rows = result.result_set or []
             if rows and rows[0][0] > 0:
                 return True
+
+        # Check for marker files by exact filename match
+        for filename in self.detection_files:
+            result = self.store.query(
+                "MATCH (f:File) WHERE f.name = $name "
+                "RETURN count(f) AS c",
+                {"name": filename},
+            )
+            rows = result.result_set or []
+            if rows and rows[0][0] > 0:
+                return True
+
         return False
 
     def _promote_node(

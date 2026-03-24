@@ -20,7 +20,11 @@ class SpringEnricher(FrameworkEnricher):
 
     @property
     def detection_patterns(self) -> list[str]:
-        return ["@SpringBootApplication", "spring-boot", "application.properties"]
+        return ["org.springframework"]
+
+    @property
+    def detection_files(self) -> list[str]:
+        return ["application.properties", "application.yml"]
 
     def enrich(self) -> EnrichmentResult:
         result = EnrichmentResult()

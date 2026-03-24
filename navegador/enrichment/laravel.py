@@ -21,7 +21,11 @@ class LaravelEnricher(FrameworkEnricher):
 
     @property
     def detection_patterns(self) -> list[str]:
-        return ["artisan", "Illuminate", "app/Http/Controllers"]
+        return ["Illuminate"]
+
+    @property
+    def detection_files(self) -> list[str]:
+        return ["artisan"]
 
     def enrich(self) -> EnrichmentResult:
         result = EnrichmentResult()

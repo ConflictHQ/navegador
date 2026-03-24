@@ -59,17 +59,13 @@ class TestDetectionPatterns:
         enricher = ExpressEnricher(_mock_store())
         assert "express" in enricher.detection_patterns
 
-    def test_contains_Express_titlecase(self):
-        enricher = ExpressEnricher(_mock_store())
-        assert "Express" in enricher.detection_patterns
-
-    def test_contains_app_listen(self):
-        enricher = ExpressEnricher(_mock_store())
-        assert "app.listen" in enricher.detection_patterns
-
     def test_returns_list(self):
         enricher = ExpressEnricher(_mock_store())
         assert isinstance(enricher.detection_patterns, list)
+
+    def test_is_nonempty(self):
+        enricher = ExpressEnricher(_mock_store())
+        assert len(enricher.detection_patterns) >= 1
 
 
 # ── detect() ─────────────────────────────────────────────────────────────────

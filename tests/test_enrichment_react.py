@@ -61,21 +61,22 @@ class TestDetectionPatterns:
         enricher = ReactEnricher(_mock_store())
         assert "react" in enricher.detection_patterns
 
-    def test_contains_React(self):
+    def test_contains_react_dom(self):
         enricher = ReactEnricher(_mock_store())
-        assert "React" in enricher.detection_patterns
+        assert "react-dom" in enricher.detection_patterns
 
-    def test_contains_next_config(self):
+    def test_contains_next(self):
         enricher = ReactEnricher(_mock_store())
-        assert "next.config" in enricher.detection_patterns
-
-    def test_contains_next_router(self):
-        enricher = ReactEnricher(_mock_store())
-        assert "next/router" in enricher.detection_patterns
+        assert "next" in enricher.detection_patterns
 
     def test_returns_list(self):
         enricher = ReactEnricher(_mock_store())
         assert isinstance(enricher.detection_patterns, list)
+
+    def test_detection_files_contains_next_config_variants(self):
+        enricher = ReactEnricher(_mock_store())
+        files = enricher.detection_files
+        assert any("next.config" in f for f in files)
 
 
 # ── detect() ─────────────────────────────────────────────────────────────────

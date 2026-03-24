@@ -41,21 +41,21 @@ class TestSpringEnricherIdentity:
     def test_is_framework_enricher_subclass(self):
         assert issubclass(SpringEnricher, FrameworkEnricher)
 
-    def test_detection_patterns_contains_spring_boot_application(self):
+    def test_detection_patterns_contains_org_springframework(self):
         store = _mock_store()
-        assert "@SpringBootApplication" in SpringEnricher(store).detection_patterns
+        assert "org.springframework" in SpringEnricher(store).detection_patterns
 
-    def test_detection_patterns_contains_spring_boot(self):
+    def test_detection_files_contains_application_properties(self):
         store = _mock_store()
-        assert "spring-boot" in SpringEnricher(store).detection_patterns
+        assert "application.properties" in SpringEnricher(store).detection_files
 
-    def test_detection_patterns_contains_application_properties(self):
+    def test_detection_files_contains_application_yml(self):
         store = _mock_store()
-        assert "application.properties" in SpringEnricher(store).detection_patterns
+        assert "application.yml" in SpringEnricher(store).detection_files
 
-    def test_detection_patterns_has_three_entries(self):
+    def test_detection_patterns_has_one_entry(self):
         store = _mock_store()
-        assert len(SpringEnricher(store).detection_patterns) == 3
+        assert len(SpringEnricher(store).detection_patterns) == 1
 
 
 # ── enrich() return type ──────────────────────────────────────────────────────

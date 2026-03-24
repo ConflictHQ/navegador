@@ -41,25 +41,25 @@ class TestRailsEnricherIdentity:
     def test_is_framework_enricher_subclass(self):
         assert issubclass(RailsEnricher, FrameworkEnricher)
 
-    def test_detection_patterns_contains_gemfile(self):
+    def test_detection_patterns_contains_rails(self):
         store = _mock_store()
-        assert "Gemfile" in RailsEnricher(store).detection_patterns
-
-    def test_detection_patterns_contains_routes(self):
-        store = _mock_store()
-        assert "config/routes.rb" in RailsEnricher(store).detection_patterns
-
-    def test_detection_patterns_contains_application_controller(self):
-        store = _mock_store()
-        assert "ApplicationController" in RailsEnricher(store).detection_patterns
+        assert "rails" in RailsEnricher(store).detection_patterns
 
     def test_detection_patterns_contains_active_record(self):
         store = _mock_store()
-        assert "ActiveRecord" in RailsEnricher(store).detection_patterns
+        assert "active_record" in RailsEnricher(store).detection_patterns
 
-    def test_detection_patterns_has_four_entries(self):
+    def test_detection_patterns_contains_action_controller(self):
         store = _mock_store()
-        assert len(RailsEnricher(store).detection_patterns) == 4
+        assert "action_controller" in RailsEnricher(store).detection_patterns
+
+    def test_detection_files_contains_gemfile(self):
+        store = _mock_store()
+        assert "Gemfile" in RailsEnricher(store).detection_files
+
+    def test_detection_patterns_has_three_entries(self):
+        store = _mock_store()
+        assert len(RailsEnricher(store).detection_patterns) == 3
 
 
 # ── enrich() return type ──────────────────────────────────────────────────────

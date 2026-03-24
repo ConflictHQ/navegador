@@ -21,7 +21,11 @@ class RailsEnricher(FrameworkEnricher):
 
     @property
     def detection_patterns(self) -> list[str]:
-        return ["Gemfile", "config/routes.rb", "ApplicationController", "ActiveRecord"]
+        return ["rails", "active_record", "action_controller"]
+
+    @property
+    def detection_files(self) -> list[str]:
+        return ["Gemfile"]
 
     def enrich(self) -> EnrichmentResult:
         result = EnrichmentResult()

@@ -21,7 +21,11 @@ class ReactEnricher(FrameworkEnricher):
 
     @property
     def detection_patterns(self) -> list[str]:
-        return ["react", "React", "next.config", "next/router"]
+        return ["react", "react-dom", "next"]
+
+    @property
+    def detection_files(self) -> list[str]:
+        return ["next.config.js", "next.config.ts", "next.config.mjs"]
 
     def enrich(self) -> EnrichmentResult:
         result = EnrichmentResult()

@@ -22,7 +22,11 @@ class DjangoEnricher(FrameworkEnricher):
 
     @property
     def detection_patterns(self) -> list[str]:
-        return ["manage.py", "django.conf", "settings.py", "urls.py"]
+        return ["django", "django.conf", "django.db", "django.http"]
+
+    @property
+    def detection_files(self) -> list[str]:
+        return ["manage.py"]
 
     def enrich(self) -> EnrichmentResult:
         result = EnrichmentResult()

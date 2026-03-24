@@ -38,21 +38,21 @@ class TestDjangoEnricherMetadata:
         enricher = DjangoEnricher(_mock_store())
         assert enricher.framework_name == "django"
 
-    def test_detection_patterns_contains_manage_py(self):
+    def test_detection_patterns_contains_django(self):
         enricher = DjangoEnricher(_mock_store())
-        assert "manage.py" in enricher.detection_patterns
+        assert "django" in enricher.detection_patterns
 
     def test_detection_patterns_contains_django_conf(self):
         enricher = DjangoEnricher(_mock_store())
         assert "django.conf" in enricher.detection_patterns
 
-    def test_detection_patterns_contains_settings_py(self):
+    def test_detection_patterns_contains_django_db(self):
         enricher = DjangoEnricher(_mock_store())
-        assert "settings.py" in enricher.detection_patterns
+        assert "django.db" in enricher.detection_patterns
 
-    def test_detection_patterns_contains_urls_py(self):
+    def test_detection_patterns_contains_django_http(self):
         enricher = DjangoEnricher(_mock_store())
-        assert "urls.py" in enricher.detection_patterns
+        assert "django.http" in enricher.detection_patterns
 
     def test_detection_patterns_is_list_of_strings(self):
         enricher = DjangoEnricher(_mock_store())
@@ -105,7 +105,9 @@ class TestDjangoEnricherDetect:
         store = _mock_store(result_set=[[0]])
         enricher = DjangoEnricher(store)
         enricher.detect()
-        assert store._graph.query.call_count == len(enricher.detection_patterns)
+        # All detection_patterns are checked, then all detection_files
+        expected = len(enricher.detection_patterns) + len(enricher.detection_files)
+        assert store._graph.query.call_count == expected
 
 
 # ── enrich() — views ──────────────────────────────────────────────────────────

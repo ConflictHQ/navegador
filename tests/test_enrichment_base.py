@@ -129,12 +129,10 @@ class TestDetect:
         calls = store._graph.query.call_args_list
         # Two patterns → two queries
         assert len(calls) == 2
-        _, kwargs0 = calls[0]
-        _, kwargs1 = calls[1]
         params0 = calls[0][0][1] if len(calls[0][0]) > 1 else calls[0][1].get("params", {})
         params1 = calls[1][0][1] if len(calls[1][0]) > 1 else calls[1][1].get("params", {})
-        assert params0 == {"pattern": "mock_module"}
-        assert params1 == {"pattern": "mock_settings.py"}
+        assert params0 == {"name": "mock_module"}
+        assert params1 == {"name": "mock_settings.py"}
 
     def test_stops_early_when_first_pattern_matches(self):
         store = _mock_store(result_set=[[5]])

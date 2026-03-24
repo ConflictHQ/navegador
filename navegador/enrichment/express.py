@@ -34,7 +34,7 @@ class ExpressEnricher(FrameworkEnricher):
 
     @property
     def detection_patterns(self) -> list[str]:
-        return ["express", "Express", "app.listen"]
+        return ["express"]
 
     def enrich(self) -> EnrichmentResult:
         result = EnrichmentResult()

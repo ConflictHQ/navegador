@@ -30,7 +30,11 @@ class ReactNativeEnricher(FrameworkEnricher):
 
     @property
     def detection_patterns(self) -> list[str]:
-        return ["react-native", "React Native", "expo"]
+        return ["react-native", "expo"]
+
+    @property
+    def detection_files(self) -> list[str]:
+        return ["app.json"]
 
     def enrich(self) -> EnrichmentResult:
         result = EnrichmentResult()

@@ -29,7 +29,7 @@ class FastAPIEnricher(FrameworkEnricher):
 
     @property
     def detection_patterns(self) -> list[str]:
-        return ["fastapi", "FastAPI", "APIRouter"]
+        return ["fastapi"]
 
     # ── Enrichment ────────────────────────────────────────────────────────────
 
