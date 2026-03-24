@@ -111,6 +111,7 @@ class RepoIngester:
             {
                 "name": repo_path.name,
                 "path": str(repo_path),
+                "file_path": "",
             },
         )
 

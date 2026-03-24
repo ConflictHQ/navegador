@@ -74,7 +74,12 @@ class GraphStore:
         return self._graph.query(cypher, params or {})
 
     def create_node(self, label: str, props: dict[str, Any]) -> None:
-        """Upsert a node by (label, name, file_path)."""
+        """Upsert a node by (label, name[, file_path])."""
+        # Ensure merge key fields exist
+        props.setdefault("name", "")
+        props.setdefault("file_path", "")
+        # Filter out None values — FalkorDB rejects them as params
+        props = {k: ("" if v is None else v) for k, v in props.items()}
         prop_str = ", ".join(f"n.{k} = ${k}" for k in props)
         cypher = f"MERGE (n:{label} {{name: $name, file_path: $file_path}}) SET {prop_str}"
         self.query(cypher, props)
@@ -89,8 +94,8 @@ class GraphStore:
         props: dict[str, Any] | None = None,
     ) -> None:
         """Create a directed edge between two nodes, merging if it already exists."""
-        from_match = " AND ".join(f"a.{k} = $from_{k}" for k in from_key)
-        to_match = " AND ".join(f"b.{k} = $to_{k}" for k in to_key)
+        from_match = ", ".join(f"{k}: $from_{k}" for k in from_key)
+        to_match = ", ".join(f"{k}: $to_{k}" for k in to_key)
         prop_set = ""
         if props:
             prop_set = " SET " + ", ".join(f"r.{k} = $p_{k}" for k in props)
