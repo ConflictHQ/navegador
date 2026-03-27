@@ -29,6 +29,7 @@ dependencies = [
     # Graph database
     "FalkorDB>=1.5.0",       # graph query client
     "falkordblite>=0.8.0",   # embedded SQLite-backed storage (zero-infra local)
+    "redis>=7.4.0",          # redislite needs >=7.4 for Python 3.14 compatibility
     # AST parsing — multi-language via tree-sitter grammars
     "tree-sitter>=0.24.0",
     "tree-sitter-python>=0.23.0",
