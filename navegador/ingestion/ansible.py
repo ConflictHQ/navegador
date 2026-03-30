@@ -14,8 +14,6 @@ import logging
 import re
 from pathlib import Path
 
-import yaml
-
 from navegador.graph.schema import EdgeType, NodeLabel
 from navegador.graph.store import GraphStore
 from navegador.ingestion.parser import LanguageParser
@@ -180,8 +178,10 @@ class AnsibleParser(LanguageParser):
             return False
 
         try:
+            import yaml
+
             data = yaml.safe_load(text)
-        except yaml.YAMLError:
+        except Exception:
             return False
 
         if isinstance(data, list) and data:
@@ -197,9 +197,11 @@ class AnsibleParser(LanguageParser):
         stats = {"functions": 0, "classes": 0, "edges": 0}
 
         try:
+            import yaml
+
             text = path.read_text(encoding="utf-8", errors="replace")
             data = yaml.safe_load(text)
-        except (OSError, yaml.YAMLError) as exc:
+        except Exception as exc:
             logger.warning("Could not parse Ansible file %s: %s", rel_path, exc)
             return stats
 

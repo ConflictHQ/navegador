@@ -4,8 +4,12 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from navegador.graph.schema import EdgeType, NodeLabel
-from navegador.ingestion.ansible import AnsibleParser
+import pytest
+
+yaml = pytest.importorskip("yaml", reason="pyyaml not installed")
+
+from navegador.graph.schema import EdgeType, NodeLabel  # noqa: E402
+from navegador.ingestion.ansible import AnsibleParser  # noqa: E402
 
 
 def _make_store():
