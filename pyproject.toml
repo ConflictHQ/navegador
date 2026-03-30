@@ -68,6 +68,7 @@ iac = [
     "tree-sitter-hcl>=1.2.0",
     "tree-sitter-puppet>=1.3.0",
     "tree-sitter-bash>=0.25.0",
+    "pyyaml>=6.0",            # Ansible parser uses yaml.safe_load
 ]
 llm = [
     # LLM provider SDKs (install the ones you use)
