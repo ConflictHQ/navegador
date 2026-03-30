@@ -53,6 +53,16 @@ This installs the core package with the SQLite backend (`falkordblite`) included
 
     After installing, all 13 languages are parsed automatically by `navegador ingest`. No additional configuration is required.
 
+=== "[iac]"
+
+    Infrastructure-as-Code parsers for HCL/Terraform, Puppet, Bash/Shell, Ansible, and Chef.
+
+    ```bash
+    pip install "navegador[iac]"
+    ```
+
+    After installing, `.tf`, `.hcl`, `.pp`, `.sh`, `.bash`, and `.zsh` files are parsed automatically. Ansible YAML files are detected heuristically by directory structure. Chef cookbooks are enriched via the Chef enricher on top of the Ruby parser.
+
 === "[llm]"
 
     LLM provider integrations for Anthropic, OpenAI, and Ollama. Required for `navegador ask`, `navegador docs`, and `navegador semantic-search`.
@@ -68,7 +78,7 @@ This installs the core package with the SQLite backend (`falkordblite`) included
     Install everything at once:
 
     ```bash
-    pip install "navegador[sqlite,redis,languages,llm]"
+    pip install "navegador[sqlite,redis,languages,iac,llm]"
     ```
 
 ## Verify
@@ -80,7 +90,7 @@ navegador --version
 Expected output:
 
 ```
-navegador, version 0.7.0
+navegador, version 0.8.0
 ```
 
 ## Shell completions

@@ -30,10 +30,23 @@ Navegador walks all source files in the repo and uses tree-sitter to extract str
 | `.c`, `.h` | C | `[languages]` |
 | `.cpp`, `.cc`, `.cxx`, `.hpp` | C++ | `[languages]` |
 
-Install extended language support:
+**Infrastructure-as-Code:**
+
+| Extension(s) | Language | Extra |
+|---|---|---|
+| `.tf`, `.hcl` | HCL / Terraform | `[iac]` |
+| `.pp` | Puppet | `[iac]` |
+| `.sh`, `.bash`, `.zsh` | Bash / Shell | `[iac]` |
+| `.yml`, `.yaml` | Ansible | `[iac]` (heuristic detection) |
+| `.rb` (in Chef cookbooks) | Chef | `[iac]` (enricher on Ruby parser) |
+
+Ansible files are not matched by extension — navegador detects them by directory structure (`roles/`, `playbooks/`, `group_vars/`, `host_vars/`) or content (`hosts:` + `tasks:` keys). Chef uses the existing Ruby parser; the Chef enricher promotes nodes with Chef-specific semantic types.
+
+Install language and IaC support:
 
 ```bash
 pip install "navegador[languages]"
+pip install "navegador[iac]"
 ```
 
 The following directories are always skipped: `.git`, `.venv`, `venv`, `node_modules`, `__pycache__`, `dist`, `build`, `.next`, `target` (Rust/Java builds), `vendor` (Go modules), `.gradle`.
@@ -50,6 +63,29 @@ The following directories are always skipped: `.git`, `.venv`, `venv`, `node_mod
 | Inheritance | `INHERITS` edges from subclass to parent |
 
 Doc comment formats supported per language: Python docstrings, JSDoc (`/** */`), Rust `///`, Java Javadoc.
+
+### IaC extraction
+
+IaC parsers map infrastructure constructs to the standard node labels with a `semantic_type` property for specificity:
+
+| Language | Construct | Node label | `semantic_type` |
+|---|---|---|---|
+| Terraform | `resource` | `Class` | `terraform_resource` |
+| Terraform | `variable` / `output` / `locals` | `Variable` | `terraform_variable` / `terraform_output` / `terraform_local` |
+| Terraform | `module` | `Module` | `terraform_module` |
+| Terraform | `data` / `provider` | `Class` | `terraform_data` / `terraform_provider` |
+| Puppet | `class` / `define` / `node` | `Class` | `puppet_class` / `puppet_defined_type` / `puppet_node` |
+| Puppet | resource declaration | `Function` | `puppet_resource` |
+| Puppet | `include` | `Import` | `puppet_include` |
+| Ansible | playbook file | `Module` | `ansible_playbook` |
+| Ansible | play | `Class` | `ansible_play` |
+| Ansible | task / handler | `Function` | `ansible_task` / `ansible_handler` |
+| Ansible | role | `Import` | `ansible_role` |
+| Bash | function | `Function` | `shell_function` |
+| Bash | variable | `Variable` | `shell_variable` |
+| Bash | `source` / `.` | `Import` | `shell_source` |
+
+Cross-references are extracted where possible: Terraform `var.x`, `module.x`, and resource-to-resource dependencies become `REFERENCES` / `DEPENDS_ON` edges. Ansible `notify:` keys create `CALLS` edges to handlers. Puppet `include` creates `IMPORTS` edges.
 
 ### Options
 

@@ -43,6 +43,8 @@ Enrichment is **non-destructive** — it never removes or modifies existing node
 | Next.js | TypeScript | `pages/`, `app/`, `getServerSideProps` | `Page`, `Route`, `ServerComponent` |
 | Express | JavaScript | `app.get/post/put/delete`, `Router` | `Route`, `Middleware` |
 | NestJS | TypeScript | `@Controller`, `@Injectable`, `@Module` | `Controller`, `Service`, `Module` |
+| **Terraform** | HCL | `main.tf`, `variables.tf`, `outputs.tf` | Cross-file module resolution, provider grouping |
+| **Chef** | Ruby | `metadata.rb`, `Berksfile` | `chef_recipe`, `chef_resource`, `chef_cookbook`, `chef_include` |
 
 !!! note
     Framework detection is automatic when `--framework auto` is used (the default). Navegador inspects imports and decorator patterns to identify which frameworks are present.
@@ -79,7 +81,7 @@ navegador enrich ./src --framework fastapi
 navegador enrich ./src --framework pytest
 ```
 
-Valid values: `django`, `flask`, `fastapi`, `pytest`, `sqlalchemy`, `nextjs`, `express`, `nestjs`, `auto` (default).
+Valid values: `django`, `flask`, `fastapi`, `pytest`, `sqlalchemy`, `nextjs`, `express`, `nestjs`, `terraform`, `chef`, `auto` (default).
 
 ### JSON output
 
