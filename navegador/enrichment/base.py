@@ -59,8 +59,7 @@ class FrameworkEnricher(ABC):
         # Check Import nodes for actual framework imports
         for pattern in self.detection_patterns:
             result = self.store.query(
-                "MATCH (n:Import) WHERE n.name = $name OR n.module = $name "
-                "RETURN count(n) AS c",
+                "MATCH (n:Import) WHERE n.name = $name OR n.module = $name RETURN count(n) AS c",
                 {"name": pattern},
             )
             rows = result.result_set or []
@@ -70,8 +69,7 @@ class FrameworkEnricher(ABC):
         # Check for marker files by exact filename match
         for filename in self.detection_files:
             result = self.store.query(
-                "MATCH (f:File) WHERE f.name = $name "
-                "RETURN count(f) AS c",
+                "MATCH (f:File) WHERE f.name = $name RETURN count(f) AS c",
                 {"name": filename},
             )
             rows = result.result_set or []

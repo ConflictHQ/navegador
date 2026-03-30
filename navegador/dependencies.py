@@ -157,6 +157,73 @@ class DependencyIngester:
         logger.info("DependencyIngester.ingest_cargo(%s): %d packages", p, count)
         return {"packages": count}
 
+    # ── go / go.mod ───────────────────────────────────────────────────────────
+
+    def ingest_gomod(self, gomod_path: str | Path) -> dict[str, Any]:
+        """
+        Parse a ``go.mod`` and ingest the module declaration and all
+        ``require`` entries as external dependencies.
+
+        Parameters
+        ----------
+        gomod_path:
+            Absolute or relative path to ``go.mod``.
+
+        Returns
+        -------
+        dict with key ``packages`` (int count ingested)
+        """
+        p = Path(gomod_path).resolve()
+        text = p.read_text(encoding="utf-8")
+
+        count = 0
+        in_require = False
+
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+
+            # Module declaration
+            if line.startswith("module "):
+                mod_name = line.removeprefix("module").strip()
+                self.store.create_node(
+                    NodeLabel.Concept,
+                    {
+                        "name": mod_name,
+                        "description": f"go:{mod_name}",
+                        "domain": _DOMAIN,
+                        "status": "module",
+                    },
+                )
+                continue
+
+            # Require block boundaries
+            if line == "require (":
+                in_require = True
+                continue
+            if line == ")" and in_require:
+                in_require = False
+                continue
+
+            # Single-line require
+            if line.startswith("require ") and "(" not in line:
+                parts = line.removeprefix("require").strip().split()
+                if len(parts) >= 2:
+                    pkg_name, version = parts[0], parts[1]
+                    self._upsert_dep("go", pkg_name, version, str(p))
+                    count += 1
+                continue
+
+            # Inside require block
+            if in_require and line and not line.startswith("//"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    pkg_name, version = parts[0], parts[1]
+                    self._upsert_dep("go", pkg_name, version, str(p))
+                    count += 1
+
+        logger.info("DependencyIngester.ingest_gomod(%s): %d packages", p, count)
+        return {"packages": count}
+
     # ── Core helpers ──────────────────────────────────────────────────────────
 
     def _upsert_dep(

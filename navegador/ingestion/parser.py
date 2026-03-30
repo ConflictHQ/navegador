@@ -16,6 +16,12 @@ Supported languages (all via tree-sitter):
   Swift       .swift
   C           .c .h
   C++         .cpp .hpp .cc .cxx
+
+Infrastructure-as-Code:
+  HCL         .tf .hcl        (Terraform / OpenTofu)
+  Puppet      .pp
+  Bash        .sh .bash .zsh
+  Ansible     .yml .yaml      (detected heuristically, not via extension)
 """
 
 import hashlib
@@ -51,6 +57,12 @@ LANGUAGE_MAP: dict[str, str] = {
     ".hpp": "cpp",
     ".cc": "cpp",
     ".cxx": "cpp",
+    ".tf": "hcl",
+    ".hcl": "hcl",
+    ".pp": "puppet",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".zsh": "bash",
 }
 
 
@@ -156,6 +168,9 @@ class RepoIngester:
                     import shutil
 
                     shutil.rmtree(effective_root, ignore_errors=True)
+
+        # Ansible pass — heuristically detect and parse Ansible YAML files
+        self._ingest_ansible(repo_path, stats, incremental)
 
         logger.info(
             "Ingested %s: %d files, %d functions, %d classes, %d skipped",
@@ -268,6 +283,75 @@ class RepoIngester:
                 if not any(part in skip_dirs for part in path.parts):
                     yield path
 
+    def _ingest_ansible(self, repo_path: Path, stats: dict[str, int], incremental: bool) -> None:
+        """Detect and parse Ansible YAML files (playbooks, roles, tasks)."""
+        from navegador.ingestion.ansible import AnsibleParser
+
+        is_ansible_file = AnsibleParser.is_ansible_file
+
+        ansible_parser: AnsibleParser | None = None
+
+        for path in repo_path.rglob("*.yml"):
+            if not path.is_file():
+                continue
+            if any(part in (".git", ".venv", "venv", "node_modules") for part in path.parts):
+                continue
+            if not is_ansible_file(path, repo_path):
+                continue
+
+            rel_path = str(path.relative_to(repo_path))
+            content_hash = _file_hash(path)
+
+            if incremental and self._file_unchanged(rel_path, content_hash):
+                stats["skipped"] += 1
+                continue
+
+            if incremental:
+                self._clear_file_subgraph(rel_path)
+
+            if ansible_parser is None:
+                ansible_parser = AnsibleParser()
+            try:
+                file_stats = ansible_parser.parse_file(path, repo_path, self.store)
+                stats["files"] += 1
+                stats["functions"] += file_stats.get("functions", 0)
+                stats["classes"] += file_stats.get("classes", 0)
+                stats["edges"] += file_stats.get("edges", 0)
+                self._store_file_hash(rel_path, content_hash)
+            except Exception:
+                logger.exception("Failed to parse Ansible file %s", path)
+
+        # Also check .yaml extension
+        for path in repo_path.rglob("*.yaml"):
+            if not path.is_file():
+                continue
+            if any(part in (".git", ".venv", "venv", "node_modules") for part in path.parts):
+                continue
+            if not is_ansible_file(path, repo_path):
+                continue
+
+            rel_path = str(path.relative_to(repo_path))
+            content_hash = _file_hash(path)
+
+            if incremental and self._file_unchanged(rel_path, content_hash):
+                stats["skipped"] += 1
+                continue
+
+            if incremental:
+                self._clear_file_subgraph(rel_path)
+
+            if ansible_parser is None:
+                ansible_parser = AnsibleParser()
+            try:
+                file_stats = ansible_parser.parse_file(path, repo_path, self.store)
+                stats["files"] += 1
+                stats["functions"] += file_stats.get("functions", 0)
+                stats["classes"] += file_stats.get("classes", 0)
+                stats["edges"] += file_stats.get("edges", 0)
+                self._store_file_hash(rel_path, content_hash)
+            except Exception:
+                logger.exception("Failed to parse Ansible file %s", path)
+
     def _get_parser(self, language: str) -> "LanguageParser":
         if language not in self._parsers:
             if language == "python":
@@ -318,6 +402,18 @@ class RepoIngester:
                 from navegador.ingestion.cpp import CppParser
 
                 self._parsers[language] = CppParser()
+            elif language == "hcl":
+                from navegador.ingestion.hcl import HCLParser
+
+                self._parsers[language] = HCLParser()
+            elif language == "puppet":
+                from navegador.ingestion.puppet import PuppetParser
+
+                self._parsers[language] = PuppetParser()
+            elif language == "bash":
+                from navegador.ingestion.bash import BashParser
+
+                self._parsers[language] = BashParser()
             else:
                 raise ValueError(f"Unsupported language: {language}")
         return self._parsers[language]

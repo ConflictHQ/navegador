@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "navegador"
-version = "0.7.4"
+version = "0.8.0"
 description = "AST + knowledge graph context engine for AI coding agents"
 readme = "README.md"
 license = "MIT"
@@ -12,7 +12,7 @@ requires-python = ">=3.12"
 authors = [
     { name = "CONFLICT LLC" },
 ]
-keywords = ["ast", "knowledge-graph", "code-analysis", "ai-agents", "mcp", "context-management", "falkordb", "go", "rust", "java", "typescript", "kotlin", "csharp", "php", "ruby", "swift", "c", "cpp"]
+keywords = ["ast", "knowledge-graph", "code-analysis", "ai-agents", "mcp", "context-management", "falkordb", "go", "rust", "java", "typescript", "kotlin", "csharp", "php", "ruby", "swift", "c", "cpp", "terraform", "hcl", "puppet", "ansible", "chef", "bash", "iac"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -63,6 +63,12 @@ languages = [
     "tree-sitter-c>=0.23.0",
     "tree-sitter-cpp>=0.23.0",
 ]
+iac = [
+    # Infrastructure-as-Code tree-sitter grammars
+    "tree-sitter-hcl>=1.2.0",
+    "tree-sitter-puppet>=1.3.0",
+    "tree-sitter-bash>=0.25.0",
+]
 llm = [
     # LLM provider SDKs (install the ones you use)
     "anthropic>=0.39.0",
@@ -83,6 +89,7 @@ docs = [
 all = [
     "navegador[redis]",
     "navegador[languages]",
+    "navegador[iac]",
     "navegador[llm]",
     "navegador[dev]",
     "navegador[docs]",
