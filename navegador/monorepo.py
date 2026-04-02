@@ -108,6 +108,11 @@ class WorkspaceDetector:
             packages = self._go_packages(root)
             return WorkspaceConfig(type="go", root=root, packages=packages)
 
+        # Bare monorepo — no tooling, just a directory of apps/services
+        packages = self._bare_packages(root)
+        if len(packages) >= 2:
+            return WorkspaceConfig(type="bare", root=root, packages=packages)
+
         return None
 
     # ── JS-family helpers ─────────────────────────────────────────────────────
@@ -222,6 +227,67 @@ class WorkspaceDetector:
                 if (child / "package.json").exists():
                     packages.append(child)
         return packages
+
+    # ── Bare monorepo helpers ─────────────────────────────────────────────────
+
+    # Manifests expected directly inside the package root
+    _PROJECT_MANIFESTS = (
+        "package.json",
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        "Cargo.toml",
+        "go.mod",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "Gemfile",
+        "composer.json",
+        "mix.exs",
+    )
+
+    # Manifests that may live one subdirectory deeper (e.g. Django's manage.py
+    # inside an inner package dir: myapp/myapp/manage.py)
+    _NESTED_MANIFESTS = (
+        "manage.py",
+        "wsgi.py",
+        "asgi.py",
+    )
+
+    def _bare_packages(self, root: Path) -> list[Path]:
+        """
+        Detect a bare monorepo: a directory whose immediate children are
+        independent apps/services with no shared workspace tooling.
+
+        A child directory qualifies if it contains at least one recognised
+        project manifest directly, or a Django/WSGI manifest one level deeper
+        (e.g. myapp/myapp/manage.py).
+        Non-project dirs (docs, scripts, config-only folders) are skipped.
+        """
+        packages: list[Path] = []
+        for child in sorted(root.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            # Check top-level manifests first
+            for manifest in self._PROJECT_MANIFESTS:
+                if (child / manifest).exists():
+                    packages.append(child)
+                    break
+            else:
+                # Fall back: look one level deeper for Django/WSGI markers
+                if self._has_nested_manifest(child):
+                    packages.append(child)
+        return packages
+
+    def _has_nested_manifest(self, pkg_root: Path) -> bool:
+        """Return True if any immediate subdirectory contains a nested manifest."""
+        for subdir in pkg_root.iterdir():
+            if not subdir.is_dir() or subdir.name.startswith("."):
+                continue
+            for manifest in self._NESTED_MANIFESTS:
+                if (subdir / manifest).exists():
+                    return True
+        return False
 
     # ── Cargo helpers ─────────────────────────────────────────────────────────
 
@@ -461,6 +527,13 @@ class MonorepoIngester:
             return self._cargo_deps(pkg_path)
         if workspace_type == "go":
             return self._go_deps(pkg_path)
+        if workspace_type == "bare":
+            # Try all known manifest parsers and merge results
+            deps: list[str] = []
+            deps.extend(self._js_deps(pkg_path))
+            deps.extend(self._cargo_deps(pkg_path))
+            deps.extend(self._go_deps(pkg_path))
+            return deps
         return []
 
     def _js_deps(self, pkg_path: Path) -> list[str]:
