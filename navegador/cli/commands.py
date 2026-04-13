@@ -2908,3 +2908,89 @@ def doclink_accept_all(min_confidence: float, dry_run: bool, db: str):
 
     count = linker.accept_all(candidates, min_confidence=min_confidence)
     console.print(f"[green]Accepted[/green] {count} doc links (min_confidence={min_confidence})")
+
+
+# ── Lenses ───────────────────────────────────────────────────────────────────
+
+
+@main.group()
+def lens():
+    """Architecture lenses — reusable named graph views."""
+
+
+@lens.command("list")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@DB_OPTION
+def lens_list(as_json: bool, db: str):
+    """List available architecture lenses.
+
+    \b
+    Examples:
+      navegador lens list
+      navegador lens list --json
+    """
+    from navegador.lenses import LensEngine
+
+    store = _get_store(db)
+    engine = LensEngine(store)
+    lenses = engine.list_lenses()
+
+    if as_json:
+        click.echo(json.dumps(lenses, indent=2))
+        return
+
+    table = Table(title="Architecture Lenses")
+    table.add_column("Name", style="cyan bold")
+    table.add_column("Built-in", justify="center")
+    table.add_column("Description")
+    for item in lenses:
+        table.add_row(
+            item["name"],
+            "yes" if item["builtin"] else "no",
+            item["description"],
+        )
+    console.print(table)
+
+
+@lens.command("apply")
+@click.argument("name")
+@click.option("--symbol", default="", help="Symbol name filter.")
+@click.option("--domain", default="", help="Domain name filter.")
+@click.option("--file", "file_path", default="", help="File path filter.")
+@click.option("--label", default="", help="Node label filter.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@DB_OPTION
+def lens_apply(
+    name: str,
+    symbol: str,
+    domain: str,
+    file_path: str,
+    label: str,
+    as_json: bool,
+    db: str,
+):
+    """Apply a named architecture lens.
+
+    \b
+    Built-in lenses: request_path, ownership_map, domain_boundaries,
+    dependency_layers, framework_components.
+
+    \b
+    Examples:
+      navegador lens apply request_path
+      navegador lens apply ownership_map --domain billing
+      navegador lens apply dependency_layers --file src/app.py --json
+    """
+    from navegador.lenses import LensEngine
+
+    store = _get_store(db)
+    engine = LensEngine(store)
+    try:
+        result = engine.apply(name, symbol=symbol, domain=domain, file_path=file_path, label=label)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if as_json:
+        click.echo(result.to_json())
+    else:
+        console.print(result.to_markdown())

@@ -15,6 +15,8 @@ GET /api/node/<name>/history    — symbol history across snapshots
 GET /api/stats                  — {nodes: N, edges: M, node_types: {...}, edge_types: {...}}
 GET /api/snapshots              — list all snapshots
 GET /api/snapshots/<ref>/symbols — symbols at a specific snapshot
+GET /api/lenses                 — list all architecture lenses
+GET /api/lenses/<name>          — apply a lens with optional query params
 """
 
 from __future__ import annotations
@@ -222,6 +224,27 @@ def _get_stats(store: "GraphStore") -> dict:
     }
 
 
+def _list_lenses(store: "GraphStore") -> list[dict]:
+    from navegador.lenses import LensEngine
+
+    engine = LensEngine(store)
+    return engine.list_lenses()
+
+
+def _apply_lens(store: "GraphStore", name: str, params: dict[str, str]) -> dict:
+    from navegador.lenses import LensEngine
+
+    engine = LensEngine(store)
+    result = engine.apply(
+        name,
+        symbol=params.get("symbol", ""),
+        domain=params.get("domain", ""),
+        file_path=params.get("file_path", ""),
+        label=params.get("label", ""),
+    )
+    return result.to_dict()
+
+
 # ── Request handler ────────────────────────────────────────────────────────
 
 
@@ -296,6 +319,19 @@ def _make_handler(store: "GraphStore"):
                 name = unquote(raw_name)
                 detail = _get_node_detail(self._store, name)
                 self._send_json(detail)
+
+            # ── Lenses list
+            elif path == "/api/lenses":
+                self._send_json(_list_lenses(self._store))
+
+            # ── Apply lens — /api/lenses/<name>
+            elif path.startswith("/api/lenses/"):
+                lens_name = unquote(path[len("/api/lenses/") :])
+                lens_params = {k: v[0] for k, v in qs.items()}
+                try:
+                    self._send_json(_apply_lens(self._store, lens_name, lens_params))
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, 400)
 
             # ── Stats
             elif path == "/api/stats":

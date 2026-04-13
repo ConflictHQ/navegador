@@ -196,6 +196,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   ::-webkit-scrollbar {{ width: 5px; }}
   ::-webkit-scrollbar-track {{ background: #0d1b35; }}
   ::-webkit-scrollbar-thumb {{ background: #0f3460; border-radius: 3px; }}
+  #lens-panel {{ padding: 8px; border-bottom: 1px solid #0f3460; }}
+  #lens-select {{
+    width: 100%; background: #0f3460; color: #e0e0e0; border: 1px solid #4e9af1;
+    border-radius: 4px; padding: 4px; margin-bottom: 4px; font-size: 0.8rem;
+  }}
+  #lens-param {{
+    width: 100%; background: #0f3460; color: #e0e0e0; border: 1px solid #4e9af1;
+    border-radius: 4px; padding: 4px; box-sizing: border-box; margin-bottom: 4px; font-size: 0.8rem;
+  }}
+  #lens-param::placeholder {{ color: #5a6a8a; }}
+  #lens-apply-btn {{
+    background: #4e9af1; color: #fff; border: none; border-radius: 4px;
+    padding: 4px 10px; cursor: pointer; font-size: 0.8rem;
+  }}
+  #lens-apply-btn:hover {{ background: #6cb4f5; }}
+  #lens-clear-btn {{
+    background: transparent; color: #7a8aaa; border: 1px solid #0f3460; border-radius: 4px;
+    padding: 4px 8px; cursor: pointer; font-size: 0.75rem; margin-left: 4px;
+  }}
+  #lens-clear-btn:hover {{ background: #0f3460; color: #e0e0e0; }}
   #timeline-panel {{
     background: #16213e;
     border-top: 1px solid #0f3460;
@@ -299,6 +319,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div id="sidebar">
     <div id="sidebar-title">Explorer</div>
     <div id="search-results"></div>
+    <div id="lens-panel">
+      <div style="font-size:0.8rem;color:#7a8aaa;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px;">Lenses</div>
+      <select id="lens-select"><option value="">-- select a lens --</option></select>
+      <input id="lens-param" type="text" placeholder="symbol / domain / file..." />
+      <div style="display:flex;gap:4px;">
+        <button id="lens-apply-btn">Apply</button>
+        <button id="lens-clear-btn" style="display:none;">Clear</button>
+      </div>
+      <div id="lens-status" style="font-size:0.75rem;color:#7a8aaa;padding:4px 0 0;"></div>
+    </div>
     <div id="detail-panel">
       <div id="empty-hint">Click a node<br>or search above<br>to see details.</div>
     </div>
@@ -335,6 +365,9 @@ let hoveredNode = null;
 
 // Snapshot filter state
 let snapshotFilterNames = null;  // null = no filter, Set = names in snapshot
+
+// Lens filter state
+let lensNodeNames = null;  // null = no lens active, Set = highlighted names
 
 // Camera
 let camX = 0, camY = 0, camScale = 1;
@@ -517,9 +550,10 @@ function draw() {{
   for (const n of nodes) {{
     const isSelected = n === selectedNode;
     const isHovered = n === hoveredNode;
-    const color = nodeColor(n.label);
     const inSnapshot = !snapshotFilterNames || snapshotFilterNames.has(n.name);
-    const baseAlpha = inSnapshot ? 0.9 : 0.15;
+    const inLens = !lensNodeNames || lensNodeNames.has(n.name);
+    const color = inLens && lensNodeNames ? '#f4d03f' : nodeColor(n.label);
+    const baseAlpha = (!inSnapshot ? 0.15 : (!inLens && lensNodeNames ? 0.2 : 0.9));
 
     ctx.beginPath();
     ctx.arc(n.x, n.y, nodeR + (isSelected ? 3 : isHovered ? 1 : 0), 0, 2*Math.PI);
@@ -536,13 +570,14 @@ function draw() {{
 
     // Label
     const labelThreshold = 0.4;
-    if (camScale > labelThreshold || isSelected || isHovered) {{
+    if (camScale > labelThreshold || isSelected || isHovered || (inLens && lensNodeNames)) {{
       const fontSize = Math.max(8, 11 / camScale);
       ctx.font = `${{isSelected ? 'bold ' : ''}}${{fontSize}}px sans-serif`;
-      ctx.fillStyle = '#e0e8ff';
+      ctx.fillStyle = (inLens && lensNodeNames) ? '#f4d03f' : '#e0e8ff';
       let labelAlpha = Math.min(1, (camScale - labelThreshold + 0.1) * 3);
-      if (isSelected || isHovered) labelAlpha = 1;
+      if (isSelected || isHovered || (inLens && lensNodeNames)) labelAlpha = 1;
       if (!inSnapshot) labelAlpha *= 0.2;
+      if (!inLens && lensNodeNames) labelAlpha *= 0.25;
       ctx.globalAlpha = labelAlpha;
       ctx.fillText(n.name, n.x + nodeR + 2, n.y + 4);
       ctx.globalAlpha = 1;
@@ -802,8 +837,56 @@ async function loadSymbolHistory(name) {{
   }}
 }}
 
+// ── Lenses ─────────────────────────────────────────────────────────────────
+async function loadLenses() {{
+  try {{
+    const data = await fetch('/api/lenses').then(r => r.json());
+    const sel = document.getElementById('lens-select');
+    for (const lens of data) {{
+      const opt = document.createElement('option');
+      opt.value = lens.name;
+      opt.textContent = lens.name + (lens.builtin ? '' : ' (custom)');
+      opt.title = lens.description || '';
+      sel.appendChild(opt);
+    }}
+  }} catch(_) {{}}
+}}
+
+document.getElementById('lens-apply-btn').addEventListener('click', async () => {{
+  const sel = document.getElementById('lens-select');
+  const param = document.getElementById('lens-param').value.trim();
+  const status = document.getElementById('lens-status');
+  const name = sel.value;
+  if (!name) {{ status.textContent = 'Select a lens first.'; return; }}
+  status.textContent = 'Applying...';
+  try {{
+    const qs = param ? `symbol=${{encodeURIComponent(param)}}&domain=${{encodeURIComponent(param)}}&file_path=${{encodeURIComponent(param)}}&label=${{encodeURIComponent(param)}}` : '';
+    const url = '/api/lenses/' + encodeURIComponent(name) + (qs ? '?' + qs : '');
+    const data = await fetch(url).then(r => r.json());
+    if (data.error) {{ status.textContent = data.error; lensNodeNames = null; return; }}
+    const nodeNames = (data.nodes || []).map(n => n.name);
+    if (nodeNames.length === 0) {{
+      status.textContent = 'No results.';
+      lensNodeNames = null;
+    }} else {{
+      lensNodeNames = new Set(nodeNames);
+      status.textContent = `${{data.nodes.length}} nodes, ${{data.edges.length}} edges`;
+      document.getElementById('lens-clear-btn').style.display = 'inline-block';
+    }}
+  }} catch(e) {{
+    status.textContent = 'Error applying lens.';
+    lensNodeNames = null;
+  }}
+}});
+
+document.getElementById('lens-clear-btn').addEventListener('click', () => {{
+  lensNodeNames = null;
+  document.getElementById('lens-status').textContent = '';
+  document.getElementById('lens-clear-btn').style.display = 'none';
+}});
+
 // ── Boot ────────────────────────────────────────────────────────────────────
-loadGraph().then(() => {{ loop(); loadSnapshots(); }});
+loadGraph().then(() => {{ loop(); loadSnapshots(); loadLenses(); }});
 }());
 </script>
 </body>

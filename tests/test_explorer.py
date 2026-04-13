@@ -67,6 +67,7 @@ def _mock_store(
 def _free_port() -> int:
     """Return an available TCP port on localhost."""
     import socket
+
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
@@ -566,6 +567,67 @@ class TestSnapshotSymbolsEndpoint:
         assert data == []
 
 
+# ── API endpoint: GET /api/lenses ────────────────────────────────────────
+
+
+class TestLensesListEndpoint:
+    def test_returns_list(self):
+        port = _free_port()
+        with ExplorerServer(_mock_store(), port=port):
+            status, data = _fetch_json(f"http://127.0.0.1:{port}/api/lenses")
+        assert status == 200
+        assert isinstance(data, list)
+
+    def test_contains_builtin_lenses(self):
+        port = _free_port()
+        with ExplorerServer(_mock_store(), port=port):
+            _, data = _fetch_json(f"http://127.0.0.1:{port}/api/lenses")
+        names = {item["name"] for item in data}
+        assert "request_path" in names
+        assert "ownership_map" in names
+        assert "domain_boundaries" in names
+
+    def test_lens_fields(self):
+        port = _free_port()
+        with ExplorerServer(_mock_store(), port=port):
+            _, data = _fetch_json(f"http://127.0.0.1:{port}/api/lenses")
+        for item in data:
+            assert "name" in item
+            assert "description" in item
+            assert "builtin" in item
+
+
+# ── API endpoint: GET /api/lenses/<name> ─────────────────────────────────
+
+
+class TestLensApplyEndpoint:
+    def test_returns_lens_result(self):
+        port = _free_port()
+        with ExplorerServer(_mock_store(), port=port):
+            status, data = _fetch_json(f"http://127.0.0.1:{port}/api/lenses/ownership_map")
+        assert status == 200
+        assert "lens" in data
+        assert "nodes" in data
+        assert "edges" in data
+        assert data["lens"] == "ownership_map"
+
+    def test_unknown_lens_returns_400(self):
+        port = _free_port()
+        with ExplorerServer(_mock_store(), port=port):
+            with pytest.raises(urllib.error.HTTPError) as exc_info:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/api/lenses/nonexistent")
+        assert exc_info.value.code == 400
+
+    def test_accepts_query_params(self):
+        port = _free_port()
+        with ExplorerServer(_mock_store(), port=port):
+            status, data = _fetch_json(
+                f"http://127.0.0.1:{port}/api/lenses/ownership_map?domain=billing"
+            )
+        assert status == 200
+        assert data["params"]["domain"] == "billing"
+
+
 # ── 404 for unknown routes ─────────────────────────────────────────────────
 
 
@@ -621,11 +683,24 @@ class TestHtmlTemplate:
     def test_contains_snapshot_filter_state(self):
         assert "snapshotFilterNames" in HTML_TEMPLATE
 
+    def test_contains_lens_panel(self):
+        assert "lens-panel" in HTML_TEMPLATE
+
+    def test_contains_lens_select(self):
+        assert "lens-select" in HTML_TEMPLATE
+
+    def test_contains_lens_api_fetch(self):
+        assert "/api/lenses" in HTML_TEMPLATE
+
+    def test_contains_lens_node_state(self):
+        assert "lensNodeNames" in HTML_TEMPLATE
+
     def test_no_external_deps(self):
         """No CDN or external URLs should appear in the template."""
         import re
+
         # Look for any http(s):// URLs — internal /api/ paths are fine
-        external = re.findall(r'https?://\S+', HTML_TEMPLATE)
+        external = re.findall(r"https?://\S+", HTML_TEMPLATE)
         assert external == [], f"External URLs found: {external}"
 
     def test_contains_force_directed_physics(self):
@@ -656,6 +731,7 @@ class TestExploreCLI:
     def test_explore_command_registered(self):
         """Verify the explore command is registered under the main group."""
         from navegador.cli.commands import main as cli_main
+
         assert "explore" in cli_main.commands
 
     def test_explore_starts_and_stops(self):

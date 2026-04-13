@@ -528,6 +528,30 @@ def create_mcp_server(store_factory, read_only: bool = False):
                     "required": [],
                 },
             ),
+            Tool(
+                name="apply_lens",
+                description=(
+                    "Apply a named architecture lens to get a focused subgraph. "
+                    "Built-in lenses: request_path, ownership_map, domain_boundaries, "
+                    "dependency_layers, framework_components."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "lens": {"type": "string", "description": "Lens name."},
+                        "symbol": {"type": "string", "default": ""},
+                        "domain": {"type": "string", "default": ""},
+                        "file_path": {"type": "string", "default": ""},
+                        "label": {"type": "string", "default": ""},
+                        "format": {
+                            "type": "string",
+                            "enum": ["markdown", "json"],
+                            "default": "markdown",
+                        },
+                    },
+                    "required": ["lens"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -850,6 +874,25 @@ def create_mcp_server(store_factory, read_only: bool = False):
             checker = ReleaseChecker(loader.store, repo_path)
             report = checker.check(base=base, head=head)
             text = report.to_json() if fmt == "json" else report.to_markdown()
+            return [TextContent(type="text", text=text)]
+
+        elif name == "apply_lens":
+            from navegador.lenses import LensEngine
+
+            engine = LensEngine(loader.store)
+            lens_name = arguments["lens"]
+            try:
+                result = engine.apply(
+                    lens_name,
+                    symbol=arguments.get("symbol", ""),
+                    domain=arguments.get("domain", ""),
+                    file_path=arguments.get("file_path", ""),
+                    label=arguments.get("label", ""),
+                )
+            except ValueError as exc:
+                return [TextContent(type="text", text=f"Error: {exc}")]
+            fmt = arguments.get("format", "markdown")
+            text = result.to_markdown() if fmt == "markdown" else result.to_json()
             return [TextContent(type="text", text=text)]
 
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
