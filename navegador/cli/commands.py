@@ -523,6 +523,41 @@ def concept(name: str, db: str, fmt: str):
     _emit(bundle.to_json() if fmt == "json" else bundle.to_markdown(), fmt)
 
 
+# ── KNOWLEDGE: memory ─────────────────────────────────────────────────────────
+
+
+@main.group()
+def memory():
+    """Ingest and query CONFLICT-format memory/ directories."""
+
+
+@memory.command("ingest")
+@click.argument("memory_path", type=click.Path(exists=True))
+@click.option("--repo", "repo_name", default="", help="Repository name to scope nodes to.")
+@click.option("--clear", is_flag=True, help="Remove existing memory nodes for this repo first.")
+@click.option("--workspace", is_flag=True, help="Traverse all submodule memory/ dirs + root.")
+@DB_OPTION
+def memory_ingest(memory_path: str, repo_name: str, clear: bool, workspace: bool, db: str):
+    """Ingest a CONFLICT-format memory/ directory into the graph."""
+    from navegador.ingestion import MemoryIngester
+
+    ingester = MemoryIngester(_get_store(db))
+
+    if workspace:
+        stats = ingester.ingest_workspace(memory_path, clear=clear)
+        console.print(
+            f"[green]Memory (workspace):[/green] {stats['ingested']} nodes ingested, "
+            f"{stats['skipped']} skipped across {len(stats['repos'])} repos"
+        )
+    else:
+        stats = ingester.ingest(memory_path, repo_name=repo_name, clear=clear)
+        console.print(
+            f"[green]Memory ingested:[/green] {stats['ingested']} nodes "
+            f"({', '.join(f'{v} {k}' for k, v in stats.get('by_type', {}).items())}) "
+            f"for repo [bold]{stats['repo']}[/bold]"
+        )
+
+
 # ── KNOWLEDGE: wiki ───────────────────────────────────────────────────────────
 
 

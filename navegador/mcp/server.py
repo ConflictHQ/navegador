@@ -211,6 +211,69 @@ def create_mcp_server(store_factory, read_only: bool = False):
                     "required": ["name"],
                 },
             ),
+            Tool(
+                name="memory_list",
+                description=(
+                    "List behavioral knowledge nodes ingested from CONFLICT-format memory/ "
+                    "directories. Returns rules, project context, references, and user profiles."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["feedback", "project", "reference", "user"],
+                            "description": "Filter by memory type.",
+                        },
+                        "scope": {
+                            "type": "string",
+                            "enum": ["local", "workspace"],
+                            "default": "local",
+                            "description": (
+                                "'local' returns nodes for the current repo; "
+                                "'workspace' returns all repos."
+                            ),
+                        },
+                        "repo": {
+                            "type": "string",
+                            "default": "",
+                            "description": (
+                                "Filter to a specific repo name "
+                                "(ignored when scope=workspace)."
+                            ),
+                        },
+                        "limit": {"type": "integer", "default": 50},
+                    },
+                },
+            ),
+            Tool(
+                name="memory_get",
+                description="Return a single memory node by name.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Exact memory node name."},
+                    },
+                    "required": ["name"],
+                },
+            ),
+            Tool(
+                name="memory_for_file",
+                description=(
+                    "Return all memory/knowledge nodes linked to symbols in a given file. "
+                    "Useful for loading relevant rules and context before editing a file."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Relative file path within the ingested repo.",
+                        },
+                    },
+                    "required": ["path"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -312,6 +375,70 @@ def create_mcp_server(store_factory, read_only: bool = False):
                 depth=arguments.get("depth", 3),
             )
             return [TextContent(type="text", text=json.dumps(result.to_dict(), indent=2))]
+
+        elif name == "memory_list":
+            from navegador.graph import queries
+
+            scope = arguments.get("scope", "local")
+            repo = arguments.get("repo", "")
+            mem_type = arguments.get("type", "")
+            limit = arguments.get("limit", 50)
+            result = loader.store.query(
+                queries.MEMORY_LIST,
+                {"type": mem_type, "scope": scope, "repo": repo, "limit": limit},
+            )
+            rows = result.result_set or []
+            if not rows:
+                return [TextContent(type="text", text="No memory nodes found.")]
+            items = [
+                {
+                    "name": row[1],
+                    "description": row[2],
+                    "memory_type": row[3],
+                    "repo": row[4],
+                    "content": row[5],
+                }
+                for row in rows
+            ]
+            return [TextContent(type="text", text=json.dumps(items, indent=2))]
+
+        elif name == "memory_get":
+            from navegador.graph import queries
+
+            result = loader.store.query(queries.MEMORY_GET, {"name": arguments["name"]})
+            rows = result.result_set or []
+            if not rows:
+                return [TextContent(type="text", text=f"No memory node found: {arguments['name']}")]
+            row = rows[0]
+            item = {
+                "label": row[0],
+                "name": row[1],
+                "description": row[2],
+                "memory_type": row[3],
+                "repo": row[4],
+                "content": row[5],
+            }
+            return [TextContent(type="text", text=json.dumps(item, indent=2))]
+
+        elif name == "memory_for_file":
+            from navegador.graph import queries
+
+            result = loader.store.query(queries.MEMORY_FOR_FILE, {"path": arguments["path"]})
+            rows = result.result_set or []
+            if not rows:
+                return [TextContent(type="text", text="No memory nodes linked to this file.")]
+            items = [
+                {
+                    "label": row[0],
+                    "name": row[1],
+                    "description": row[2],
+                    "memory_type": row[3],
+                    "repo": row[4],
+                    "content": row[5],
+                }
+                for row in rows
+            ]
+            return [TextContent(type="text", text=json.dumps(items, indent=2))]
 
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
 

@@ -37,7 +37,7 @@ class TestLanguageMap:
 
     def test_no_entry_for_unknown(self):
         assert ".txt" not in LANGUAGE_MAP
-        assert ".md" not in LANGUAGE_MAP
+        assert ".md" in LANGUAGE_MAP  # markdown is now a supported language
 
 
 # ── ingest() ─────────────────────────────────────────────────────────────────
@@ -96,7 +96,7 @@ class TestRepoIngester:
         store = _make_store()
         ingester = RepoIngester(store)
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "readme.md").write_text("# Readme")
+            # .yaml is not supported — .md now is (markdown parser)
             (Path(tmpdir) / "config.yaml").write_text("key: val")
             stats = ingester.ingest(tmpdir)
             assert stats["files"] == 0
@@ -229,7 +229,7 @@ class TestIterSourceFiles:
         store = _make_store()
         ingester = RepoIngester(store)
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "readme.md").write_text("# readme")
+            # .json is not a source file; .md is now (markdown parser)
             (Path(tmpdir) / "config.json").write_text("{}")
             files = list(ingester._iter_source_files(Path(tmpdir)))
             assert len(files) == 0

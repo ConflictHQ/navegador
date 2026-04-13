@@ -33,6 +33,7 @@ class NodeLabel(StrEnum):
     Decision = "Decision"  # an architectural or product decision + rationale
     WikiPage = "WikiPage"  # a page from the project wiki (GitHub, Confluence…)
     Person = "Person"  # a contributor, owner, or stakeholder
+    Document = "Document"  # a markdown documentation file (README, bootstrap, CLAUDE.md…)
 
 
 class EdgeType(StrEnum):
@@ -127,5 +128,11 @@ NODE_PROPS = {
         "email",
         "role",
         "team",
+    ],
+    NodeLabel.Document: [
+        "name",
+        "path",
+        "title",
+        "content",
     ],
 }

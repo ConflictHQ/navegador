@@ -113,9 +113,9 @@ class TestListTools:
         self.fx = _ServerFixture()
 
     @pytest.mark.asyncio
-    async def test_returns_eleven_tools(self):
+    async def test_returns_fourteen_tools(self):
         tools = await self.fx.list_tools_fn()
-        assert len(tools) == 11
+        assert len(tools) == 14
 
     @pytest.mark.asyncio
     async def test_tool_names(self):
@@ -133,6 +133,9 @@ class TestListTools:
             "find_owners",
             "search_knowledge",
             "blast_radius",
+            "memory_list",
+            "memory_get",
+            "memory_for_file",
         }
 
     @pytest.mark.asyncio

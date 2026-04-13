@@ -599,7 +599,7 @@ class TestParallelIngester:
         store = _make_store()
         ingester, mock_parser = self._setup_ingester_with_mock_parser(store)
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "readme.md").write_text("# readme")
+            # .yaml is not a supported language; .md is now (markdown)
             (Path(tmpdir) / "config.yaml").write_text("key: value")
             stats = ingester.ingest_parallel(tmpdir)
         assert stats["files"] == 0
