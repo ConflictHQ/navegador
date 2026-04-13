@@ -657,6 +657,53 @@ def wiki_ingest(repo: str, wiki_dir: str, token: str, api: bool, db: str):
     console.print(f"[green]Wiki ingested:[/green] {stats['pages']} pages, {stats['links']} links")
 
 
+@wiki.command("sync-local")
+@click.option("--repo", required=True, help="GitHub repo (owner/repo).")
+@click.option("--token", default="", envvar="GITHUB_TOKEN", help="GitHub token.")
+@click.option(
+    "--dir", "local_dir", required=True, help="Local directory of markdown files."
+)
+@click.option(
+    "--cursor", "cursor_path", default="",
+    help="Sync cursor file (default: .navegador/wiki-local-sync.json).",
+)
+def wiki_sync_local(repo: str, token: str, local_dir: str, cursor_path: str):
+    """Bidirectional sync between a GitHub wiki and a local markdown directory.
+
+    Pages changed on one side since the last sync are pushed to the other.
+    Pages changed on both sides are flagged as conflicts and left untouched.
+    """
+    import subprocess
+
+    from navegador.wiki_sync import GitHubWikiProvider, LocalMarkdownProvider, WikiSync
+
+    if not cursor_path:
+        from pathlib import Path
+        cursor_path = str(Path(".navegador") / "wiki-local-sync.json")
+
+    engine = WikiSync(GitHubWikiProvider(repo, token=token), LocalMarkdownProvider(local_dir))
+    try:
+        stats = engine.sync(cursor_path=cursor_path)
+    except subprocess.CalledProcessError as exc:
+        raise click.ClickException(f"git operation failed: {exc.stderr or exc}") from exc
+
+    a = stats["pushed_to_b"]   # pushed to local dir
+    b = stats["pushed_to_a"]   # pushed to github
+    skipped = stats["skipped"]
+    conflicts = stats["conflicts"]
+
+    console.print(
+        f"[green]GitHub wiki ↔ local sync:[/green] "
+        f"{a} → local, {b} → GitHub, {skipped} skipped"
+    )
+    if conflicts:
+        console.print(
+            f"[yellow]Conflicts ({len(conflicts)}) — both sides changed, skipped:[/yellow]"
+        )
+        for name in conflicts:
+            console.print(f"  • {name}")
+
+
 # ── Fossil SCM ───────────────────────────────────────────────────────────────
 
 
@@ -795,6 +842,50 @@ def fossil_sync_wiki(repo: str, token: str, repo_path: str, cursor_path: str):
             "[dim]Run [bold]fossil push-wiki[/bold] or [bold]fossil pull-wiki[/bold] "
             "to force one direction for conflicting pages.[/dim]"
         )
+
+
+@fossil.command("sync-local")
+@click.option("--path", "repo_path", default=".", help="Path to Fossil checkout.")
+@click.option(
+    "--dir", "local_dir", required=True, help="Local directory of markdown files."
+)
+@click.option(
+    "--cursor", "cursor_path", default="",
+    help="Sync cursor file (default: .navegador/fossil-local-sync.json).",
+)
+def fossil_sync_local(repo_path: str, local_dir: str, cursor_path: str):
+    """Bidirectional sync between Fossil wiki and a local markdown directory.
+
+    Pages changed on one side since the last sync are pushed to the other.
+    Pages changed on both sides are flagged as conflicts and left untouched.
+    """
+    from navegador.vcs import FossilAdapter
+    from navegador.wiki_sync import FossilWikiProvider, LocalMarkdownProvider, WikiSync
+
+    adapter = FossilAdapter(repo_path)
+    if not cursor_path:
+        cursor_path = str(
+            (adapter.repo_path / ".navegador" / "fossil-local-sync.json").resolve()
+        )
+
+    engine = WikiSync(FossilWikiProvider(adapter), LocalMarkdownProvider(local_dir))
+    stats = engine.sync(cursor_path=cursor_path)
+
+    a = stats["pushed_to_b"]   # pushed to local dir
+    b = stats["pushed_to_a"]   # pushed to fossil
+    skipped = stats["skipped"]
+    conflicts = stats["conflicts"]
+
+    console.print(
+        f"[green]Fossil ↔ local sync:[/green] "
+        f"{a} → local, {b} → Fossil, {skipped} skipped"
+    )
+    if conflicts:
+        console.print(
+            f"[yellow]Conflicts ({len(conflicts)}) — both sides changed, skipped:[/yellow]"
+        )
+        for name in conflicts:
+            console.print(f"  • {name}")
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
