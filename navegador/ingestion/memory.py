@@ -249,6 +249,38 @@ class MemoryIngester:
 
         return totals
 
+    def ingest_recursive(
+        self,
+        root: str | Path,
+        clear: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Find all memory/ directories anywhere under root and ingest each one,
+        scoping nodes to the name of the directory containing the memory/ dir.
+
+        Useful for monorepos with per-service memory dirs (e.g. src/{service}/memory/).
+
+        Args:
+            root:  Root directory to search under (repo root or any ancestor).
+            clear: Clear existing memory nodes per scope before re-ingesting.
+        """
+        root = Path(root)
+        totals: dict[str, Any] = {"ingested": 0, "skipped": 0, "repos": []}
+
+        for memory_dir in sorted(root.rglob("memory")):
+            if not memory_dir.is_dir():
+                continue
+            # Must contain at least one .md file to be a real memory dir
+            if not any(memory_dir.glob("*.md")):
+                continue
+            scope_name = memory_dir.parent.name
+            result = self.ingest(memory_dir, repo_name=scope_name, clear=clear)
+            totals["ingested"] += result["ingested"]
+            totals["skipped"] += result["skipped"]
+            totals["repos"].append(scope_name)
+
+        return totals
+
     # ── Internals ─────────────────────────────────────────────────────────────
 
     def _upsert_memory_node(

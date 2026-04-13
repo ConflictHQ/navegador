@@ -536,14 +536,27 @@ def memory():
 @click.option("--repo", "repo_name", default="", help="Repository name to scope nodes to.")
 @click.option("--clear", is_flag=True, help="Remove existing memory nodes for this repo first.")
 @click.option("--workspace", is_flag=True, help="Traverse all submodule memory/ dirs + root.")
+@click.option(
+    "--recursive",
+    is_flag=True,
+    help="Find all memory/ dirs under path (for monorepos with per-service memory).",
+)
 @DB_OPTION
-def memory_ingest(memory_path: str, repo_name: str, clear: bool, workspace: bool, db: str):
+def memory_ingest(
+    memory_path: str, repo_name: str, clear: bool, workspace: bool, recursive: bool, db: str
+):
     """Ingest a CONFLICT-format memory/ directory into the graph."""
     from navegador.ingestion import MemoryIngester
 
     ingester = MemoryIngester(_get_store(db))
 
-    if workspace:
+    if recursive:
+        stats = ingester.ingest_recursive(memory_path, clear=clear)
+        console.print(
+            f"[green]Memory (recursive):[/green] {stats['ingested']} nodes ingested, "
+            f"{stats['skipped']} skipped across {len(stats['repos'])} scopes"
+        )
+    elif workspace:
         stats = ingester.ingest_workspace(memory_path, clear=clear)
         console.print(
             f"[green]Memory (workspace):[/green] {stats['ingested']} nodes ingested, "
