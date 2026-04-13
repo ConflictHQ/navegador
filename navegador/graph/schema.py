@@ -35,6 +35,9 @@ class NodeLabel(StrEnum):
     Person = "Person"  # a contributor, owner, or stakeholder
     Document = "Document"  # a markdown documentation file (README, bootstrap, CLAUDE.md…)
 
+    # ── History layer ─────────────────────────────────────────────────────────
+    Snapshot = "Snapshot"  # a captured graph state at a specific git ref
+
 
 class EdgeType(StrEnum):
     # ── Code structural ───────────────────────────────────────────────────────
@@ -56,6 +59,9 @@ class EdgeType(StrEnum):
     ANNOTATES = "ANNOTATES"  # Concept/Rule -ANNOTATES-> code node (lightweight link)
     ASSIGNED_TO = "ASSIGNED_TO"  # any node -ASSIGNED_TO-> Person (ownership)
     DECIDED_BY = "DECIDED_BY"  # Decision -DECIDED_BY-> Person
+
+    # ── History layer ─────────────────────────────────────────────────────────
+    SNAPSHOT_OF = "SNAPSHOT_OF"  # Snapshot -SNAPSHOT_OF-> Function/Class/Method
 
 
 # ── Property keys per node label ──────────────────────────────────────────────
@@ -134,5 +140,11 @@ NODE_PROPS = {
         "path",
         "title",
         "content",
+    ],
+    NodeLabel.Snapshot: [
+        "ref",
+        "commit_sha",
+        "committed_at",
+        "symbol_count",
     ],
 }

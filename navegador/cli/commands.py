@@ -2562,3 +2562,117 @@ def docs(target: str, db: str, project: bool, llm_provider: str, llm_model: str,
         click.echo(json.dumps({"docs": output}, indent=2))
     else:
         console.print(output)
+
+
+# ── History: time-travel graph (#78) ─────────────────────────────────────────
+
+
+@main.command("snapshot")
+@click.argument("ref", default="HEAD")
+@DB_OPTION
+def snapshot(ref: str, db: str):
+    """
+    Capture a graph snapshot for a git ref.
+
+    Links all Function/Class/Method nodes currently in the graph to
+    a Snapshot node keyed by REF.  Ingest the ref first if you want
+    a faithful before/after comparison.
+
+    Examples::
+
+      navegador snapshot HEAD
+      navegador snapshot v1.0.0
+      navegador snapshot main
+    """
+    from navegador.history import HistoryStore
+
+    store = _get_store(db)
+    h = HistoryStore(store)
+    info = h.snapshot(ref)
+    console.print(
+        f"[green]Snapshot[/green] [bold]{info.ref}[/bold] "
+        f"({info.commit_sha}) — {info.symbol_count} symbols"
+    )
+
+
+@main.command("history")
+@click.argument("name")
+@click.option("--file", "file_path", default="", help="Narrow to a specific file.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@DB_OPTION
+def history_cmd(name: str, file_path: str, as_json: bool, db: str):
+    """
+    Show history of a symbol across graph snapshots.
+
+    Displays first-seen, moves, and removal events for NAME across
+    all recorded snapshots.
+
+    Examples::
+
+      navegador history AuthService
+      navegador history parse_token --file app/auth.py
+    """
+    from navegador.history import HistoryStore
+
+    store = _get_store(db)
+    report = HistoryStore(store).history(name, file_path=file_path)
+    if as_json:
+        click.echo(report.to_json())
+    else:
+        console.print(report.to_markdown())
+
+
+@main.command("graph-at")
+@click.argument("ref")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@DB_OPTION
+def graph_at(ref: str, as_json: bool, db: str):
+    """
+    List all symbols captured in a snapshot at REF.
+
+    Examples::
+
+      navegador graph-at v1.0.0
+      navegador graph-at main --json
+    """
+    from navegador.history import HistoryStore
+
+    store = _get_store(db)
+    symbols = HistoryStore(store).symbols_at(ref)
+    if as_json:
+        click.echo(json.dumps([s.__dict__ for s in symbols], indent=2))
+    else:
+        if not symbols:
+            console.print(f"[yellow]No snapshot found for ref[/yellow] [bold]{ref}[/bold]")
+            return
+        console.print(
+            f"[bold]{len(symbols)}[/bold] symbols at [bold]{ref}[/bold]\n"
+        )
+        for s in symbols:
+            console.print(f"  [{s.label}] {s.name}  [dim]{s.file_path}[/dim]")
+
+
+@main.command("lineage")
+@click.argument("name")
+@click.option("--file", "file_path", default="", help="Narrow to a specific file.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@DB_OPTION
+def lineage_cmd(name: str, file_path: str, as_json: bool, db: str):
+    """
+    Trace the lineage of a symbol across snapshots.
+
+    Detects renames and moves using name and path similarity.
+
+    Examples::
+
+      navegador lineage AuthService
+      navegador lineage parse_token --file app/auth.py
+    """
+    from navegador.history import HistoryStore
+
+    store = _get_store(db)
+    report = HistoryStore(store).lineage(name, file_path=file_path)
+    if as_json:
+        click.echo(report.to_json())
+    else:
+        console.print(report.to_markdown())

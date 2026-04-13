@@ -27,7 +27,7 @@ class TestNodeLabel:
         assert isinstance(NodeLabel.Function, str)
 
     def test_total_count(self):
-        assert len(set(NodeLabel)) == 16  # 9 code + 7 knowledge (added Document)
+        assert len(set(NodeLabel)) == 17  # 9 code + 7 knowledge + 1 history (Snapshot)
 
 
 class TestEdgeType:
@@ -52,7 +52,7 @@ class TestEdgeType:
         assert EdgeType.DECIDED_BY == "DECIDED_BY"
 
     def test_total_count(self):
-        assert len(set(EdgeType)) == 16  # 9 code + 7 knowledge
+        assert len(set(EdgeType)) == 17  # 9 code + 7 knowledge + 1 history (SNAPSHOT_OF)
 
 
 class TestNodeProps:

@@ -387,6 +387,48 @@ def create_mcp_server(store_factory, read_only: bool = False):
                     "required": ["target"],
                 },
             ),
+            Tool(
+                name="symbol_history",
+                description=(
+                    "Query the historical timeline of a symbol across graph snapshots. "
+                    "Returns first-seen, moved, renamed, and removed events. "
+                    "Use snapshot() first to record states, then query here."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Symbol name (function, class, or method).",
+                        },
+                        "file_path": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Narrow to a specific file path.",
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["history", "lineage", "symbols_at"],
+                            "default": "history",
+                            "description": (
+                                "history=timeline events, lineage=rename/move chain, "
+                                "symbols_at=all symbols at a ref (use ref param)."
+                            ),
+                        },
+                        "ref": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Git ref for symbols_at mode.",
+                        },
+                        "format": {
+                            "type": "string",
+                            "enum": ["markdown", "json"],
+                            "default": "markdown",
+                        },
+                    },
+                    "required": ["name"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -609,6 +651,33 @@ def create_mcp_server(store_factory, read_only: bool = False):
                 pack = builder.for_symbol(target, file_path=file_path, depth=depth, mode=mode)
 
             text = pack.to_json() if fmt == "json" else pack.to_markdown()
+            return [TextContent(type="text", text=text)]
+
+        elif name == "symbol_history":
+            from navegador.history import HistoryStore
+
+            sym_name = arguments["name"]
+            file_path = arguments.get("file_path", "")
+            mode = arguments.get("mode", "history")
+            ref = arguments.get("ref", "")
+            fmt = arguments.get("format", "markdown")
+
+            h = HistoryStore(loader.store)
+            if mode == "symbols_at":
+                symbols = h.symbols_at(ref or "HEAD")
+                if fmt == "json":
+                    text = json.dumps([s.__dict__ for s in symbols], indent=2)
+                else:
+                    lines = [f"## Symbols at `{ref or 'HEAD'}`\n"]
+                    for s in symbols:
+                        lines.append(f"- [{s.label}] `{s.name}` `{s.file_path}`")
+                    text = "\n".join(lines)
+            elif mode == "lineage":
+                report = h.lineage(sym_name, file_path=file_path)
+                text = report.to_json() if fmt == "json" else report.to_markdown()
+            else:
+                report = h.history(sym_name, file_path=file_path)
+                text = report.to_json() if fmt == "json" else report.to_markdown()
             return [TextContent(type="text", text=text)]
 
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
