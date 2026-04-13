@@ -747,6 +747,56 @@ def fossil_pull_wiki(repo: str, token: str, repo_path: str):
     )
 
 
+@fossil.command("sync-wiki")
+@click.option("--repo", required=True, help="GitHub repo (owner/repo).")
+@click.option("--token", default="", envvar="GITHUB_TOKEN", help="GitHub token.")
+@click.option("--path", "repo_path", default=".", help="Path to Fossil checkout.")
+@click.option(
+    "--cursor", "cursor_path", default="",
+    help="Sync cursor file (default: .navegador/fossil-wiki-sync.json).",
+)
+def fossil_sync_wiki(repo: str, token: str, repo_path: str, cursor_path: str):
+    """Bidirectional sync between Fossil and GitHub wiki.
+
+    Pages changed on one side since the last sync are pushed to the other.
+    Pages changed on both sides are flagged as conflicts and left untouched —
+    resolve them with push-wiki or pull-wiki to force one direction.
+    """
+    import subprocess
+
+    from navegador.ingestion.fossil import FossilWikiSync
+    from navegador.vcs import FossilAdapter
+
+    adapter = FossilAdapter(repo_path)
+    sync = FossilWikiSync(adapter, repo, token=token)
+    kwargs = {}
+    if cursor_path:
+        kwargs["cursor_path"] = cursor_path
+    try:
+        stats = sync.sync(**kwargs)
+    except subprocess.CalledProcessError as exc:
+        raise click.ClickException(f"git operation failed: {exc.stderr or exc}") from exc
+
+    gh = stats["pushed_to_github"]
+    fossil = stats["pushed_to_fossil"]
+    skipped = stats["skipped"]
+    conflicts = stats["conflicts"]
+
+    console.print(
+        f"[green]Wiki sync:[/green] {gh} → GitHub, {fossil} → Fossil, {skipped} skipped"
+    )
+    if conflicts:
+        console.print(
+            f"[yellow]Conflicts ({len(conflicts)}) — both sides changed, skipped:[/yellow]"
+        )
+        for name in conflicts:
+            console.print(f"  • {name}")
+        console.print(
+            "[dim]Run [bold]fossil push-wiki[/bold] or [bold]fossil pull-wiki[/bold] "
+            "to force one direction for conflicting pages.[/dim]"
+        )
+
+
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 

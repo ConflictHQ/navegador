@@ -246,7 +246,7 @@ class TestGitCommitPush:
         with patch("subprocess.run", side_effect=mock_run):
             sync._git_commit_push(wiki_dir, "sync pages")
 
-        assert call_count == 4  # add, diff, commit, push
+        assert call_count == 6  # config×2, add, diff, commit, push
 
 
 # ── FossilAdapter.wiki_commit ─────────────────────────────────────────────────
@@ -284,3 +284,342 @@ class TestFossilAdapterWikiCommit:
 
         assert any("--mimetype" not in c for c in calls)
         assert len(calls) == 2
+
+
+# ── _content_hash ─────────────────────────────────────────────────────────────
+
+
+class TestContentHash:
+    def test_same_content_same_hash(self):
+        from navegador.ingestion.fossil import _content_hash
+        assert _content_hash("hello") == _content_hash("hello")
+
+    def test_different_content_different_hash(self):
+        from navegador.ingestion.fossil import _content_hash
+        assert _content_hash("hello") != _content_hash("world")
+
+    def test_returns_16_char_hex(self):
+        from navegador.ingestion.fossil import _content_hash
+        h = _content_hash("test")
+        assert len(h) == 16
+        assert all(c in "0123456789abcdef" for c in h)
+
+
+# ── Cursor helpers ────────────────────────────────────────────────────────────
+
+
+class TestCursorHelpers:
+    def test_load_returns_empty_dict_for_missing_file(self, tmp_path):
+        cursor = FossilWikiSync._load_cursor(tmp_path / "nonexistent.json")
+        assert cursor == {}
+
+    def test_load_returns_empty_dict_for_corrupt_file(self, tmp_path):
+        p = tmp_path / "cursor.json"
+        p.write_text("not json{{{")
+        cursor = FossilWikiSync._load_cursor(p)
+        assert cursor == {}
+
+    def test_save_and_load_round_trip(self, tmp_path):
+        p = tmp_path / "sub" / "cursor.json"
+        data = {"Home": {"fossil_hash": "abc", "github_hash": "def", "synced_at": "2024-01-01"}}
+        FossilWikiSync._save_cursor(p, data)
+        assert FossilWikiSync._load_cursor(p) == data
+
+    def test_save_creates_parent_dirs(self, tmp_path):
+        p = tmp_path / "a" / "b" / "c" / "cursor.json"
+        FossilWikiSync._save_cursor(p, {})
+        assert p.exists()
+
+
+# ── sync() — first sync ───────────────────────────────────────────────────────
+
+
+class TestSyncFirstRun:
+    def _setup(self, tmp_path, fossil_pages, github_files):
+        sync = _make_sync()
+        sync.fossil.wiki_pages.return_value = list(fossil_pages.keys())
+        sync.fossil.wiki_export.side_effect = lambda n: fossil_pages.get(n, "")
+
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        for fname, content in github_files.items():
+            (wiki_dir / fname).write_text(content)
+
+        return sync, wiki_dir
+
+    def test_fossil_only_page_pushed_to_github(self, tmp_path):
+        sync, wiki_dir = self._setup(
+            tmp_path,
+            fossil_pages={"Home": "# Home\nWelcome."},
+            github_files={},
+        )
+        cursor_path = tmp_path / "cursor.json"
+
+        with patch.object(sync, "_clone_gh_wiki", return_value=wiki_dir), \
+             patch.object(sync, "_git_commit_push"):
+            stats = sync.sync(work_dir=tmp_path, cursor_path=cursor_path)
+
+        assert stats["pushed_to_github"] == 1
+        assert stats["pushed_to_fossil"] == 0
+        assert stats["conflicts"] == []
+        assert (wiki_dir / "Home.md").exists()
+
+    def test_github_only_page_pushed_to_fossil(self, tmp_path):
+        sync, wiki_dir = self._setup(
+            tmp_path,
+            fossil_pages={},
+            github_files={"Setup.md": "# Setup\nStep 1."},
+        )
+        cursor_path = tmp_path / "cursor.json"
+
+        with patch.object(sync, "_clone_gh_wiki", return_value=wiki_dir), \
+             patch.object(sync, "_git_commit_push"):
+            stats = sync.sync(work_dir=tmp_path, cursor_path=cursor_path)
+
+        assert stats["pushed_to_fossil"] == 1
+        assert stats["pushed_to_github"] == 0
+        sync.fossil.wiki_commit.assert_called_once_with("Setup", "# Setup\nStep 1.")
+
+    def test_identical_pages_on_both_sides_no_transfer(self, tmp_path):
+        content = "# Same\nIdentical content."
+        sync, wiki_dir = self._setup(
+            tmp_path,
+            fossil_pages={"Same": content},
+            github_files={"Same.md": content},
+        )
+        cursor_path = tmp_path / "cursor.json"
+
+        with patch.object(sync, "_clone_gh_wiki", return_value=wiki_dir), \
+             patch.object(sync, "_git_commit_push") as mock_push:
+            stats = sync.sync(work_dir=tmp_path, cursor_path=cursor_path)
+
+        assert stats["pushed_to_github"] == 0
+        assert stats["pushed_to_fossil"] == 0
+        assert stats["conflicts"] == []
+        mock_push.assert_not_called()
+
+    def test_both_sides_different_content_is_conflict(self, tmp_path):
+        sync, wiki_dir = self._setup(
+            tmp_path,
+            fossil_pages={"Auth": "# Auth\nFossil version."},
+            github_files={"Auth.md": "# Auth\nGitHub version."},
+        )
+        cursor_path = tmp_path / "cursor.json"
+
+        with patch.object(sync, "_clone_gh_wiki", return_value=wiki_dir), \
+             patch.object(sync, "_git_commit_push"):
+            stats = sync.sync(work_dir=tmp_path, cursor_path=cursor_path)
+
+        assert "Auth" in stats["conflicts"]
+        assert stats["pushed_to_github"] == 0
+        assert stats["pushed_to_fossil"] == 0
+
+    def test_cursor_written_after_sync(self, tmp_path):
+        sync, wiki_dir = self._setup(
+            tmp_path,
+            fossil_pages={"Home": "# Home"},
+            github_files={},
+        )
+        cursor_path = tmp_path / "cursor.json"
+
+        with patch.object(sync, "_clone_gh_wiki", return_value=wiki_dir), \
+             patch.object(sync, "_git_commit_push"):
+            sync.sync(work_dir=tmp_path, cursor_path=cursor_path)
+
+        cursor = FossilWikiSync._load_cursor(cursor_path)
+        assert "Home" in cursor
+        assert "fossil_hash" in cursor["Home"]
+        assert "github_hash" in cursor["Home"]
+        assert "synced_at" in cursor["Home"]
+
+    def test_conflicts_not_written_to_cursor(self, tmp_path):
+        sync, wiki_dir = self._setup(
+            tmp_path,
+            fossil_pages={"Conflict": "fossil content"},
+            github_files={"Conflict.md": "github content"},
+        )
+        cursor_path = tmp_path / "cursor.json"
+
+        with patch.object(sync, "_clone_gh_wiki", return_value=wiki_dir), \
+             patch.object(sync, "_git_commit_push"):
+            sync.sync(work_dir=tmp_path, cursor_path=cursor_path)
+
+        cursor = FossilWikiSync._load_cursor(cursor_path)
+        assert "Conflict" not in cursor
+
+
+# ── sync() — subsequent runs ──────────────────────────────────────────────────
+
+
+class TestSyncSubsequentRuns:
+    def _make_cursor(self, tmp_path, entries: dict) -> Path:
+        from navegador.ingestion.fossil import _content_hash
+        cursor = {}
+        for name, (fossil_content, github_content) in entries.items():
+            cursor[name] = {
+                "fossil_hash": _content_hash(fossil_content),
+                "github_hash": _content_hash(github_content),
+                "synced_at": "2024-01-01T00:00:00+00:00",
+            }
+        p = tmp_path / "cursor.json"
+        FossilWikiSync._save_cursor(p, cursor)
+        return p
+
+    def test_fossil_changed_pushes_to_github(self, tmp_path):
+        old = "# Home\nOld content."
+        new = "# Home\nNew content from Fossil."
+
+        sync = _make_sync()
+        sync.fossil.wiki_pages.return_value = ["Home"]
+        sync.fossil.wiki_export.return_value = new
+
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        (wiki_dir / "Home.md").write_text(old)  # GitHub unchanged
+
+        cursor_path = self._make_cursor(tmp_path, {"Home": (old, old)})
+
+        with patch.object(sync, "_clone_gh_wiki", return_value=wiki_dir), \
+             patch.object(sync, "_git_commit_push") as mock_push:
+            stats = sync.sync(work_dir=tmp_path, cursor_path=cursor_path)
+
+        assert stats["pushed_to_github"] == 1
+        assert stats["pushed_to_fossil"] == 0
+        assert stats["conflicts"] == []
+        assert (wiki_dir / "Home.md").read_text() == new
+        mock_push.assert_called_once()
+
+    def test_github_changed_pushes_to_fossil(self, tmp_path):
+        old = "# Setup\nOld."
+        new_gh = "# Setup\nNew from GitHub."
+
+        sync = _make_sync()
+        sync.fossil.wiki_pages.return_value = ["Setup"]
+        sync.fossil.wiki_export.return_value = old  # Fossil unchanged
+
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        (wiki_dir / "Setup.md").write_text(new_gh)
+
+        cursor_path = self._make_cursor(tmp_path, {"Setup": (old, old)})
+
+        with patch.object(sync, "_clone_gh_wiki", return_value=wiki_dir), \
+             patch.object(sync, "_git_commit_push"):
+            stats = sync.sync(work_dir=tmp_path, cursor_path=cursor_path)
+
+        assert stats["pushed_to_fossil"] == 1
+        assert stats["pushed_to_github"] == 0
+        sync.fossil.wiki_commit.assert_called_once_with("Setup", new_gh)
+
+    def test_both_changed_is_conflict(self, tmp_path):
+        old = "# Auth\nOriginal."
+
+        sync = _make_sync()
+        sync.fossil.wiki_pages.return_value = ["Auth"]
+        sync.fossil.wiki_export.return_value = "# Auth\nFossil edit."
+
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        (wiki_dir / "Auth.md").write_text("# Auth\nGitHub edit.")
+
+        cursor_path = self._make_cursor(tmp_path, {"Auth": (old, old)})
+
+        with patch.object(sync, "_clone_gh_wiki", return_value=wiki_dir), \
+             patch.object(sync, "_git_commit_push"):
+            stats = sync.sync(work_dir=tmp_path, cursor_path=cursor_path)
+
+        assert "Auth" in stats["conflicts"]
+        assert stats["pushed_to_github"] == 0
+        assert stats["pushed_to_fossil"] == 0
+
+    def test_unchanged_on_both_sides_is_noop(self, tmp_path):
+        content = "# Stable\nUnchanged."
+
+        sync = _make_sync()
+        sync.fossil.wiki_pages.return_value = ["Stable"]
+        sync.fossil.wiki_export.return_value = content
+
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        (wiki_dir / "Stable.md").write_text(content)
+
+        cursor_path = self._make_cursor(tmp_path, {"Stable": (content, content)})
+
+        with patch.object(sync, "_clone_gh_wiki", return_value=wiki_dir), \
+             patch.object(sync, "_git_commit_push") as mock_push:
+            stats = sync.sync(work_dir=tmp_path, cursor_path=cursor_path)
+
+        assert stats["pushed_to_github"] == 0
+        assert stats["pushed_to_fossil"] == 0
+        assert stats["conflicts"] == []
+        mock_push.assert_not_called()
+        sync.fossil.wiki_commit.assert_not_called()
+
+    def test_cursor_updated_with_new_hashes_after_sync(self, tmp_path):
+        old = "# Home\nOld."
+        new = "# Home\nNew from Fossil."
+        from navegador.ingestion.fossil import _content_hash
+
+        sync = _make_sync()
+        sync.fossil.wiki_pages.return_value = ["Home"]
+        sync.fossil.wiki_export.return_value = new
+
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        (wiki_dir / "Home.md").write_text(old)
+
+        cursor_path = self._make_cursor(tmp_path, {"Home": (old, old)})
+
+        with patch.object(sync, "_clone_gh_wiki", return_value=wiki_dir), \
+             patch.object(sync, "_git_commit_push"):
+            sync.sync(work_dir=tmp_path, cursor_path=cursor_path)
+
+        cursor = FossilWikiSync._load_cursor(cursor_path)
+        assert cursor["Home"]["fossil_hash"] == _content_hash(new)
+        # GitHub now has the new content too
+        assert cursor["Home"]["github_hash"] == _content_hash(new)
+
+    def test_stale_cursor_entries_preserved(self, tmp_path):
+        """Pages deleted from both sides keep their cursor entry (not our job to GC)."""
+
+        sync = _make_sync()
+        sync.fossil.wiki_pages.return_value = []
+
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+
+        old_content = "# Old Page\nGone."
+        cursor_path = self._make_cursor(tmp_path, {"Old Page": (old_content, old_content)})
+
+        with patch.object(sync, "_clone_gh_wiki", return_value=wiki_dir), \
+             patch.object(sync, "_git_commit_push"):
+            sync.sync(work_dir=tmp_path, cursor_path=cursor_path)
+
+        cursor = FossilWikiSync._load_cursor(cursor_path)
+        assert "Old Page" in cursor
+
+
+# ── git author config ─────────────────────────────────────────────────────────
+
+
+class TestGitAuthorConfig:
+    def test_git_config_called_before_commit(self, tmp_path):
+        sync = _make_sync()
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+
+        config_calls = []
+
+        def mock_run(cmd, **kwargs):
+            if "config" in cmd:
+                config_calls.append(cmd)
+            # diff --staged returns 1 → there are changes
+            if "diff" in cmd:
+                return MagicMock(returncode=1)
+            return MagicMock(returncode=0)
+
+        with patch("subprocess.run", side_effect=mock_run):
+            sync._git_commit_push(wiki_dir, "test")
+
+        assert any("user.name" in c for c in config_calls)
+        assert any("user.email" in c for c in config_calls)

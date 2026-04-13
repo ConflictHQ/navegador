@@ -35,8 +35,11 @@ Usage::
     sync.github_to_fossil()   # pull GitHub → Fossil
 """
 
+import hashlib
+import json
 import logging
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from navegador.graph.schema import EdgeType, NodeLabel
@@ -44,6 +47,12 @@ from navegador.graph.store import GraphStore
 from navegador.vcs import FossilAdapter
 
 logger = logging.getLogger(__name__)
+
+
+def _content_hash(content: str) -> str:
+    """Return a short SHA-256 hex digest of *content* for change detection."""
+    return hashlib.sha256(content.encode()).hexdigest()[:16]
+
 
 _HEADING_RE = re.compile(r"^#{1,6}\s+(.+)", re.MULTILINE)
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*|__(.+?)__")
@@ -252,6 +261,27 @@ class FossilWikiSync:
     Pages already in WikiCreole format will still be committed but may not
     render as intended on the GitHub side — that is a content problem, not
     a sync problem.
+
+    Bidirectional sync
+    ------------------
+    :meth:`sync` runs a three-way merge using a cursor file that records
+    the content hash of each page on both sides at the time of last sync.
+
+    On each run the outcome per page is one of:
+
+    * **Only on source side** → push to the other side (first-sync or new page)
+    * **Fossil changed, GitHub unchanged** → push Fossil → GitHub
+    * **GitHub changed, Fossil unchanged** → push GitHub → Fossil
+    * **Both changed** → *conflict*: page is reported and skipped
+    * **Neither changed** → no-op
+
+    Conflicts are returned in the ``conflicts`` key of the stats dict.
+    The caller decides how to resolve them — typically by running
+    :meth:`fossil_to_github` or :meth:`github_to_fossil` to force one
+    direction for the conflicting pages.
+
+    The cursor defaults to
+    ``<fossil_checkout>/.navegador/fossil-wiki-sync.json``.
     """
 
     def __init__(
@@ -420,6 +450,19 @@ class FossilWikiSync:
         """Stage all changes in *wiki_dir*, commit, and push."""
         import subprocess
 
+        # Ensure a git identity exists in the clone — required in CI and fresh
+        # environments where no global user.name/user.email is configured.
+        for key, value in (
+            ("user.name", "navegador"),
+            ("user.email", "navegador@localhost"),
+        ):
+            subprocess.run(
+                ["git", "config", key, value],
+                cwd=wiki_dir,
+                check=True,
+                capture_output=True,
+            )
+
         subprocess.run(["git", "add", "-A"], cwd=wiki_dir, check=True, capture_output=True)
         # Exit code 0 means no diff — nothing to commit
         diff = subprocess.run(
@@ -437,3 +480,178 @@ class FossilWikiSync:
             capture_output=True,
         )
         subprocess.run(["git", "push"], cwd=wiki_dir, check=True, capture_output=True)
+
+    # ── Bidirectional sync ────────────────────────────────────────────────────
+
+    def sync(
+        self,
+        work_dir: str | Path | None = None,
+        cursor_path: str | Path | None = None,
+    ) -> dict:
+        """
+        Bidirectional sync between Fossil and GitHub wiki using a cursor file.
+
+        Parameters
+        ----------
+        work_dir:
+            Parent directory for the GitHub wiki clone.  Defaults to a
+            system-managed temp directory.
+        cursor_path:
+            Path to the JSON cursor file.  Defaults to
+            ``<fossil_checkout>/.navegador/fossil-wiki-sync.json``.
+
+        Returns
+        -------
+        dict with keys:
+
+        * ``pushed_to_github`` (int) — pages written to GitHub
+        * ``pushed_to_fossil`` (int) — pages written to Fossil
+        * ``skipped`` (int) — empty pages on both sides
+        * ``conflicts`` (list[str]) — page names where both sides changed
+          since the last sync; these pages are left untouched
+
+        Raises
+        ------
+        subprocess.CalledProcessError
+            If the git clone or push fails.
+        """
+        import shutil
+        import tempfile
+
+        if cursor_path is None:
+            cursor_path = Path(self.fossil.repo_path) / ".navegador" / "fossil-wiki-sync.json"
+        cursor_path = Path(cursor_path)
+
+        cursor = self._load_cursor(cursor_path)
+        stats: dict = {
+            "pushed_to_github": 0,
+            "pushed_to_fossil": 0,
+            "skipped": 0,
+            "conflicts": [],
+        }
+
+        own_tmp = work_dir is None
+        root = Path(tempfile.mkdtemp(prefix="navegador-fsync-")) if own_tmp else Path(work_dir)
+
+        try:
+            wiki_dir = self._clone_gh_wiki(root)
+
+            # Read both sides up front
+            fossil_pages = {
+                name: self.fossil.wiki_export(name) for name in self.fossil.wiki_pages()
+            }
+            github_pages: dict[str, str] = {}
+            for md_file in wiki_dir.glob("*.md"):
+                name = self.github_filename_to_fossil_name(md_file.name)
+                github_pages[name] = md_file.read_text(encoding="utf-8")
+
+            all_names = sorted(set(fossil_pages) | set(github_pages))
+            github_dirty = False
+            updated_cursor: dict = {}
+
+            for name in all_names:
+                fossil_content = fossil_pages.get(name, "")
+                github_content = github_pages.get(name, "")
+
+                # Skip pages that are blank on both sides
+                if not fossil_content.strip() and not github_content.strip():
+                    stats["skipped"] += 1
+                    continue
+
+                fossil_hash = _content_hash(fossil_content) if fossil_content.strip() else ""
+                github_hash = _content_hash(github_content) if github_content.strip() else ""
+
+                prev = cursor.get(name)
+                filename = self.fossil_name_to_github_filename(name)
+
+                # Track what each side actually contains after this run so
+                # the cursor reflects a consistent state: after a push, both
+                # hashes are set to the transferred content's hash.
+                final_fossil_hash = fossil_hash
+                final_github_hash = github_hash
+
+                if prev is None:
+                    # ── First sync for this page ───────────────────────────
+                    if fossil_content.strip() and not github_content.strip():
+                        (wiki_dir / filename).write_text(fossil_content, encoding="utf-8")
+                        github_dirty = True
+                        stats["pushed_to_github"] += 1
+                        final_github_hash = fossil_hash  # github now has fossil content
+                    elif github_content.strip() and not fossil_content.strip():
+                        self.fossil.wiki_commit(name, github_content)
+                        stats["pushed_to_fossil"] += 1
+                        final_fossil_hash = github_hash  # fossil now has github content
+                    elif fossil_hash == github_hash:
+                        pass  # identical on both sides — record cursor, no transfer
+                    else:
+                        # Both exist with different content — can't determine intent
+                        stats["conflicts"].append(name)
+                        continue
+                else:
+                    # ── Subsequent sync — compare against cursor ───────────
+                    fossil_changed = fossil_hash != prev.get("fossil_hash", "")
+                    github_changed = github_hash != prev.get("github_hash", "")
+
+                    if fossil_changed and not github_changed:
+                        (wiki_dir / filename).write_text(fossil_content, encoding="utf-8")
+                        github_dirty = True
+                        stats["pushed_to_github"] += 1
+                        final_github_hash = fossil_hash  # github now has fossil content
+                    elif github_changed and not fossil_changed:
+                        self.fossil.wiki_commit(name, github_content)
+                        stats["pushed_to_fossil"] += 1
+                        final_fossil_hash = github_hash  # fossil now has github content
+                    elif fossil_changed and github_changed:
+                        stats["conflicts"].append(name)
+                        continue
+                    # else: no changes on either side — no-op, update cursor timestamp only
+
+                updated_cursor[name] = {
+                    "fossil_hash": final_fossil_hash,
+                    "github_hash": final_github_hash,
+                    "synced_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+            # Preserve cursor entries for pages not seen this run (e.g. deleted)
+            for name, entry in cursor.items():
+                if name not in updated_cursor and name not in stats["conflicts"]:
+                    updated_cursor[name] = entry
+
+            if github_dirty:
+                n = stats["pushed_to_github"]
+                self._git_commit_push(wiki_dir, f"sync {n} page(s) from Fossil")
+
+            self._save_cursor(cursor_path, updated_cursor)
+        finally:
+            if own_tmp:
+                shutil.rmtree(root, ignore_errors=True)
+
+        logger.info(
+            "FossilWikiSync.sync [%s]: →gh=%d →fossil=%d conflicts=%d skipped=%d",
+            self.gh_repo,
+            stats["pushed_to_github"],
+            stats["pushed_to_fossil"],
+            len(stats["conflicts"]),
+            stats["skipped"],
+        )
+        return stats
+
+    # ── Cursor helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _load_cursor(path: Path) -> dict:
+        """Load the sync cursor from *path*, returning empty dict on missing/corrupt file."""
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                logger.warning(
+                    "FossilWikiSync: cursor file unreadable at %s — starting fresh", path
+                )
+        return {}
+
+    @staticmethod
+    def _save_cursor(path: Path, cursor: dict) -> None:
+        """Persist the sync cursor to *path*, creating parent directories as needed."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cursor, indent=2, sort_keys=True), encoding="utf-8")
