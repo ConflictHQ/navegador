@@ -214,7 +214,7 @@ def create_mcp_server(store_factory, read_only: bool = False):
             Tool(
                 name="memory_list",
                 description=(
-                    "List behavioral knowledge nodes ingested from CONFLICT-format memory/ "
+                    "List behavioral knowledge nodes ingested from structured memory/ "
                     "directories. Returns rules, project context, references, and user profiles."
                 ),
                 inputSchema={

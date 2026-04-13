@@ -581,7 +581,7 @@ def concept(name: str, db: str, fmt: str):
 
 @main.group()
 def memory():
-    """Ingest and query CONFLICT-format memory/ directories."""
+    """Ingest and query structured memory/ directories."""
 
 
 @memory.command("ingest")
@@ -598,7 +598,7 @@ def memory():
 def memory_ingest(
     memory_path: str, repo_name: str, clear: bool, workspace: bool, recursive: bool, db: str
 ):
-    """Ingest a CONFLICT-format memory/ directory into the graph."""
+    """Ingest a structured memory/ directory into the graph."""
     from navegador.ingestion import MemoryIngester
 
     ingester = MemoryIngester(_get_store(db))
@@ -963,36 +963,17 @@ def planopticon_ingest(path: str, input_type: str, source: str, as_json: bool, d
     PATH can be:
       - A manifest.json file
       - A knowledge_graph.json file
-      - An interchange.json file
+      - A PlanOpticonExchange JSON file (exchange.json / interchange.json)
       - A batch manifest JSON
-      - A planopticon output directory (auto-detects manifest.json inside)
+      - A planopticon output directory (auto-detects current PlanOpticon layouts)
     """
-    from pathlib import Path as P
-
     from navegador.ingestion import PlanopticonIngester
+    from navegador.ingestion.planopticon import resolve_planopticon_input
 
-    p = P(path)
-    # Resolve directory → manifest.json
-    if p.is_dir():
-        candidates = ["manifest.json", "results/knowledge_graph.json", "interchange.json"]
-        for c in candidates:
-            if (p / c).exists():
-                p = p / c
-                break
-        else:
-            raise click.UsageError(f"No recognised planopticon file found in {path}")
-
-    # Auto-detect type from filename
-    if input_type == "auto":
-        name = p.name.lower()
-        if "manifest" in name:
-            input_type = "manifest"
-        elif "interchange" in name:
-            input_type = "interchange"
-        elif "batch" in name:
-            input_type = "batch"
-        else:
-            input_type = "kg"
+    try:
+        input_type, p = resolve_planopticon_input(path, input_type=input_type)
+    except FileNotFoundError as exc:
+        raise click.UsageError(str(exc)) from exc
 
     ing = PlanopticonIngester(_get_store(db), source_tag=source)
 

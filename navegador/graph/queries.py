@@ -252,7 +252,7 @@ MATCH (d:Document {path: $path})
 DETACH DELETE d
 """
 
-# ── Memory: CONFLICT-format knowledge nodes ──────────────────────────────────
+# ── Memory-backed knowledge nodes ─────────────────────────────────────────────
 
 MEMORY_LIST = """
 MATCH (n)

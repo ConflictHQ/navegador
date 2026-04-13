@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 — 2026-04-13
+
+### Interoperability
+
+- **PlanOpticon format alignment** — auto-detect current batch `manifest.json` outputs separately from single-run manifests and accept `exchange.json` as the interchange format
+- **PlanOpticon docs refresh** — updated the integration guide and API reference to match current manifest, knowledge graph, exchange, and batch payload shapes
+- **Neutral memory terminology** — replaced public `CONFLICT-format memory` wording with `structured memory`
+
 ## 1.0.1 — 2026-04-13
 
 ### Release Readiness

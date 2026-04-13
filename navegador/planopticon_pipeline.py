@@ -79,7 +79,7 @@ class PlanopticonPipeline:
         Parameters
         ----------
         input_path:
-            Path to a manifest.json, interchange.json, batch manifest,
+            Path to a manifest.json, exchange/interchange JSON, batch manifest,
             knowledge_graph.json, or a planopticon output directory.
         source_tag:
             Optional label for provenance tracking (overrides self.source_tag).
@@ -130,7 +130,7 @@ class PlanopticonPipeline:
         Parameters
         ----------
         kg_data:
-            A dict as loaded from manifest.json, interchange.json,
+            A dict as loaded from manifest.json, exchange/interchange JSON,
             knowledge_graph.json, or any combination that may contain an
             ``action_items`` list or ``entities``/``nodes`` with task types.
         """
@@ -293,29 +293,6 @@ class PlanopticonPipeline:
         (input_type, resolved_path) where input_type is one of:
         "manifest", "interchange", "batch", "kg"
         """
-        if p.is_dir():
-            candidates = [
-                ("manifest", p / "manifest.json"),
-                ("interchange", p / "interchange.json"),
-                ("batch", p / "batch_manifest.json"),
-                ("kg", p / "results" / "knowledge_graph.json"),
-                ("kg", p / "knowledge_graph.json"),
-            ]
-            for itype, candidate in candidates:
-                if candidate.exists():
-                    return itype, candidate
-            raise FileNotFoundError(
-                f"No recognised planopticon file found in {p}. "
-                "Expected manifest.json, interchange.json, "
-                "batch_manifest.json, or knowledge_graph.json."
-            )
+        from navegador.ingestion.planopticon import resolve_planopticon_input
 
-        name = p.name.lower()
-        if "manifest" in name and "batch" not in name:
-            return "manifest", p
-        if "interchange" in name:
-            return "interchange", p
-        if "batch" in name:
-            return "batch", p
-        # Default: treat as knowledge_graph.json
-        return "kg", p
+        return resolve_planopticon_input(p, input_type="auto")

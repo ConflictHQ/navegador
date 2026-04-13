@@ -497,13 +497,27 @@ class TestPlanopticonIngestCommand:
         runner = CliRunner()
         with runner.isolated_filesystem():
             Path("output").mkdir()
-            Path("output/manifest.json").write_text("{}")
+            Path("output/manifest.json").write_text('{"video":{"title":"Sprint Review"}}')
             with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
                  patch("navegador.ingestion.PlanopticonIngester") as MockPI:
                 MockPI.return_value.ingest_manifest.return_value = {"nodes": 0, "edges": 0}
                 result = runner.invoke(main, ["planopticon", "ingest", "output"])
                 assert result.exit_code == 0
                 MockPI.return_value.ingest_manifest.assert_called_once()
+
+    def test_directory_resolves_batch_manifest(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("output").mkdir()
+            Path("output/manifest.json").write_text(
+                '{"videos":[],"total_videos":0,"completed_videos":0}'
+            )
+            with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+                 patch("navegador.ingestion.PlanopticonIngester") as MockPI:
+                MockPI.return_value.ingest_batch.return_value = {"nodes": 0, "edges": 0}
+                result = runner.invoke(main, ["planopticon", "ingest", "output"])
+                assert result.exit_code == 0
+                MockPI.return_value.ingest_batch.assert_called_once()
 
 
 # ── --help smoke tests ─────────────────────────────────────────────────────────
@@ -625,6 +639,17 @@ class TestPlanopticonAutoDetect:
                  patch("navegador.ingestion.PlanopticonIngester") as MockPI:
                 MockPI.return_value.ingest_interchange.return_value = {"nodes": 0, "edges": 0}
                 result = runner.invoke(main, ["planopticon", "ingest", "interchange.json"])
+                assert result.exit_code == 0
+                MockPI.return_value.ingest_interchange.assert_called_once()
+
+    def test_auto_detect_exchange(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("exchange.json").write_text("{}")
+            with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
+                 patch("navegador.ingestion.PlanopticonIngester") as MockPI:
+                MockPI.return_value.ingest_interchange.return_value = {"nodes": 0, "edges": 0}
+                result = runner.invoke(main, ["planopticon", "ingest", "exchange.json"])
                 assert result.exit_code == 0
                 MockPI.return_value.ingest_interchange.assert_called_once()
 

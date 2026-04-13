@@ -90,7 +90,7 @@ navegador --version
 Expected output:
 
 ```
-navegador, version 0.8.0
+navegador, version 1.1.0
 ```
 
 ## Shell completions

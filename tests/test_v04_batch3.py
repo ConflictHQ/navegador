@@ -53,7 +53,23 @@ class TestPlanopticonPipelineDetectInput:
         itype, _ = PlanopticonPipeline._detect_input(f)
         assert itype == "interchange"
 
+    def test_exchange_file(self, tmp_path):
+        from navegador.planopticon_pipeline import PlanopticonPipeline
+
+        f = tmp_path / "exchange.json"
+        f.write_text("{}")
+        itype, _ = PlanopticonPipeline._detect_input(f)
+        assert itype == "interchange"
+
     def test_batch_file(self, tmp_path):
+        from navegador.planopticon_pipeline import PlanopticonPipeline
+
+        f = tmp_path / "manifest.json"
+        f.write_text('{"videos":[],"total_videos":0}')
+        itype, _ = PlanopticonPipeline._detect_input(f)
+        assert itype == "batch"
+
+    def test_legacy_batch_file(self, tmp_path):
         from navegador.planopticon_pipeline import PlanopticonPipeline
 
         f = tmp_path / "batch_manifest.json"
@@ -72,9 +88,17 @@ class TestPlanopticonPipelineDetectInput:
     def test_directory_with_manifest(self, tmp_path):
         from navegador.planopticon_pipeline import PlanopticonPipeline
 
-        (tmp_path / "manifest.json").write_text("{}")
+        (tmp_path / "manifest.json").write_text('{"video":{"title":"Sprint Review"}}')
         itype, resolved = PlanopticonPipeline._detect_input(tmp_path)
         assert itype == "manifest"
+
+    def test_directory_with_batch_manifest(self, tmp_path):
+        from navegador.planopticon_pipeline import PlanopticonPipeline
+
+        (tmp_path / "manifest.json").write_text('{"videos":[],"completed_videos":0}')
+        itype, resolved = PlanopticonPipeline._detect_input(tmp_path)
+        assert itype == "batch"
+        assert resolved == tmp_path / "manifest.json"
 
     def test_directory_without_known_files_raises(self, tmp_path):
         from navegador.planopticon_pipeline import PlanopticonPipeline

@@ -1,4 +1,4 @@
-# Navegador <small>v0.7</small>
+# Navegador <small>v1.1</small>
 
 **The project knowledge graph for AI coding agents.**
 
@@ -6,7 +6,7 @@ Navegador builds and maintains a queryable graph of your software project — co
 
 > *navegador* — Spanish for *navigator / sailor*. It helps agents navigate your code.
 >
-> **Current version: 0.7.0**
+> **Current version: 1.1.0**
 
 ---
 
@@ -138,7 +138,7 @@ print(bundle.to_markdown())
 
 ---
 
-## What's new in 0.7.0
+## Highlights
 
 | Feature | Command / API |
 |---|---|
