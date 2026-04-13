@@ -174,6 +174,10 @@ class RepoIngester:
         # Ansible pass — heuristically detect and parse Ansible YAML files
         self._ingest_ansible(repo_path, stats, incremental)
 
+        # Fossil mirror pass — if the repo is also a Fossil checkout (e.g. a
+        # Git repo mirrored to/from Fossil), ingest wiki pages and tickets.
+        self._ingest_fossil_mirror(repo_path, stats)
+
         logger.info(
             "Ingested %s: %d files, %d functions, %d classes, %d skipped",
             repo_path.name,
@@ -372,6 +376,31 @@ class RepoIngester:
                 self._store_file_hash(rel_path, content_hash)
             except Exception:
                 logger.exception("Failed to parse Ansible file %s", path)
+
+    def _ingest_fossil_mirror(self, repo_path: Path, stats: dict[str, int]) -> None:
+        """
+        Ingest wiki pages and tickets from a co-located Fossil mirror, if present.
+
+        A Fossil-mirrored Git repo has both a ``.git`` directory and a
+        ``.fslckout`` / ``_FOSSIL_`` marker.  When detected, wiki pages and
+        tickets are ingested automatically alongside the Git-based code graph.
+        """
+        from navegador.vcs import detect_fossil
+
+        fossil_adapter = detect_fossil(repo_path)
+        if fossil_adapter is None:
+            return
+
+        logger.info("Fossil mirror detected at %s — ingesting wiki and tickets", repo_path)
+        from navegador.ingestion.fossil import FossilIngester
+
+        ingester = FossilIngester(self.store, fossil_adapter)
+        wiki_stats = ingester.ingest_wiki()
+        ticket_stats = ingester.ingest_tickets()
+
+        stats["wiki_pages"] = wiki_stats["pages"]
+        stats["tickets"] = ticket_stats["tickets"]
+        stats["edges"] += wiki_stats["edges"] + ticket_stats["edges"]
 
     def _get_parser(self, language: str) -> "LanguageParser":
         if language not in self._parsers:

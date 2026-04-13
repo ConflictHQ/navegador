@@ -575,3 +575,66 @@ class TestLanguageParserBase:
         lp = LanguageParser()
         with pytest.raises(NotImplementedError):
             lp.parse_file(Path("/tmp/x.py"), Path("/tmp"), MagicMock())
+
+
+class TestFossilMirrorIntegration:
+    """RepoIngester._ingest_fossil_mirror picks up Fossil wiki/tickets automatically."""
+
+    def test_fossil_mirror_not_called_for_git_only(self):
+        """No Fossil checkout present — _ingest_fossil_mirror is a no-op."""
+        store = _make_store()
+        ingester = RepoIngester(store)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("navegador.vcs.detect_fossil", return_value=None) as mock_df:
+                stats: dict = {}
+                ingester._ingest_fossil_mirror(Path(tmpdir), stats)
+                mock_df.assert_called_once_with(Path(tmpdir))
+                assert "wiki_pages" not in stats
+                assert "tickets" not in stats
+
+    def test_fossil_mirror_ingests_when_detected(self):
+        """When Fossil checkout exists, wiki and tickets are added to stats."""
+        store = _make_store()
+        ingester = RepoIngester(store)
+
+        fake_adapter = MagicMock()
+        fake_adapter.repo_path = "/tmp/myrepo"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("navegador.vcs.detect_fossil", return_value=fake_adapter):
+                with patch(
+                    "navegador.ingestion.fossil.FossilIngester.ingest_wiki",
+                    return_value={"pages": 3, "edges": 2},
+                ):
+                    with patch(
+                        "navegador.ingestion.fossil.FossilIngester.ingest_tickets",
+                        return_value={"tickets": 5, "edges": 1},
+                    ):
+                        stats: dict = {"edges": 10}
+                        ingester._ingest_fossil_mirror(Path(tmpdir), stats)
+
+                        assert stats["wiki_pages"] == 3
+                        assert stats["tickets"] == 5
+                        assert stats["edges"] == 13  # 10 + 2 + 1
+
+    def test_ingest_includes_fossil_stats_when_mirrored(self):
+        """Full ingest() propagates wiki_pages and tickets in its return value."""
+        store = _make_store()
+        ingester = RepoIngester(store)
+
+        fake_adapter = MagicMock()
+        fake_adapter.repo_path = "/tmp/myrepo"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("navegador.vcs.detect_fossil", return_value=fake_adapter):
+                with patch(
+                    "navegador.ingestion.fossil.FossilIngester.ingest_wiki",
+                    return_value={"pages": 2, "edges": 0},
+                ):
+                    with patch(
+                        "navegador.ingestion.fossil.FossilIngester.ingest_tickets",
+                        return_value={"tickets": 4, "edges": 0},
+                    ):
+                        result = ingester.ingest(tmpdir)
+                        assert result.get("wiki_pages") == 2
+                        assert result.get("tickets") == 4

@@ -437,6 +437,11 @@ def detect_vcs(repo_path: Path) -> VCSAdapter:
     1. ``.git`` (directory or file) → :class:`GitAdapter`
     2. ``.fslckout`` or ``_FOSSIL_`` → :class:`FossilAdapter`
 
+    When a directory contains *both* a ``.git`` and a Fossil checkout marker
+    (a Fossil-mirrored Git repo), this returns the :class:`GitAdapter` —
+    use :func:`detect_fossil` to also get the :class:`FossilAdapter` in that
+    case and ingest wiki pages + tickets from the Fossil side.
+
     Raises
     ------
     ValueError
@@ -456,3 +461,23 @@ def detect_vcs(repo_path: Path) -> VCSAdapter:
         f"No supported VCS detected at {repo_path!r}. "
         "Expected a git repository (.git) or a Fossil checkout (.fslckout / _FOSSIL_)."
     )
+
+
+def detect_fossil(repo_path: Path) -> "FossilAdapter | None":
+    """
+    Return a :class:`FossilAdapter` if *repo_path* contains a Fossil checkout,
+    or ``None`` otherwise.
+
+    Intentionally independent of :func:`detect_vcs` so that callers can check
+    for a Fossil mirror even when the primary VCS is Git.  The typical pattern
+    is::
+
+        primary = detect_vcs(path)          # GitAdapter (or FossilAdapter)
+        fossil  = detect_fossil(path)       # FossilAdapter | None
+        if fossil and fossil is not primary:
+            # ingest wiki + tickets from the Fossil mirror
+            FossilIngester(store, fossil).ingest_wiki()
+            FossilIngester(store, fossil).ingest_tickets()
+    """
+    adapter = FossilAdapter(Path(repo_path))
+    return adapter if adapter.is_repo() else None

@@ -11,6 +11,7 @@ from navegador.vcs import (
     FossilAdapter,
     GitAdapter,
     VCSAdapter,
+    detect_fossil,
     detect_vcs,
 )
 
@@ -330,3 +331,28 @@ class TestDetectVCS:
         (d / "_FOSSIL_").touch()
         adapter = detect_vcs(d)
         assert isinstance(adapter, FossilAdapter)
+
+
+class TestDetectFossil:
+    def test_returns_adapter_when_fossil_present(self, fossil_dir: Path):
+        adapter = detect_fossil(fossil_dir)
+        assert isinstance(adapter, FossilAdapter)
+
+    def test_returns_none_for_git_only(self, git_repo: Path):
+        assert detect_fossil(git_repo) is None
+
+    def test_returns_none_for_empty_dir(self, empty_dir: Path):
+        assert detect_fossil(empty_dir) is None
+
+    def test_returns_adapter_for_mirrored_git_fossil(self, git_repo: Path):
+        """A Git repo that also has a Fossil checkout marker is detected."""
+        (git_repo / ".fslckout").touch()
+        adapter = detect_fossil(git_repo)
+        assert isinstance(adapter, FossilAdapter)
+        assert adapter.repo_path == git_repo
+
+    def test_detect_vcs_still_returns_git_for_mirrored(self, git_repo: Path):
+        """detect_vcs must keep returning GitAdapter even when Fossil is present."""
+        (git_repo / ".fslckout").touch()
+        primary = detect_vcs(git_repo)
+        assert isinstance(primary, GitAdapter)
