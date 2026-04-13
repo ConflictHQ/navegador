@@ -32,13 +32,20 @@ _PATH_KEYED_RESTORE = frozenset({"File", "Document", "Repository"})
 def _edge_key(label: str, props: dict) -> dict:
     """Build a lookup key for reconnecting edges during snapshot restore.
 
-    File, Document, and Repository nodes are uniquely identified by ``path``
-    (matching GraphStore.create_node), while code-symbol nodes use
-    ``(name, file_path)``.
+    Mirrors the identity rules in GraphStore.create_node():
+    - File / Document / Repository  → keyed by ``path``
+    - Memory nodes (have memory_type + repo) → keyed by ``(name, repo)``
+    - Code symbols with file_path → keyed by ``(name, file_path)``
+    - Knowledge / other → keyed by ``name``
     """
     if label in _PATH_KEYED_RESTORE:
         return {"path": props.get("path", "")}
-    return {k: v for k, v in props.items() if k in ("name", "file_path")}
+    if props.get("memory_type", "") and props.get("repo", ""):
+        return {"name": props.get("name", ""), "repo": props.get("repo", "")}
+    if props.get("file_path", ""):
+        return {"name": props.get("name", ""), "file_path": props.get("file_path", "")}
+    name = props.get("name", "")
+    return {"name": name} if name else {}
 
 
 class ClusterManager:

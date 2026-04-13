@@ -38,6 +38,7 @@ Usage::
 import hashlib
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -428,11 +429,16 @@ class FossilWikiSync:
 
         wiki_dir = parent_dir / "wiki"
         url = f"https://github.com/{self.gh_repo}.wiki.git"
-        cmd = ["git", "clone", "--depth=1"]
+        cmd = ["git", "clone", "--depth=1", url, str(wiki_dir)]
+        env: dict | None = None
         if self.token:
-            cmd += ["-c", f"http.extraHeader=Authorization: token {self.token}"]
-        cmd += [url, str(wiki_dir)]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+            env = {
+                **os.environ,
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "http.extraHeader",
+                "GIT_CONFIG_VALUE_0": f"Authorization: token {self.token}",
+            }
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         if result.returncode != 0:
             raise subprocess.CalledProcessError(
                 result.returncode,

@@ -49,7 +49,7 @@ class TestNameMapping:
 
 
 class TestCloneCommand:
-    def test_with_token_uses_extra_header(self, tmp_path):
+    def test_with_token_passes_via_env_not_argv(self, tmp_path):
         sync = _make_sync(gh_repo="acme/docs", token="ghp_abc")
         wiki_dir = tmp_path / "wiki"
 
@@ -61,14 +61,22 @@ class TestCloneCommand:
             sync._clone_gh_wiki(tmp_path)
 
         cmd = mock_run.call_args[0][0]
-        assert "-c" in cmd
-        assert "http.extraHeader=Authorization: token ghp_abc" in cmd
-        # Token must NOT appear in the URL
+        env = mock_run.call_args[1].get("env") or mock_run.call_args.kwargs.get("env")
+
+        # Token must NOT appear anywhere in argv
+        assert "ghp_abc" not in " ".join(cmd)
+        assert "-c" not in cmd
+
+        # Token must appear in the env via GIT_CONFIG_COUNT mechanism
+        assert env is not None
+        assert env.get("GIT_CONFIG_VALUE_0") == "Authorization: token ghp_abc"
+        assert env.get("GIT_CONFIG_KEY_0") == "http.extraHeader"
+
+        # URL is plain https (no embedded credentials)
         url = cmd[-2]
-        assert "ghp_abc" not in url
         assert url == "https://github.com/acme/docs.wiki.git"
 
-    def test_without_token_no_extra_header(self, tmp_path):
+    def test_without_token_no_extra_env(self, tmp_path):
         sync = _make_sync(gh_repo="acme/docs", token="")
         wiki_dir = tmp_path / "wiki"
 
@@ -80,7 +88,10 @@ class TestCloneCommand:
             sync._clone_gh_wiki(tmp_path)
 
         cmd = mock_run.call_args[0][0]
+        env = mock_run.call_args[1].get("env") or mock_run.call_args.kwargs.get("env")
+
         assert "-c" not in cmd
+        assert env is None
         url = cmd[-2]
         assert url == "https://github.com/acme/docs.wiki.git"
 

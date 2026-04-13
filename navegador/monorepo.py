@@ -588,6 +588,12 @@ class MonorepoIngester:
                             return stripped.split(None, 1)[1]
                 except OSError:
                     return ""
+        elif workspace_type == "bare":
+            # Try all manifest types; return the first non-empty name found
+            for try_type in ("turborepo", "cargo", "go"):
+                name = self._read_manifest_name(try_type, pkg_path)
+                if name:
+                    return name
         return ""
 
     def _read_package_deps(self, workspace_type: str, pkg_path: Path) -> list[str]:

@@ -159,8 +159,11 @@ class TestGitHubWikiProvider:
     def test_open_clones_repo(self, tmp_path):
         provider = GitHubWikiProvider("owner/repo", token="tok123")
 
+        captured: dict = {}
+
         def fake_run(cmd, **kwargs):
-            # Simulate git clone by creating the target directory with a file
+            captured["cmd"] = cmd
+            captured["env"] = kwargs.get("env")
             if cmd[1] == "clone":
                 target = Path(cmd[-1])
                 target.mkdir(parents=True, exist_ok=True)
@@ -174,7 +177,16 @@ class TestGitHubWikiProvider:
 
         assert provider._wiki_dir is not None
         assert provider._wiki_dir.exists()
-        # Verify token was in the clone URL
+
+        # Token must NOT appear in argv
+        assert "tok123" not in " ".join(captured["cmd"])
+        # Token must be passed via GIT_CONFIG env vars, not embedded in URL
+        env = captured["env"]
+        assert env is not None
+        assert env.get("GIT_CONFIG_VALUE_0") == "Authorization: token tok123"
+        # Plain URL with no credentials embedded
+        assert "tok123" not in captured["cmd"][-2]
+
         provider.close()
 
     def test_open_raises_on_clone_failure(self):

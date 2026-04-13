@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -136,11 +137,16 @@ class GitHubWikiProvider(WikiProvider):
         wiki_dir = Path(self._tmpdir) / "wiki"
 
         url = f"https://github.com/{self._gh_repo}.wiki.git"
-        cmd = ["git", "clone", "--depth=1"]
+        cmd = ["git", "clone", "--depth=1", url, str(wiki_dir)]
+        env: dict | None = None
         if self._token:
-            cmd += ["-c", f"http.extraHeader=Authorization: token {self._token}"]
-        cmd += [url, str(wiki_dir)]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            env = {
+                **os.environ,
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "http.extraHeader",
+                "GIT_CONFIG_VALUE_0": f"Authorization: token {self._token}",
+            }
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
         if result.returncode != 0:
             raise subprocess.CalledProcessError(
                 result.returncode, "git clone", output=result.stdout, stderr=result.stderr
