@@ -6,10 +6,7 @@ All tests use a mock GraphStore so no real database is required.
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from navegador.sdk import Navegador
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -104,7 +101,7 @@ class TestIngest:
 
 class TestFileContext:
     def test_returns_context_bundle(self):
-        from navegador.context.loader import ContextBundle, ContextNode
+        from navegador.context.loader import ContextBundle
 
         nav = _nav([])
         bundle = nav.file_context("src/auth.py")
@@ -372,7 +369,6 @@ class TestSearch:
 
 class TestSearchAll:
     def test_search_all_returns_nodes(self):
-        from navegador.context.loader import ContextNode
 
         rows = [["Concept", "JWT", "", None, "Stateless token auth"]]
         nav = _nav(rows)
@@ -392,7 +388,6 @@ class TestSearchAll:
 
 class TestSearchKnowledge:
     def test_search_knowledge_returns_nodes(self):
-        from navegador.context.loader import ContextNode
 
         rows = [["Concept", "JWT", "Stateless token auth", "auth", "active"]]
         nav = _nav(rows)

@@ -705,7 +705,7 @@ class TestMigrateCommand:
         runner = CliRunner()
         with patch("navegador.cli.commands._get_store", return_value=_mock_store()), \
              patch("navegador.graph.migrations.get_schema_version", return_value=0), \
-             patch("navegador.graph.migrations.migrate", return_value=[1, 2]) as mock_migrate, \
+             patch("navegador.graph.migrations.migrate", return_value=[1, 2]) as _mock_migrate, \
              patch("navegador.graph.migrations.CURRENT_SCHEMA_VERSION", 2):
             result = runner.invoke(main, ["migrate"])
             assert result.exit_code == 0

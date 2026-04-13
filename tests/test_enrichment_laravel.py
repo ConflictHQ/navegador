@@ -2,12 +2,9 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from navegador.enrichment.base import EnrichmentResult, FrameworkEnricher
 from navegador.enrichment.laravel import LaravelEnricher
 from navegador.graph.store import GraphStore
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

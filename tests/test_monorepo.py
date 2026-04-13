@@ -1,16 +1,14 @@
 """Tests for navegador.monorepo — WorkspaceDetector, MonorepoIngester, CLI flag."""
 
 import json
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from navegador.cli.commands import main
 from navegador.monorepo import MonorepoIngester, WorkspaceConfig, WorkspaceDetector
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -359,7 +357,7 @@ class TestMonorepoIngesterWithWorkspace:
 
         from navegador.graph.schema import EdgeType
         edge_calls = store.create_edge.call_args_list
-        depends_on_edges = [
+        _depends_on_edges = [
             c for c in edge_calls
             if c[1].get("edge_type") == EdgeType.DEPENDS_ON
             or (len(c[0]) > 2 and c[0][2] == EdgeType.DEPENDS_ON)

@@ -1,13 +1,10 @@
 """Tests for navegador.enrichment.rails — RailsEnricher."""
 
-from unittest.mock import MagicMock, call
-
-import pytest
+from unittest.mock import MagicMock
 
 from navegador.enrichment.base import EnrichmentResult, FrameworkEnricher
 from navegador.enrichment.rails import RailsEnricher
 from navegador.graph.store import GraphStore
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

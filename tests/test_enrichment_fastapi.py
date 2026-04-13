@@ -4,14 +4,11 @@ Tests for navegador.enrichment.fastapi — FastAPIEnricher.
 All tests use a mock GraphStore so no real database is required.
 """
 
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from navegador.enrichment.base import EnrichmentResult, FrameworkEnricher
 from navegador.enrichment.fastapi import FastAPIEnricher
 from navegador.graph.store import GraphStore
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

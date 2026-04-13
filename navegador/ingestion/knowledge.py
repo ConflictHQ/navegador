@@ -300,7 +300,9 @@ class KnowledgeIngester:
         mem_label = NodeLabel(rows[0][0])
         actual_repo = rows[0][1]  # use the repo from the matched node
         code_key = {"name": code_name, "file_path": file_path} if file_path else {"name": code_name}
-        mem_key = {"name": memory_name, "repo": actual_repo} if actual_repo else {"name": memory_name}
+        mem_key = (
+            {"name": memory_name, "repo": actual_repo} if actual_repo else {"name": memory_name}
+        )
         self.store.create_edge(
             mem_label,
             mem_key,

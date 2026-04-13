@@ -657,6 +657,50 @@ def wiki_ingest(repo: str, wiki_dir: str, token: str, api: bool, db: str):
     console.print(f"[green]Wiki ingested:[/green] {stats['pages']} pages, {stats['links']} links")
 
 
+# ── Fossil SCM ───────────────────────────────────────────────────────────────
+
+
+@main.group()
+def fossil():
+    """Ingest Fossil SCM wiki pages and tickets."""
+
+
+@fossil.command("wiki")
+@click.option("--path", "repo_path", default=".", help="Path to Fossil checkout.")
+@click.option("--repo", default="", help="Repository name stored on each node.")
+@DB_OPTION
+def fossil_wiki(repo_path: str, repo: str, db: str):
+    """Ingest Fossil wiki pages into the knowledge graph."""
+    from navegador.ingestion.fossil import FossilIngester
+    from navegador.vcs import FossilAdapter
+
+    adapter = FossilAdapter(repo_path)
+    ingester = FossilIngester(_get_store(db), adapter, repo_name=repo)
+    stats = ingester.ingest_wiki()
+    console.print(
+        f"[green]Fossil wiki ingested:[/green] {stats['pages']} pages, {stats['edges']} edges"
+    )
+
+
+@fossil.command("tickets")
+@click.option("--path", "repo_path", default=".", help="Path to Fossil checkout.")
+@click.option("--repo", default="", help="Repository name stored on each node.")
+@click.option("--limit", default=200, show_default=True, help="Max tickets to ingest.")
+@DB_OPTION
+def fossil_tickets(repo_path: str, repo: str, limit: int, db: str):
+    """Ingest Fossil tickets into the knowledge graph."""
+    from navegador.ingestion.fossil import FossilIngester
+    from navegador.vcs import FossilAdapter
+
+    adapter = FossilAdapter(repo_path)
+    ingester = FossilIngester(_get_store(db), adapter, repo_name=repo)
+    stats = ingester.ingest_tickets(limit=limit)
+    console.print(
+        f"[green]Fossil tickets ingested:[/green] "
+        f"{stats['tickets']} tickets, {stats['edges']} edges"
+    )
+
+
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 

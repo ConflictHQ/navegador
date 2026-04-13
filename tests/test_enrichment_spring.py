@@ -2,12 +2,9 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from navegador.enrichment.base import EnrichmentResult, FrameworkEnricher
 from navegador.enrichment.spring import SpringEnricher
 from navegador.graph.store import GraphStore
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

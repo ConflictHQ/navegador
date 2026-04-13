@@ -8,12 +8,10 @@ HTTP) are mocked; no real infrastructure is required.
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -384,7 +382,7 @@ class TestClusterManagerLocalVersion:
         r.get.side_effect = [json.dumps(snapshot_data).encode(), b"5"]
 
         with patch.object(mgr, "_import_to_local_graph") as mock_import:
-            with patch.object(mgr, "_set_local_version") as mock_set:
+            with patch.object(mgr, "_set_local_version") as _mock_set:
                 with patch.object(mgr, "_redis_version", return_value=5):
                     r.get.side_effect = None
                     r.get.return_value = json.dumps(snapshot_data).encode()
@@ -1093,8 +1091,8 @@ class TestCLIBranchesDeadcode:
     def test_deadcode_shows_unreachable_classes(self, tmp_path):
         from click.testing import CliRunner
 
-        from navegador.cli.commands import main
         from navegador.analysis.deadcode import DeadCodeReport
+        from navegador.cli.commands import main
 
         runner = CliRunner()
         report = DeadCodeReport(
@@ -1116,8 +1114,8 @@ class TestCLIBranchesDeadcode:
     def test_deadcode_no_dead_code_message(self, tmp_path):
         from click.testing import CliRunner
 
-        from navegador.cli.commands import main
         from navegador.analysis.deadcode import DeadCodeReport
+        from navegador.cli.commands import main
 
         runner = CliRunner()
         report = DeadCodeReport(
@@ -1138,8 +1136,8 @@ class TestCLIBranchesTestmap:
     def test_testmap_shows_table_and_unmatched(self):
         from click.testing import CliRunner
 
+        from navegador.analysis.testmap import TestLink, TestMapResult
         from navegador.cli.commands import main
-        from navegador.analysis.testmap import TestMapResult, TestLink
 
         runner = CliRunner()
         link = TestLink(
@@ -1553,8 +1551,9 @@ class TestMessageBus:
 
     def test_receive_returns_unacked_messages(self):
         import json as _json
-        from navegador.cluster.messaging import Message
         import time
+
+        from navegador.cluster.messaging import Message
 
         bus, r = self._make()
         msg = Message(
@@ -1569,8 +1568,9 @@ class TestMessageBus:
 
     def test_receive_filters_acked(self):
         import json as _json
-        from navegador.cluster.messaging import Message
         import time
+
+        from navegador.cluster.messaging import Message
 
         bus, r = self._make()
         msg = Message(
@@ -1667,7 +1667,6 @@ class TestDistributedLock:
         assert lock._token is None
 
     def test_context_manager_raises_on_timeout(self):
-        import time
         from navegador.cluster.locking import LockTimeout
 
         lock, r = self._make()
@@ -1983,8 +1982,8 @@ class TestRubyParserBranches:
 
     def test_extract_calls(self):
         with _mock_ts("tree_sitter_ruby"):
-            from navegador.ingestion.ruby import RubyParser
             from navegador.graph.schema import NodeLabel
+            from navegador.ingestion.ruby import RubyParser
 
             parser = RubyParser()
             store = _make_store()
@@ -2237,8 +2236,8 @@ class TestCSharpParserBranches:
 
     def test_extract_calls(self):
         with _mock_ts("tree_sitter_c_sharp"):
-            from navegador.ingestion.csharp import CSharpParser
             from navegador.graph.schema import NodeLabel
+            from navegador.ingestion.csharp import CSharpParser
 
             parser = CSharpParser()
             store = _make_store()

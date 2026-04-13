@@ -14,7 +14,6 @@ import pytest
 from navegador.graph.schema import NodeLabel
 from navegador.ingestion.parser import LANGUAGE_MAP, RepoIngester
 
-
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
 

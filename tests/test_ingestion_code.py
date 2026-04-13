@@ -376,8 +376,8 @@ class TestIncrementalIngestion:
 
             # Simulate stored hash matching
             from navegador.ingestion.parser import _file_hash
-            current_hash = _file_hash(py_file)
-            rel_path = "app.py"
+            _current_hash = _file_hash(py_file)
+            _rel_path = "app.py"
 
             # Mock _file_unchanged to return True
             ingester._file_unchanged = MagicMock(return_value=True)

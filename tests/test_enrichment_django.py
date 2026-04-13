@@ -1,13 +1,10 @@
 """Tests for navegador.enrichment.django — DjangoEnricher."""
 
-from unittest.mock import MagicMock, call
-
-import pytest
+from unittest.mock import MagicMock
 
 from navegador.enrichment.base import EnrichmentResult, FrameworkEnricher
 from navegador.enrichment.django import DjangoEnricher
 from navegador.graph.store import GraphStore
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

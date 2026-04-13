@@ -13,13 +13,9 @@ Covers:
 from __future__ import annotations
 
 import json
-import subprocess
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ── Shared mock store factory ─────────────────────────────────────────────────
 
@@ -306,7 +302,7 @@ class TestTicketIngesterGitHub:
             "title": title,
             "body": body,
             "html_url": f"https://github.com/owner/repo/issues/{number}",
-            "labels": [{"name": l} for l in (labels or [])],
+            "labels": [{"name": lbl} for lbl in (labels or [])],
             "assignees": [{"login": a} for a in (assignees or [])],
         }
 

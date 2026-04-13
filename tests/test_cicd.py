@@ -1,12 +1,10 @@
 """Tests for navegador.cicd — CI/CD mode, CICDReporter, and `navegador ci` commands."""
 
 import json
-import os
 from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from click.testing import CliRunner
 
 from navegador.cicd import (
@@ -19,7 +17,6 @@ from navegador.cicd import (
     is_github_actions,
 )
 from navegador.cli.commands import main
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

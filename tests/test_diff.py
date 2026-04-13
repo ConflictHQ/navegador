@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from click.testing import CliRunner
 
 from navegador.cli.commands import main
@@ -16,7 +14,6 @@ from navegador.diff import (
     _lines_overlap,
     _parse_unified_diff_hunks,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

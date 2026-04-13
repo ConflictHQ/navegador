@@ -1,6 +1,6 @@
 """Tests for navegador.graph.migrations — schema versioning and migration."""
 
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 

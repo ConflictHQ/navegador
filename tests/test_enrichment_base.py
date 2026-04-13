@@ -1,15 +1,13 @@
 """Tests for navegador.enrichment — EnrichmentResult, FrameworkEnricher, and CLI."""
 
 import json
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from navegador.enrichment import EnrichmentResult, FrameworkEnricher
-from navegador.enrichment.base import FrameworkEnricher as FrameworkEnricherBase
 from navegador.graph.store import GraphStore
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -364,7 +362,6 @@ class TestEnrichCLI:
 
     def test_enrich_runs_enricher_when_framework_registered(self):
         """Patch the enrichment package discovery to inject MockEnricher."""
-        import pkgutil
 
         from navegador.cli.commands import main
 
@@ -387,7 +384,6 @@ class TestEnrichCLI:
 
     def test_enrich_json_output_structure(self):
         """Verify JSON output shape when an enricher runs."""
-        import pkgutil
 
         from navegador.cli.commands import main
 

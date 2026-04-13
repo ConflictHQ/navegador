@@ -2,12 +2,9 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from navegador.enrichment import EnrichmentResult
 from navegador.enrichment.react_native import ReactNativeEnricher
 from navegador.graph.store import GraphStore
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -17,7 +17,6 @@ from navegador.ingestion.optimization import (
     ParallelIngester,
     TreeCache,
 )
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -444,7 +443,7 @@ class TestGraphDiffer:
         differ.diff_file("src/models.py", [])
         # Ensure the store was actually queried with the right path param.
         store.query.assert_called_once()
-        _, kwargs_or_positional = store.query.call_args[0], store.query.call_args
+        _, _kwargs_or_positional = store.query.call_args[0], store.query.call_args
         # The second positional arg to store.query should contain file_path.
         call_params = store.query.call_args[0][1]
         assert call_params["file_path"] == "src/models.py"

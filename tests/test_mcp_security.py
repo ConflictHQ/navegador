@@ -14,7 +14,6 @@ from navegador.mcp.security import (
     validate_cypher,
 )
 
-
 # ── validate_cypher ────────────────────────────────────────────────────────────
 
 
@@ -293,7 +292,7 @@ class TestNormalModeAllowsEverything:
         """In normal mode, write queries are NOT blocked by validate_cypher
         (only complexity checks apply)."""
         self.fx.store.query.return_value = MagicMock(result_set=[])
-        result = await self.fx.call_tool_fn(
+        _result = await self.fx.call_tool_fn(
             "query_graph",
             {"cypher": "CREATE (n:Node {name: 'x'}) RETURN n LIMIT 1"},
         )

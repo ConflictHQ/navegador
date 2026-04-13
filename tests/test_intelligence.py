@@ -23,7 +23,6 @@ from click.testing import CliRunner
 
 from navegador.cli.commands import main
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 

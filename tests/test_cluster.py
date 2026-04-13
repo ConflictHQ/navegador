@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -79,6 +79,7 @@ class TestClusterManagerStatus:
 class TestClusterManagerSnapshotToLocal:
     def test_no_op_when_no_snapshot_in_redis(self, caplog):
         import logging
+
         from navegador.cluster.core import ClusterManager
 
         r, _ = _make_redis_mock()
@@ -91,7 +92,7 @@ class TestClusterManagerSnapshotToLocal:
         assert "No shared snapshot" in caplog.text
 
     def test_calls_import_and_sets_version(self):
-        from navegador.cluster.core import ClusterManager, _SNAPSHOT_KEY, _VERSION_KEY
+        from navegador.cluster.core import _SNAPSHOT_KEY, _VERSION_KEY, ClusterManager
 
         r, _ = _make_redis_mock()
         snapshot_data = json.dumps({"nodes": [], "edges": []})
@@ -301,7 +302,7 @@ class TestTaskQueueEnqueue:
         assert len(task_id) > 0
 
     def test_stores_task_hash_and_pushes_to_list(self):
-        from navegador.cluster.taskqueue import TaskQueue, _QUEUE_KEY
+        from navegador.cluster.taskqueue import _QUEUE_KEY, TaskQueue
 
         r, pipe = _make_redis_mock()
         queue = TaskQueue("redis://localhost:6379", redis_client=r)
@@ -328,7 +329,7 @@ class TestTaskQueueEnqueue:
 
 class TestTaskQueueDequeue:
     def _setup_dequeue(self, task_id: str, task_type: str = "ingest"):
-        from navegador.cluster.taskqueue import Task, TaskStatus, _task_key
+        from navegador.cluster.taskqueue import Task
 
         r, pipe = _make_redis_mock()
         r.lpop.return_value = task_id.encode()
@@ -414,7 +415,7 @@ class TestTaskQueueComplete:
         assert mapping["result"] == ""
 
     def test_removes_from_inprogress_set(self):
-        from navegador.cluster.taskqueue import TaskQueue, _INPROGRESS_KEY
+        from navegador.cluster.taskqueue import _INPROGRESS_KEY, TaskQueue
 
         r, pipe = _make_redis_mock()
         queue = TaskQueue("redis://localhost:6379", redis_client=r)
@@ -438,7 +439,7 @@ class TestTaskQueueFail:
         assert mapping["error"] == "something went wrong"
 
     def test_removes_from_inprogress_set(self):
-        from navegador.cluster.taskqueue import TaskQueue, _INPROGRESS_KEY
+        from navegador.cluster.taskqueue import _INPROGRESS_KEY, TaskQueue
 
         r, pipe = _make_redis_mock()
         queue = TaskQueue("redis://localhost:6379", redis_client=r)

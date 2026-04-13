@@ -13,12 +13,10 @@ All Redis and Fossil operations are mocked so no real infrastructure is needed.
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -384,7 +382,7 @@ class TestMessageBus:
         bus.receive("carol")  # touching the queue registers the agent
         bus.receive("dave")
 
-        mids = bus.broadcast("alice", "announcement", {"msg": "deploy"})
+        _mids = bus.broadcast("alice", "announcement", {"msg": "deploy"})
         # carol and dave should each have the message
         carol_msgs = bus.receive("carol")
         dave_msgs = bus.receive("dave")
@@ -404,7 +402,7 @@ class TestMessageBus:
         assert all(m.from_agent != "alice" or m.type != "news" for m in alice_msgs)
 
     def test_message_fields(self):
-        from navegador.cluster.messaging import MessageBus, Message
+        from navegador.cluster.messaging import MessageBus
 
         r = _make_redis()
         bus = MessageBus("redis://localhost", _redis_client=r)
@@ -543,8 +541,9 @@ class TestFossilLiveAdapter:
         assert result["tickets"] == 1
 
     def test_attach_calls_attach_database_on_sqlite_conn(self):
-        from navegador.cluster.fossil_live import FossilLiveAdapter
         import sqlite3
+
+        from navegador.cluster.fossil_live import FossilLiveAdapter
 
         conn = MagicMock(spec=sqlite3.Connection)
         conn.execute = MagicMock()
@@ -561,8 +560,9 @@ class TestFossilLiveAdapter:
 
     def test_attach_fallback_when_no_sqlite(self, tmp_path):
         """When the store is Redis-backed, adapter falls back gracefully."""
-        from navegador.cluster.fossil_live import FossilLiveAdapter
         import sqlite3
+
+        from navegador.cluster.fossil_live import FossilLiveAdapter
 
         # Create a real (tiny) Fossil-like sqlite db so the fallback connect works
         fossil_path = tmp_path / "repo.fossil"

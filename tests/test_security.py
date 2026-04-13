@@ -1,6 +1,5 @@
 """Tests for navegador.security — sensitive content detection and redaction."""
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -8,7 +7,6 @@ import pytest
 from click.testing import CliRunner
 
 from navegador.security import REDACTED, SensitiveContentDetector, SensitiveMatch
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

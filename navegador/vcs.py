@@ -292,6 +292,35 @@ class FossilAdapter(VCSAdapter):
         result = self._run(["annotate", "--log", file_path])
         return _parse_fossil_annotate(result.stdout)
 
+    def wiki_pages(self) -> list[str]:
+        """Return list of all wiki page names in this Fossil repo."""
+        result = self._run(["wiki", "list"], check=False)
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    def wiki_export(self, page_name: str) -> str:
+        """Return the raw content of a wiki page."""
+        result = self._run(["wiki", "export", page_name], check=False)
+        return result.stdout
+
+    def ticket_list(self, limit: int = 200) -> list[dict]:
+        """
+        Return tickets from this Fossil repo as a list of dicts.
+
+        Runs ``fossil ticket show 0`` which outputs all tickets from
+        report #0 (All Tickets) as tab-separated rows.  The first row
+        is the column header.
+
+        Falls back to an empty list if the command fails (e.g. no tickets
+        defined or fossil not installed).
+        """
+        result = self._run(["ticket", "show", "0", "--limit", str(limit)], check=False)
+        if result.returncode != 0 or not result.stdout.strip():
+            # Try without --limit (older fossil versions)
+            result = self._run(["ticket", "show", "0"], check=False)
+        if result.returncode != 0 or not result.stdout.strip():
+            return []
+        return _parse_fossil_tickets(result.stdout, limit=limit)
+
 
 def _parse_fossil_timeline(output: str) -> list[dict]:
     """
@@ -370,6 +399,31 @@ def _parse_fossil_annotate(output: str) -> list[dict]:
             )
 
     return entries
+
+
+def _parse_fossil_tickets(output: str, limit: int = 200) -> list[dict]:
+    """
+    Parse ``fossil ticket show 0`` tab-separated output into a list of dicts.
+
+    The first non-empty line is treated as the column header row.
+    Subsequent lines are data rows.  Each dict maps column name → value.
+    Unknown or empty columns are kept as-is.
+    """
+    lines = [line for line in output.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return []
+
+    headers = [h.strip().lower() for h in lines[0].split("\t")]
+    tickets: list[dict] = []
+
+    for line in lines[1 : limit + 1]:
+        parts = line.split("\t")
+        row: dict = {}
+        for i, header in enumerate(headers):
+            row[header] = parts[i].strip() if i < len(parts) else ""
+        tickets.append(row)
+
+    return tickets
 
 
 # ── Factory ────────────────────────────────────────────────────────────────────

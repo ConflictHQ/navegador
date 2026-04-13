@@ -6,12 +6,10 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from click.testing import CliRunner
 
 from navegador.churn import ChurnAnalyzer, ChurnEntry, CouplingPair
 from navegador.cli.commands import main
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

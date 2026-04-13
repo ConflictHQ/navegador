@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["ast", "knowledge-graph", "code-analysis", "ai-agents", "mcp", "context-management", "falkordb", "go", "rust", "java", "typescript", "kotlin", "csharp", "php", "ruby", "swift", "c", "cpp", "terraform", "hcl", "puppet", "ansible", "chef", "bash", "iac"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
@@ -118,6 +118,8 @@ select = ["E", "F", "W", "I"]
 [tool.ruff.lint.per-file-ignores]
 # HTML/JS template strings inevitably contain long lines
 "navegador/explorer/templates.py" = ["E501"]
+# Test inline literals and assertion chains often exceed 100 chars
+"tests/*.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
