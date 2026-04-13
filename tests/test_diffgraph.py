@@ -203,9 +203,7 @@ class TestDiffGraphReport:
 
     def test_to_dict_serialises_structural_changes(self):
         """to_dict converts StructuralChange objects to plain dicts."""
-        sc = StructuralChange(
-            kind="new_symbol", symbol="fn", file_path="f.py", line_start=1
-        )
+        sc = StructuralChange(kind="new_symbol", symbol="fn", file_path="f.py", line_start=1)
         report = DiffGraphReport(base_ref="a", head_ref="b", new_symbols=[sc])
         d = report.to_dict()
         assert isinstance(d["new_symbols"][0], dict)
@@ -304,19 +302,15 @@ class TestDiffGraphAnalyzer:
     @patch(_IMPACT_ANALYZER)
     @patch(_LINES_OVERLAP, return_value=True)
     @patch("subprocess.run")
-    def test_symbols_classified_as_new_when_file_is_new(
-        self, mock_run, _mock_overlap, mock_ia_cls
-    ):
+    def test_symbols_classified_as_new_when_file_is_new(self, mock_run, _mock_overlap, mock_ia_cls):
         """Symbols in a newly created file should be classified as new_symbol."""
         mock_run.side_effect = [
             _subprocess_result(stdout="app/new.py\n"),  # --name-only
-            _subprocess_result(stdout=""),               # -U0 diff (empty => fallback)
-            _subprocess_result(returncode=128),          # git show => file is new
+            _subprocess_result(stdout=""),  # -U0 diff (empty => fallback)
+            _subprocess_result(returncode=128),  # git show => file is new
         ]
 
-        store = _mock_store(
-            result_set=[["Function", "new_handler", "app/new.py", 1, 20]]
-        )
+        store = _mock_store(result_set=[["Function", "new_handler", "app/new.py", 1, 20]])
 
         mock_impact = MagicMock()
         mock_br_result = MagicMock()
@@ -341,13 +335,11 @@ class TestDiffGraphAnalyzer:
         """Symbols in an existing file should be classified as changed_symbol."""
         mock_run.side_effect = [
             _subprocess_result(stdout="app/auth.py\n"),  # --name-only
-            _subprocess_result(stdout=""),                # -U0 diff
-            _subprocess_result(returncode=0),             # git show => file existed
+            _subprocess_result(stdout=""),  # -U0 diff
+            _subprocess_result(returncode=0),  # git show => file existed
         ]
 
-        store = _mock_store(
-            result_set=[["Function", "authenticate", "app/auth.py", 10, 45]]
-        )
+        store = _mock_store(result_set=[["Function", "authenticate", "app/auth.py", 10, 45]])
 
         mock_impact = MagicMock()
         mock_br_result = MagicMock()
@@ -374,9 +366,7 @@ class TestDiffGraphAnalyzer:
             _subprocess_result(returncode=0),  # existing file
         ]
 
-        store = _mock_store(
-            result_set=[["Function", "process", "app/svc.py", 5, 30]]
-        )
+        store = _mock_store(result_set=[["Function", "process", "app/svc.py", 5, 30]])
 
         mock_impact = MagicMock()
         mock_br_result = MagicMock()
@@ -434,9 +424,7 @@ class TestDiffGraphAnalyzer:
     @patch(_IMPACT_ANALYZER)
     @patch(_LINES_OVERLAP, return_value=True)
     @patch("subprocess.run")
-    def test_duplicate_symbols_not_counted_twice(
-        self, mock_run, _mock_overlap, mock_ia_cls
-    ):
+    def test_duplicate_symbols_not_counted_twice(self, mock_run, _mock_overlap, mock_ia_cls):
         """A symbol appearing in multiple rows should only be counted once."""
         mock_run.side_effect = [
             _subprocess_result(stdout="a.py\n"),
@@ -493,9 +481,7 @@ class TestDiffGraphAnalyzer:
             _subprocess_result(stdout=""),
             _subprocess_result(returncode=128),  # new file
         ]
-        store = _mock_store(
-            result_set=[["Class", "Widget", "mod.py", 55, 99]]
-        )
+        store = _mock_store(result_set=[["Class", "Widget", "mod.py", 55, 99]])
 
         mock_impact = MagicMock()
         mock_br = MagicMock()
@@ -509,3 +495,282 @@ class TestDiffGraphAnalyzer:
 
         assert report.new_symbols[0].line_start == 55
         assert report.new_symbols[0].file_path == "mod.py"
+
+
+# ── DiffGraphReport: snapshot diff fields ──────────────────────────────────
+
+
+class TestDiffGraphReportSnapshotFields:
+    def test_new_fields_default_to_empty_lists(self):
+        report = DiffGraphReport(base_ref="a", head_ref="b")
+        assert report.added_nodes == []
+        assert report.removed_nodes == []
+        assert report.moved_nodes == []
+
+    def test_to_dict_includes_snapshot_fields(self):
+        sc = StructuralChange(kind="added", symbol="new_fn", file_path="a.py", line_start=1)
+        report = DiffGraphReport(
+            base_ref="v1",
+            head_ref="v2",
+            added_nodes=[sc],
+            removed_nodes=[StructuralChange(kind="removed", symbol="old_fn", file_path="b.py")],
+            moved_nodes=[
+                StructuralChange(
+                    kind="moved",
+                    symbol="migrated_fn",
+                    file_path="new/loc.py",
+                    detail="old/loc.py \u2192 new/loc.py",
+                )
+            ],
+        )
+        d = report.to_dict()
+        assert len(d["added_nodes"]) == 1
+        assert d["added_nodes"][0]["symbol"] == "new_fn"
+        assert len(d["removed_nodes"]) == 1
+        assert d["removed_nodes"][0]["symbol"] == "old_fn"
+        assert len(d["moved_nodes"]) == 1
+        assert d["moved_nodes"][0]["symbol"] == "migrated_fn"
+
+    def test_to_markdown_added_section(self):
+        report = DiffGraphReport(
+            base_ref="v1",
+            head_ref="v2",
+            added_nodes=[
+                StructuralChange(kind="added", symbol="new_fn", file_path="a.py", line_start=10)
+            ],
+        )
+        md = report.to_markdown()
+        assert "## Added Symbols (1)" in md
+        assert "**added**" in md
+        assert "`new_fn`" in md
+        assert "`a.py`:10" in md
+
+    def test_to_markdown_removed_section(self):
+        report = DiffGraphReport(
+            base_ref="v1",
+            head_ref="v2",
+            removed_nodes=[StructuralChange(kind="removed", symbol="old_fn", file_path="b.py")],
+        )
+        md = report.to_markdown()
+        assert "## Removed Symbols (1)" in md
+        assert "**removed**" in md
+        assert "`old_fn`" in md
+
+    def test_to_markdown_moved_section(self):
+        report = DiffGraphReport(
+            base_ref="v1",
+            head_ref="v2",
+            moved_nodes=[
+                StructuralChange(
+                    kind="moved",
+                    symbol="migrate_fn",
+                    file_path="new.py",
+                    detail="old.py \u2192 new.py",
+                )
+            ],
+        )
+        md = report.to_markdown()
+        assert "## Moved Symbols (1)" in md
+        assert "**moved**" in md
+        assert "`migrate_fn`" in md
+        assert "old.py \u2192 new.py" in md
+
+    def test_to_markdown_skips_empty_snapshot_sections(self):
+        report = DiffGraphReport(base_ref="a", head_ref="b")
+        md = report.to_markdown()
+        assert "## Added Symbols" not in md
+        assert "## Removed Symbols" not in md
+        assert "## Moved Symbols" not in md
+
+    def test_to_json_roundtrips_snapshot_fields(self):
+        report = DiffGraphReport(
+            base_ref="v1",
+            head_ref="v2",
+            added_nodes=[StructuralChange(kind="added", symbol="fn_a", file_path="x.py")],
+            removed_nodes=[StructuralChange(kind="removed", symbol="fn_b", file_path="y.py")],
+        )
+        data = json.loads(report.to_json())
+        assert len(data["added_nodes"]) == 1
+        assert data["added_nodes"][0]["symbol"] == "fn_a"
+        assert len(data["removed_nodes"]) == 1
+        assert data["removed_nodes"][0]["symbol"] == "fn_b"
+
+
+# ── DiffGraphAnalyzer.diff_snapshots ───────────────────────────────────────
+
+_HISTORY_STORE = "navegador.history.HistoryStore"
+
+
+class TestDiffSnapshots:
+    @patch(_HISTORY_STORE)
+    def test_diff_snapshots_with_existing_snapshots(self, mock_hs_cls):
+        """When both snapshots exist, builds report from HistoryStore.diff_snapshots."""
+        mock_hs = MagicMock()
+        mock_hs_cls.return_value = mock_hs
+
+        # Both refs are snapshotted
+        snap_base = MagicMock()
+        snap_base.ref = "v1"
+        snap_head = MagicMock()
+        snap_head.ref = "v2"
+        mock_hs.list_snapshots.return_value = [snap_base, snap_head]
+
+        mock_hs.diff_snapshots.return_value = {
+            "added": [
+                {"name": "new_fn", "file_path": "app/new.py", "label": "Function", "line_start": 5},
+            ],
+            "removed": [
+                {
+                    "name": "old_fn",
+                    "file_path": "app/old.py",
+                    "label": "Function",
+                    "line_start": 10,
+                },
+            ],
+            "moved": [
+                {"name": "moved_fn", "from": "app/a.py", "to": "app/b.py"},
+            ],
+        }
+
+        store = _mock_store()
+
+        # Mock ImpactAnalyzer used inside diff_snapshots for blast radius
+        with patch(_IMPACT_ANALYZER) as mock_ia_cls:
+            mock_impact = MagicMock()
+            mock_br = MagicMock()
+            mock_br.affected_nodes = []
+            mock_br.affected_knowledge = []
+            mock_impact.blast_radius.return_value = mock_br
+            mock_ia_cls.return_value = mock_impact
+
+            analyzer = DiffGraphAnalyzer(store, repo_path="/tmp/repo")
+            report = analyzer.diff_snapshots("v1", "v2")
+
+        assert report.base_ref == "v1"
+        assert report.head_ref == "v2"
+        assert len(report.added_nodes) == 1
+        assert report.added_nodes[0].symbol == "new_fn"
+        assert report.added_nodes[0].kind == "added"
+        assert report.added_nodes[0].line_start == 5
+        assert len(report.removed_nodes) == 1
+        assert report.removed_nodes[0].symbol == "old_fn"
+        assert report.removed_nodes[0].kind == "removed"
+        assert len(report.moved_nodes) == 1
+        assert report.moved_nodes[0].symbol == "moved_fn"
+        assert report.moved_nodes[0].kind == "moved"
+        assert report.moved_nodes[0].file_path == "app/b.py"
+        assert "app/a.py \u2192 app/b.py" in report.moved_nodes[0].detail
+
+    @patch(_HISTORY_STORE)
+    def test_diff_snapshots_affected_files_collected(self, mock_hs_cls):
+        """affected_files should include all file paths from added, removed, and moved nodes."""
+        mock_hs = MagicMock()
+        mock_hs_cls.return_value = mock_hs
+
+        snap_base = MagicMock()
+        snap_base.ref = "v1"
+        snap_head = MagicMock()
+        snap_head.ref = "v2"
+        mock_hs.list_snapshots.return_value = [snap_base, snap_head]
+
+        mock_hs.diff_snapshots.return_value = {
+            "added": [
+                {"name": "fn_a", "file_path": "app/new.py", "label": "Function", "line_start": 1},
+            ],
+            "removed": [
+                {"name": "fn_b", "file_path": "app/old.py", "label": "Function", "line_start": 1},
+            ],
+            "moved": [
+                {"name": "fn_c", "from": "lib/src.py", "to": "lib/dst.py"},
+            ],
+        }
+
+        store = _mock_store()
+        with patch(_IMPACT_ANALYZER) as mock_ia_cls:
+            mock_impact = MagicMock()
+            mock_br = MagicMock()
+            mock_br.affected_nodes = []
+            mock_br.affected_knowledge = []
+            mock_impact.blast_radius.return_value = mock_br
+            mock_ia_cls.return_value = mock_impact
+
+            analyzer = DiffGraphAnalyzer(store, repo_path="/tmp/repo")
+            report = analyzer.diff_snapshots("v1", "v2")
+
+        assert "app/new.py" in report.affected_files
+        assert "app/old.py" in report.affected_files
+        assert "lib/src.py" in report.affected_files
+        assert "lib/dst.py" in report.affected_files
+
+    @patch(_IMPACT_ANALYZER)
+    @patch("subprocess.run")
+    @patch(_HISTORY_STORE)
+    def test_diff_snapshots_fallback_when_missing(self, mock_hs_cls, mock_run, mock_ia):
+        """When a snapshot is missing, falls back to diff_refs heuristic."""
+        mock_hs = MagicMock()
+        mock_hs_cls.return_value = mock_hs
+
+        # Only v1 is snapshotted — v2 is missing
+        snap = MagicMock()
+        snap.ref = "v1"
+        mock_hs.list_snapshots.return_value = [snap]
+
+        mock_run.return_value = _subprocess_result(stdout="")
+        mock_ia.return_value = _empty_impact_analyzer().return_value
+
+        store = _mock_store()
+        analyzer = DiffGraphAnalyzer(store, repo_path="/tmp/repo")
+        report = analyzer.diff_snapshots("v1", "v2")
+
+        # Should have fallen back to diff_refs — report has base/head set by _build_report
+        assert report.base_ref == "v1"
+        assert report.head_ref == "v2"
+        # diff_snapshots on the HistoryStore should NOT have been called
+        mock_hs.diff_snapshots.assert_not_called()
+
+    @patch(_HISTORY_STORE)
+    def test_diff_snapshots_blast_radius_populated(self, mock_hs_cls):
+        """Blast radius summary should be populated from added symbols."""
+        mock_hs = MagicMock()
+        mock_hs_cls.return_value = mock_hs
+
+        snap_base = MagicMock()
+        snap_base.ref = "v1"
+        snap_head = MagicMock()
+        snap_head.ref = "v2"
+        mock_hs.list_snapshots.return_value = [snap_base, snap_head]
+
+        mock_hs.diff_snapshots.return_value = {
+            "added": [
+                {
+                    "name": "handle_payment",
+                    "file_path": "pay.py",
+                    "label": "Function",
+                    "line_start": 1,
+                },
+            ],
+            "removed": [],
+            "moved": [],
+        }
+
+        store = _mock_store()
+        with patch(_IMPACT_ANALYZER) as mock_ia_cls:
+            mock_impact = MagicMock()
+            mock_br = MagicMock()
+            mock_br.affected_nodes = [
+                {"type": "Function", "name": "caller", "file_path": "svc.py", "line_start": 5},
+            ]
+            mock_br.affected_knowledge = [
+                {"type": "Concept", "name": "Billing"},
+            ]
+            mock_impact.blast_radius.return_value = mock_br
+            mock_ia_cls.return_value = mock_impact
+
+            analyzer = DiffGraphAnalyzer(store, repo_path="/tmp/repo")
+            report = analyzer.diff_snapshots("v1", "v2")
+
+        assert report.blast_radius_summary["total_affected"] == 1
+        assert report.blast_radius_summary["affected_files"] == 1
+        assert report.blast_radius_summary["affected_knowledge"] == 1
+        assert len(report.affected_knowledge) == 1
+        assert report.affected_knowledge[0]["name"] == "Billing"

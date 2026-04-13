@@ -1490,28 +1490,40 @@ def drift(as_json: bool, fail_on_violations: bool, db: str):
 @click.option("--head", default="working tree", show_default=True, help="Head ref to compare.")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.option(
+    "--snapshot",
+    is_flag=True,
+    help="Use snapshot-backed graph diff (requires prior snapshots).",
+)
+@click.option(
     "--repo-path",
     default=".",
     type=click.Path(exists=True),
     help="Path to the git repo.",
 )
 @DB_OPTION
-def diff_graph(base: str, head: str, as_json: bool, repo_path: str, db: str):
+def diff_graph(base: str, head: str, as_json: bool, snapshot: bool, repo_path: str, db: str):
     """Structural diff — what graph changes did this branch introduce?
 
     Reports new/changed symbols, blast-radius summary, and affected knowledge
     nodes for all lines changed between BASE and HEAD.
+
+    With --snapshot, uses true graph diff between two previously-snapshotted refs
+    instead of the git-diff heuristic. Falls back to heuristic if snapshots are
+    missing.
 
     \b
     Examples:
       navegador diff-graph                        # working tree vs HEAD
       navegador diff-graph --base main            # current branch vs main
       navegador diff-graph --base main --head HEAD
+      navegador diff-graph --base v1.0 --head v2.0 --snapshot
     """
     from navegador.analysis.diffgraph import DiffGraphAnalyzer
 
     analyzer = DiffGraphAnalyzer(_get_store(db), repo_path)
-    if base == "HEAD" and head == "working tree":
+    if snapshot:
+        report = analyzer.diff_snapshots(base_ref=base, head_ref=head)
+    elif base == "HEAD" and head == "working tree":
         report = analyzer.diff_working_tree()
     else:
         report = analyzer.diff_refs(base=base, head=head)

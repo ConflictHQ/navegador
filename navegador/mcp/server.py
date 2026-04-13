@@ -279,7 +279,9 @@ def create_mcp_server(store_factory, read_only: bool = False):
                 description=(
                     "Structural diff between two git refs. Reports new/changed symbols, "
                     "blast-radius summary, and affected knowledge nodes for lines changed "
-                    "between base and head. Use for PR review context."
+                    "between base and head. Use for PR review context. "
+                    "Set snapshot_mode=true for a true graph diff between two previously "
+                    "snapshotted refs (falls back to heuristic if snapshots are missing)."
                 ),
                 inputSchema={
                     "type": "object",
@@ -303,6 +305,13 @@ def create_mcp_server(store_factory, read_only: bool = False):
                             "type": "string",
                             "enum": ["markdown", "json"],
                             "default": "markdown",
+                        },
+                        "snapshot_mode": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": (
+                                "Use snapshot-backed graph diff instead of git-diff heuristic."
+                            ),
                         },
                     },
                 },
@@ -632,9 +641,12 @@ def create_mcp_server(store_factory, read_only: bool = False):
             head = arguments.get("head", "working tree")
             repo_path = arguments.get("repo_path", ".")
             fmt = arguments.get("format", "markdown")
+            snapshot_mode = arguments.get("snapshot_mode", False)
 
             analyzer = DiffGraphAnalyzer(loader.store, repo_path)
-            if base == "HEAD" and head == "working tree":
+            if snapshot_mode:
+                report = analyzer.diff_snapshots(base_ref=base, head_ref=head)
+            elif base == "HEAD" and head == "working tree":
                 report = analyzer.diff_working_tree()
             else:
                 report = analyzer.diff_refs(base=base, head=head)
