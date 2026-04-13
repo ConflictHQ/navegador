@@ -93,6 +93,102 @@ PLANNING_TYPE_MAP: dict[str, NodeLabel] = {
 }
 
 
+def _manifest_input_type(manifest_path: Path) -> str:
+    """
+    Distinguish a single-run ``manifest.json`` from a batch ``manifest.json``.
+
+    PlanOpticon now uses ``manifest.json`` for both single-video and batch
+    outputs, so filename-based detection is not enough.
+    """
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return "manifest"
+
+    if not isinstance(data, dict):
+        return "manifest"
+
+    if (
+        isinstance(data.get("videos"), list)
+        or "merged_knowledge_graph_json" in data
+        or "merged_knowledge_graph_db" in data
+        or "total_videos" in data
+        or "completed_videos" in data
+        or "failed_videos" in data
+    ):
+        return "batch"
+
+    return "manifest"
+
+
+def resolve_planopticon_input(path: str | Path, input_type: str = "auto") -> tuple[str, Path]:
+    """
+    Resolve a PlanOpticon input path to a concrete file path and normalized type.
+
+    Supports both the current batch ``manifest.json`` shape and the older
+    ``batch_manifest.json`` filename.
+    """
+    p = Path(path)
+
+    if p.is_dir():
+        if input_type == "auto":
+            manifest = p / "manifest.json"
+            if manifest.exists():
+                return _manifest_input_type(manifest), manifest
+
+            candidates = [
+                ("batch", p / "batch_manifest.json"),
+                ("interchange", p / "exchange.json"),
+                ("interchange", p / "interchange.json"),
+                ("kg", p / "results" / "knowledge_graph.json"),
+                ("kg", p / "knowledge_graph.json"),
+            ]
+            for detected_type, candidate in candidates:
+                if candidate.exists():
+                    return detected_type, candidate
+            raise FileNotFoundError(
+                f"No recognised planopticon file found in {p}. "
+                "Expected manifest.json, exchange.json, interchange.json, "
+                "knowledge_graph.json, or legacy batch_manifest.json."
+            )
+
+        if input_type == "manifest":
+            candidate = p / "manifest.json"
+            if candidate.exists():
+                return input_type, candidate
+        elif input_type == "batch":
+            current = p / "manifest.json"
+            if current.exists():
+                return input_type, current
+            legacy = p / "batch_manifest.json"
+            if legacy.exists():
+                return input_type, legacy
+        elif input_type == "interchange":
+            for candidate in (p / "exchange.json", p / "interchange.json"):
+                if candidate.exists():
+                    return input_type, candidate
+        elif input_type == "kg":
+            for candidate in (p / "results" / "knowledge_graph.json", p / "knowledge_graph.json"):
+                if candidate.exists():
+                    return input_type, candidate
+
+        raise FileNotFoundError(
+            f"Could not resolve planopticon {input_type} input from directory {p}"
+        )
+
+    if input_type != "auto":
+        return input_type, p
+
+    name = p.name.lower()
+    if name == "manifest.json":
+        return _manifest_input_type(p), p
+    if "interchange" in name or "exchange" in name:
+        return "interchange", p
+    if "batch" in name:
+        return "batch", p
+    return "kg", p
+
+
 class PlanopticonIngester:
     """
     Reads planopticon output and writes it into a GraphStore.

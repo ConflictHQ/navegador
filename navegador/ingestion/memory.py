@@ -1,5 +1,5 @@
 """
-MemoryIngester — ingests CONFLICT-format memory/ directories into the graph.
+MemoryIngester — ingests structured memory/ directories into the graph.
 
 Supports two file formats:
 
@@ -29,7 +29,7 @@ Type mapping:
     user      → Person      (user profile, role, responsibilities)
 
 All memory nodes carry two extra properties:
-    memory_type  — the original CONFLICT type string
+    memory_type  — the original memory type string
     repo         — the repository name this memory was ingested from
 """
 
@@ -43,7 +43,7 @@ from navegador.graph.store import GraphStore
 
 logger = logging.getLogger(__name__)
 
-# CONFLICT type → NodeLabel
+# memory type → NodeLabel
 _TYPE_MAP: dict[str, NodeLabel] = {
     "feedback": NodeLabel.Rule,
     "project": NodeLabel.Decision,
@@ -106,7 +106,7 @@ def _first_line(text: str) -> str:
 
 class MemoryIngester:
     """
-    Ingests CONFLICT-format memory/ directories into the navegador graph.
+    Ingests structured memory/ directories into the navegador graph.
 
     Usage:
         ingester = MemoryIngester(store)

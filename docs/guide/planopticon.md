@@ -2,7 +2,7 @@
 
 ## What is Planopticon
 
-Planopticon is a video and meeting knowledge extraction tool. It ingests recordings, transcripts, and meeting notes and produces structured knowledge graphs: entities (people, concepts, decisions), relationships, action items, and diagrams extracted from the meeting content.
+Planopticon is a video, meeting, and document knowledge extraction tool. It ingests recordings, transcripts, notes, and supporting documents and produces structured knowledge artifacts: knowledge graphs, manifests, action items, key points, and exchange payloads.
 
 Navegador treats Planopticon output as a first-class knowledge source. Where `navegador add concept` requires manual entry, Planopticon extracts concepts, rules, and decisions from meeting recordings automatically and navegador stores them alongside your code graph.
 
@@ -15,7 +15,7 @@ Video / transcript
        ↓
   Planopticon
        ↓  produces
-  knowledge_graph.json / interchange.json / manifest.json
+  manifest.json / results/knowledge_graph.json / exchange.json
        ↓
   navegador planopticon ingest
        ↓  creates
@@ -33,61 +33,69 @@ Planopticon produces several output formats. Navegador accepts all of them and a
 
 ### manifest.json
 
-Top-level manifest for a multi-file Planopticon output package. Points to the knowledge graph, interchange, and supporting files.
+Single-run PlanOpticon manifest. This is the primary entry point for a completed analysis directory.
 
 ```json
 {
   "version": "1.0",
-  "source": "zoom-meeting-2026-03-15",
-  "knowledge_graph": "knowledge_graph.json",
-  "interchange": "interchange.json",
-  "diagrams": ["arch-diagram.png"]
-}
-```
-
-### knowledge_graph.json
-
-Planopticon's native graph format. Contains typed entities and relationships:
-
-```json
-{
-  "entities": [
-    { "id": "e1", "type": "Decision", "name": "UseRedisForSessions", "description": "...", "rationale": "..." },
-    { "id": "e2", "type": "Person", "name": "Alice Chen", "role": "Lead Engineer" },
-    { "id": "e3", "type": "Concept", "name": "SessionAffinity", "description": "..." }
-  ],
-  "relationships": [
-    { "from": "e2", "to": "e1", "type": "DECIDED_BY" },
-    { "from": "e1", "to": "e3", "type": "RELATED_TO" }
-  ]
-}
-```
-
-### interchange.json
-
-A normalized interchange format, flatter than the native graph. Used when exporting from Planopticon for consumption by downstream tools.
-
-```json
-{
-  "concepts": [...],
-  "rules": [...],
-  "decisions": [...],
-  "people": [...],
+  "video": { "title": "Sprint Planning" },
+  "knowledge_graph_json": "results/knowledge_graph.json",
+  "key_points_json": "results/key_points.json",
+  "action_items_json": "results/action_items.json",
+  "key_points": [...],
   "action_items": [...],
   "diagrams": [...]
 }
 ```
 
-### Batch manifest
+### knowledge_graph.json
 
-A JSON file listing multiple Planopticon output directories or archive paths for bulk ingestion:
+PlanOpticon's native graph export. Contains `nodes`, `relationships`, and optional `sources`:
 
 ```json
 {
-  "batch": [
-    { "path": "./meetings/2026-03-15/", "source": "arch-review" },
-    { "path": "./meetings/2026-02-20/", "source": "sprint-planning" }
+  "nodes": [
+    { "name": "Redis", "type": "technology", "descriptions": ["Session storage"] },
+    { "name": "Alice Chen", "type": "person", "descriptions": ["Lead engineer"] }
+  ],
+  "relationships": [
+    { "source": "Redis", "target": "Session Store", "type": "depends_on" }
+  ],
+  "sources": [
+    { "source_id": "meeting-1", "source_type": "video", "title": "Sprint Planning" }
   ]
+}
+```
+
+### exchange.json / interchange.json
+
+A PlanOpticonExchange payload used for interchange with downstream tools. `navegador` still uses the `interchange` type name for this format.
+
+```json
+{
+  "version": "1.0",
+  "project": { "name": "Sprint Reviews", "tags": ["backend", "payments"] },
+  "entities": [...],
+  "relationships": [...],
+  "artifacts": [...],
+  "sources": [...]
+}
+```
+
+### Batch manifest
+
+Current batch outputs also use `manifest.json` at the batch root. Older corpora may still contain `batch_manifest.json`, which `navegador` accepts as a legacy alias.
+
+```json
+{
+  "version": "1.0",
+  "title": "Sprint Reviews",
+  "videos": [
+    { "video_name": "meeting-01", "manifest_path": "videos/meeting-01/manifest.json", "status": "completed" }
+  ],
+  "total_videos": 2,
+  "completed_videos": 2,
+  "merged_knowledge_graph_json": "knowledge_graph.json"
 }
 ```
 
@@ -120,10 +128,10 @@ navegador planopticon ingest ./meeting-output/ --type auto
 ### Explicit format
 
 ```bash
-navegador planopticon ingest ./meeting-output/knowledge_graph.json --type kg
-navegador planopticon ingest ./meeting-output/interchange.json --type interchange
-navegador planopticon ingest ./manifest.json --type manifest
-navegador planopticon ingest ./batch.json --type batch
+navegador planopticon ingest ./meeting-output/results/knowledge_graph.json --type kg
+navegador planopticon ingest ./exchange.json --type interchange
+navegador planopticon ingest ./meeting-output/manifest.json --type manifest
+navegador planopticon ingest ./batch-output/manifest.json --type batch
 ```
 
 ### Label the source
@@ -149,27 +157,26 @@ Returns a summary of nodes and edges created.
 ## Python API
 
 ```python
-from navegador.ingest import PlanopticonIngester
 from navegador.graph import GraphStore
+from navegador.ingestion import PlanopticonIngester
 
 store = GraphStore.sqlite(".navegador/navegador.db")
-ingester = PlanopticonIngester(store)
+ingester = PlanopticonIngester(store, source_tag="arch-review")
 
-# auto-detect format
-result = ingester.ingest("./meeting-output/", input_type="auto", source="arch-review")
+# ingest a completed analysis run
+stats = ingester.ingest_manifest("./meeting-output/manifest.json")
 
-print(f"Created {result.nodes_created} nodes, {result.edges_created} edges")
+print(f"Created {stats['nodes']} nodes, {stats['edges']} edges")
 
-# ingest a specific interchange file
-result = ingester.ingest_interchange("./interchange.json", source="sprint-planning")
+# ingest an exchange/interchange file
+stats = ingester.ingest_interchange("./exchange.json")
 ```
 
 ### PlanopticonIngester methods
 
 | Method | Description |
 |---|---|
-| `ingest(path, input_type, source)` | Auto or explicit ingest from path |
-| `ingest_manifest(path, source)` | Ingest a manifest.json package |
-| `ingest_kg(path, source)` | Ingest a knowledge_graph.json file |
-| `ingest_interchange(path, source)` | Ingest an interchange.json file |
-| `ingest_batch(path, source)` | Ingest a batch manifest |
+| `ingest_manifest(path)` | Ingest a manifest.json package |
+| `ingest_kg(path)` | Ingest a knowledge_graph.json file |
+| `ingest_interchange(path)` | Ingest an exchange/interchange JSON file |
+| `ingest_batch(path)` | Ingest a batch manifest (`manifest.json` or legacy `batch_manifest.json`) |

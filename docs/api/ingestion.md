@@ -1,10 +1,10 @@
 # Ingestion API
 
-All ingesters accept a `GraphStore` instance and return an `IngestionResult` dataclass.
+Core ingesters accept a `GraphStore` instance. The repo ingester uses the `IngestionResult` dataclass shown below; newer specialized ingesters may return plain summary dictionaries instead.
 
 ```python
 from navegador.graph import GraphStore
-from navegador.ingest import RepoIngester, KnowledgeIngester, WikiIngester, PlanopticonIngester
+from navegador.ingestion import RepoIngester, KnowledgeIngester, WikiIngester, PlanopticonIngester
 ```
 
 ---
@@ -265,46 +265,30 @@ Ingests Planopticon knowledge graph output into the knowledge layer.
 
 ```python
 class PlanopticonIngester:
-    def __init__(self, store: GraphStore) -> None: ...
-
-    def ingest(
-        self,
-        path: str | Path,
-        *,
-        input_type: str = "auto",
-        source: str = "",
-    ) -> IngestionResult: ...
+    def __init__(self, store: GraphStore, source_tag: str = "") -> None: ...
 
     def ingest_manifest(
-        self,
-        path: str | Path,
-        *,
-        source: str = "",
-    ) -> IngestionResult: ...
+        self, path: str | Path
+    ) -> dict[str, int]: ...
 
     def ingest_kg(
-        self,
-        path: str | Path,
-        *,
-        source: str = "",
-    ) -> IngestionResult: ...
+        self, path: str | Path
+    ) -> dict[str, int]: ...
 
     def ingest_interchange(
-        self,
-        path: str | Path,
-        *,
-        source: str = "",
-    ) -> IngestionResult: ...
+        self, path: str | Path
+    ) -> dict[str, int]: ...
 
     def ingest_batch(
-        self,
-        path: str | Path,
-        *,
-        source: str = "",
-    ) -> IngestionResult: ...
+        self, path: str | Path
+    ) -> dict[str, int]: ...
 ```
 
-`input_type` values: `"auto"`, `"manifest"`, `"kg"`, `"interchange"`, `"batch"`.
+Typical return value:
+
+```python
+{"nodes": 42, "edges": 19}
+```
 
 See [Planopticon guide](../guide/planopticon.md) for format details and entity mapping.
 
