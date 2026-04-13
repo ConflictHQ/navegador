@@ -287,9 +287,12 @@ class KnowledgeIngester:
 
         mem_label = NodeLabel(rows[0][0])
         code_key = {"name": code_name, "file_path": file_path} if file_path else {"name": code_name}
+        # Use (name, repo) key for the memory node when repo is known, to match how
+        # MemoryIngester stores it (MERGE on name+repo).
+        mem_key = {"name": memory_name, "repo": repo} if repo else {"name": memory_name}
         self.store.create_edge(
             mem_label,
-            {"name": memory_name},
+            mem_key,
             EdgeType.GOVERNS,
             code_label,
             code_key,
