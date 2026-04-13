@@ -43,12 +43,13 @@ class TestInitCommand:
             assert result.exit_code == 0
             assert "redis://localhost:6379" in result.output
 
-    def test_shows_sqlite_hint_by_default(self):
+    def test_shows_graph_mode_hint_by_default(self):
         runner = CliRunner()
         with runner.isolated_filesystem():
             result = runner.invoke(main, ["init", "."])
             assert result.exit_code == 0
-            assert "Local SQLite" in result.output
+            assert "Graph mode" in result.output
+            assert "gitignored" in result.output
 
     def test_llm_provider_shown(self):
         runner = CliRunner()

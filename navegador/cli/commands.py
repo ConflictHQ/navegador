@@ -74,15 +74,39 @@ def main():
 )
 @click.option("--llm-model", default="", help="LLM model name.")
 @click.option("--cluster", is_flag=True, help="Enable cluster/swarm mode.")
-def init(path: str, redis_url: str, llm_provider: str, llm_model: str, cluster: bool):
+@click.option(
+    "--commit-graph",
+    is_flag=True,
+    default=False,
+    help=(
+        "Commit the graph DB to git. Skips .gitignore entry and writes "
+        ".navegador/.gitkeep so the dir is tracked. "
+        "Default: gitignore (treat graph as a build artifact)."
+    ),
+)
+def init(
+    path: str,
+    redis_url: str,
+    llm_provider: str,
+    llm_model: str,
+    cluster: bool,
+    commit_graph: bool,
+):
     """Initialise navegador in a project directory.
 
-    Creates .navegador/ (gitignored), writes config.toml with storage,
-    LLM, and cluster settings.
+    Creates .navegador/, writes config.toml with storage, LLM, and cluster
+    settings. By default the directory is gitignored (graph is a build
+    artifact — rebuild with ``navegador ingest .``).
+
+    Pass --commit-graph to track the DB in git instead (contributors get a
+    ready-made graph on clone, at the cost of repo size growth).
 
     \b
     Local SQLite (default — zero infra):
       navegador init
+
+    Commit graph to git (clone-and-go experience):
+      navegador init --commit-graph
 
     Centralized Redis (production / multi-agent):
       navegador init --redis redis://host:6379
@@ -100,18 +124,27 @@ def init(path: str, redis_url: str, llm_provider: str, llm_model: str, cluster: 
         llm_provider=llm_provider,
         llm_model=llm_model,
         cluster=cluster,
+        commit_graph=commit_graph,
     )
     console.print(f"[green]Initialised navegador[/green] → {nav_dir}")
+
+    if commit_graph:
+        console.print(
+            "\n[bold]Graph mode:[/bold] committed to git. "
+            "Run [bold]navegador ingest .[/bold] then commit [cyan].navegador/graph.db[/cyan]. "
+            "Keep it updated or contributors will see a stale graph."
+        )
+    else:
+        console.print(
+            "\n[bold]Graph mode:[/bold] gitignored (build artifact). "
+            "Run [bold]navegador ingest .[/bold] to build. "
+            "Use [cyan]--commit-graph[/cyan] to track in git instead."
+        )
 
     if redis_url:
         console.print(
             f"\n[bold]Redis mode:[/bold] set [cyan]NAVEGADOR_REDIS_URL={redis_url}[/cyan] "
             "in your environment or CI secrets."
-        )
-    else:
-        console.print(
-            "\n[bold]Local SQLite mode[/bold] (default). "
-            "To use a shared Redis graph set [cyan]NAVEGADOR_REDIS_URL[/cyan]."
         )
 
     if llm_provider:
@@ -486,13 +519,20 @@ def add_domain(name: str, desc: str, db: str):
 )
 @click.option("--concept", default="", help="Link to this concept.")
 @click.option("--rule", default="", help="Link to this rule.")
+@click.option("--memory", default="", help="Link to a memory node by name (GOVERNS edge).")
 @DB_OPTION
-def annotate(code_name: str, code_label: str, concept: str, rule: str, db: str):
-    """Link a code node to a concept or rule in the knowledge graph."""
+def annotate(code_name: str, code_label: str, concept: str, rule: str, memory: str, db: str):
+    """Link a code node to a concept, rule, or memory node."""
     from navegador.ingestion import KnowledgeIngester
 
     k = KnowledgeIngester(_get_store(db))
-    k.annotate_code(code_name, code_label, concept=concept or None, rule=rule or None)
+    k.annotate_code(
+        code_name,
+        code_label,
+        concept=concept or None,
+        rule=rule or None,
+        memory=memory or None,
+    )
     console.print(f"[green]Annotated:[/green] {code_name}")
 
 

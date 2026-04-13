@@ -62,14 +62,23 @@ def init_project(
     llm_provider: str = "",
     llm_model: str = "",
     cluster: bool = False,
+    commit_graph: bool = False,
 ) -> Path:
     """
     Initialise a .navegador/ directory in the project.
 
     Creates:
-      .navegador/              — DB and config directory (should be gitignored)
+      .navegador/              — DB and config directory
       .navegador/.env.example  — example env file showing config options
       .navegador/config.toml   — project-specific configuration
+
+    Args:
+        commit_graph: When True, the graph DB is committed to git — .navegador/
+                      is NOT added to .gitignore and a .gitkeep is written so
+                      the directory is tracked before the first ingest.
+                      When False (default), .navegador/ is gitignored and the
+                      graph is treated as a build artifact (rebuild with
+                      ``navegador ingest .``).
     """
     project_dir = Path(project_dir).resolve()
     nav_dir = project_dir / ".navegador"
@@ -112,13 +121,20 @@ def init_project(
     ]
     config_path.write_text("\n".join(config_lines) + "\n", encoding="utf-8")
 
-    gitignore = project_dir / ".gitignore"
-    if gitignore.exists():
-        content = gitignore.read_text(encoding="utf-8")
-        if ".navegador/" not in content:
-            with gitignore.open("a", encoding="utf-8") as f:
-                f.write("\n# Navegador graph DB\n.navegador/\n")
+    if commit_graph:
+        # Track the directory in git but leave graph.db to be created by ingest
+        gitkeep = nav_dir / ".gitkeep"
+        if not gitkeep.exists():
+            gitkeep.write_text("", encoding="utf-8")
     else:
-        gitignore.write_text("# Navegador graph DB\n.navegador/\n", encoding="utf-8")
+        # Gitignore the whole directory — graph is a build artifact
+        gitignore = project_dir / ".gitignore"
+        if gitignore.exists():
+            content = gitignore.read_text(encoding="utf-8")
+            if ".navegador/" not in content:
+                with gitignore.open("a", encoding="utf-8") as f:
+                    f.write("\n# Navegador graph DB\n.navegador/\n")
+        else:
+            gitignore.write_text("# Navegador graph DB\n.navegador/\n", encoding="utf-8")
 
     return nav_dir

@@ -222,9 +222,15 @@ class KnowledgeIngester:
         code_label: str,
         concept: str | None = None,
         rule: str | None = None,
+        memory: str | None = None,
     ) -> None:
         """
-        Link a code node to a concept or rule via ANNOTATES.
+        Link a code node to a concept, rule, or memory node.
+
+        - concept/rule   → ANNOTATES edge (knowledge → code)
+        - memory         → GOVERNS edge from the memory node (Rule/Decision/WikiPage/Person)
+                           resolved by name. Falls back gracefully if node not found.
+
         code_label should be a string matching a NodeLabel value.
         """
         label = NodeLabel(code_label)
@@ -244,6 +250,37 @@ class KnowledgeIngester:
                 label,
                 {"name": code_name},
             )
+        if memory:
+            self._memory_governs(memory, label, code_name)
+
+    def _memory_governs(
+        self, memory_name: str, code_label: NodeLabel, code_name: str
+    ) -> None:
+        """
+        Create a GOVERNS edge from a memory node to a code symbol.
+
+        Searches across all node types that MemoryIngester can produce
+        (Rule, Decision, WikiPage, Person) for a node with memory_type set.
+        """
+        result = self.store.query(
+            "MATCH (n {name: $name}) WHERE n.memory_type IS NOT NULL "
+            "RETURN labels(n)[0] AS label LIMIT 1",
+            {"name": memory_name},
+        )
+        rows = result.result_set or []
+        if not rows:
+            logger.warning("Memory node not found: %r — skipping GOVERNS edge", memory_name)
+            return
+
+        mem_label = NodeLabel(rows[0][0])
+        self.store.create_edge(
+            mem_label,
+            {"name": memory_name},
+            EdgeType.GOVERNS,
+            code_label,
+            {"name": code_name},
+        )
+        logger.info("Memory GOVERNS: %s → %s %s", memory_name, code_label, code_name)
 
     def code_implements(self, code_name: str, code_label: str, concept_name: str) -> None:
         """Mark a function/class as implementing a concept."""
