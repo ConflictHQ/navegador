@@ -9,6 +9,7 @@ from navegador.context.loader import ContextBundle, ContextNode
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _node(name="foo", type_="Function", file_path="app.py"):
     return ContextNode(name=name, type=type_, file_path=file_path)
 
@@ -40,6 +41,7 @@ class _ServerFixture:
 
     def _default_loader(self):
         from navegador.context import ContextLoader
+
         loader = MagicMock(spec=ContextLoader)
         loader.store = self.store
         loader.load_file.return_value = _bundle("file_target")
@@ -59,12 +61,14 @@ class _ServerFixture:
             def decorator(fn):
                 list_holder["fn"] = fn
                 return fn
+
             return decorator
 
         def call_tool_decorator():
             def decorator(fn):
                 call_holder["fn"] = fn
                 return fn
+
             return decorator
 
         mock_server = MagicMock()
@@ -75,17 +79,24 @@ class _ServerFixture:
         mock_mcp_server.Server.return_value = mock_server
 
         mock_mcp_types = MagicMock()
-        mock_mcp_types.Tool = dict          # Tool(...) → dict so we can inspect fields
-        mock_mcp_types.TextContent = dict   # TextContent(type=..., text=...) → dict
+        mock_mcp_types.Tool = dict  # Tool(...) → dict so we can inspect fields
+        mock_mcp_types.TextContent = dict  # TextContent(type=..., text=...) → dict
 
-        with patch.dict("sys.modules", {
-            "mcp": MagicMock(),
-            "mcp.server": mock_mcp_server,
-            "mcp.types": mock_mcp_types,
-        }), patch("navegador.context.ContextLoader", return_value=self.loader):
+        with (
+            patch.dict(
+                "sys.modules",
+                {
+                    "mcp": MagicMock(),
+                    "mcp.server": mock_mcp_server,
+                    "mcp.types": mock_mcp_types,
+                },
+            ),
+            patch("navegador.context.ContextLoader", return_value=self.loader),
+        ):
             from importlib import reload
 
             import navegador.mcp.server as srv
+
             reload(srv)
             self.server = srv.create_mcp_server(lambda: self.store)
 
@@ -95,12 +106,14 @@ class _ServerFixture:
 
 # ── Import guard ──────────────────────────────────────────────────────────────
 
+
 class TestCreateMcpServerImport:
     def test_raises_import_error_if_mcp_not_installed(self):
         with patch.dict("sys.modules", {"mcp": None, "mcp.server": None, "mcp.types": None}):
             from importlib import reload
 
             import navegador.mcp.server as srv
+
             reload(srv)
             with pytest.raises(ImportError, match="mcp"):
                 srv.create_mcp_server(lambda: _mock_store())
@@ -108,14 +121,15 @@ class TestCreateMcpServerImport:
 
 # ── list_tools ────────────────────────────────────────────────────────────────
 
+
 class TestListTools:
     def setup_method(self):
         self.fx = _ServerFixture()
 
     @pytest.mark.asyncio
-    async def test_returns_twenty_tools(self):
+    async def test_returns_twenty_two_tools(self):
         tools = await self.fx.list_tools_fn()
-        assert len(tools) == 20
+        assert len(tools) == 22
 
     @pytest.mark.asyncio
     async def test_tool_names(self):
@@ -142,6 +156,8 @@ class TestListTools:
             "diff_graph",
             "symbol_history",
             "suggest_doc_links",
+            "review_diff",
+            "release_check",
         }
 
     @pytest.mark.asyncio
@@ -159,6 +175,7 @@ class TestListTools:
 
 
 # ── call_tool — ingest_repo ───────────────────────────────────────────────────
+
 
 class TestCallToolIngestRepo:
     def setup_method(self):
@@ -200,6 +217,7 @@ class TestCallToolIngestRepo:
 
 # ── call_tool — load_file_context ─────────────────────────────────────────────
 
+
 class TestCallToolLoadFileContext:
     def setup_method(self):
         self.fx = _ServerFixture()
@@ -227,6 +245,7 @@ class TestCallToolLoadFileContext:
 
 
 # ── call_tool — load_function_context ────────────────────────────────────────
+
 
 class TestCallToolLoadFunctionContext:
     def setup_method(self):
@@ -259,6 +278,7 @@ class TestCallToolLoadFunctionContext:
 
 # ── call_tool — load_class_context ───────────────────────────────────────────
 
+
 class TestCallToolLoadClassContext:
     def setup_method(self):
         self.fx = _ServerFixture()
@@ -288,6 +308,7 @@ class TestCallToolLoadClassContext:
 
 
 # ── call_tool — search_symbols ───────────────────────────────────────────────
+
 
 class TestCallToolSearchSymbols:
     def setup_method(self):
@@ -321,6 +342,7 @@ class TestCallToolSearchSymbols:
 
 # ── call_tool — query_graph ───────────────────────────────────────────────────
 
+
 class TestCallToolQueryGraph:
     def setup_method(self):
         self.fx = _ServerFixture()
@@ -346,6 +368,7 @@ class TestCallToolQueryGraph:
 
 # ── call_tool — graph_stats ───────────────────────────────────────────────────
 
+
 class TestCallToolGraphStats:
     def setup_method(self):
         self.fx = _ServerFixture()
@@ -363,6 +386,7 @@ class TestCallToolGraphStats:
 # ── call_tool — unknown tool ──────────────────────────────────────────────────
 
 # ── call_tool — get_rationale ────────────────────────────────────────────────
+
 
 class TestCallToolGetRationale:
     def setup_method(self):
@@ -385,6 +409,7 @@ class TestCallToolGetRationale:
 
 # ── call_tool — find_owners ──────────────────────────────────────────────────
 
+
 class TestCallToolFindOwners:
     def setup_method(self):
         self.fx = _ServerFixture()
@@ -404,13 +429,12 @@ class TestCallToolFindOwners:
 
     @pytest.mark.asyncio
     async def test_passes_file_path(self):
-        await self.fx.call_tool_fn(
-            "find_owners", {"name": "AuthService", "file_path": "auth.py"}
-        )
+        await self.fx.call_tool_fn("find_owners", {"name": "AuthService", "file_path": "auth.py"})
         self.fx.loader.find_owners.assert_called_once_with("AuthService", file_path="auth.py")
 
 
 # ── call_tool — search_knowledge ─────────────────────────────────────────────
+
 
 class TestCallToolSearchKnowledge:
     def setup_method(self):
@@ -441,6 +465,7 @@ class TestCallToolSearchKnowledge:
 
 
 # ── call_tool — unknown tool ──────────────────────────────────────────────────
+
 
 class TestCallToolUnknown:
     def setup_method(self):

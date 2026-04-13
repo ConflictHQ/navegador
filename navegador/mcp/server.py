@@ -238,8 +238,7 @@ def create_mcp_server(store_factory, read_only: bool = False):
                             "type": "string",
                             "default": "",
                             "description": (
-                                "Filter to a specific repo name "
-                                "(ignored when scope=workspace)."
+                                "Filter to a specific repo name (ignored when scope=workspace)."
                             ),
                         },
                         "limit": {"type": "integer", "default": 50},
@@ -468,6 +467,67 @@ def create_mcp_server(store_factory, read_only: bool = False):
                     "required": [],
                 },
             ),
+            Tool(
+                name="review_diff",
+                description=(
+                    "Generate rule-aware review comments for a diff. Ties changed "
+                    "symbols to governing rules, ADRs, and knowledge nodes with "
+                    "severity and confidence scores."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "base": {
+                            "type": "string",
+                            "default": "main",
+                            "description": "Base ref (branch, tag, SHA).",
+                        },
+                        "head": {
+                            "type": "string",
+                            "default": "HEAD",
+                            "description": "Head ref to compare.",
+                        },
+                        "repo_path": {
+                            "type": "string",
+                            "default": ".",
+                            "description": "Path to the git repo.",
+                        },
+                        "min_confidence": {
+                            "type": "number",
+                            "default": 0.5,
+                            "description": "Minimum confidence threshold.",
+                        },
+                        "format": {
+                            "type": "string",
+                            "enum": ["markdown", "json"],
+                            "default": "markdown",
+                        },
+                    },
+                    "required": [],
+                },
+            ),
+            Tool(
+                name="release_check",
+                description=(
+                    "Run release readiness checks for a git ref range. Summarizes "
+                    "changed symbols, missing tests, stale docs, required owner "
+                    "sign-offs, and cross-repo impact."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "base": {"type": "string", "default": "main"},
+                        "head": {"type": "string", "default": "HEAD"},
+                        "repo_path": {"type": "string", "default": "."},
+                        "format": {
+                            "type": "string",
+                            "enum": ["markdown", "json"],
+                            "default": "markdown",
+                        },
+                    },
+                    "required": [],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -685,9 +745,10 @@ def create_mcp_server(store_factory, read_only: bool = False):
             fmt = arguments.get("format", "markdown")
 
             builder = TaskPackBuilder(loader.store)
-            if "/" in target or any(target.endswith(ext) for ext in (
-                ".py", ".ts", ".tsx", ".js", ".go", ".rb", ".java", ".rs"
-            )):
+            if "/" in target or any(
+                target.endswith(ext)
+                for ext in (".py", ".ts", ".tsx", ".js", ".go", ".rb", ".java", ".rs")
+            ):
                 pack = builder.for_file(target, mode=mode)
             else:
                 pack = builder.for_symbol(target, file_path=file_path, depth=depth, mode=mode)
@@ -748,6 +809,47 @@ def create_mcp_server(store_factory, read_only: bool = False):
                             f"  _{c.rationale}_"
                         )
                     text = "\n".join(lines)
+            return [TextContent(type="text", text=text)]
+
+        elif name == "review_diff":
+            from navegador.analysis.diffgraph import DiffGraphAnalyzer
+            from navegador.analysis.review import ReviewGenerator
+
+            base = arguments.get("base", "main")
+            head = arguments.get("head", "HEAD")
+            repo_path = arguments.get("repo_path", ".")
+            min_confidence = float(arguments.get("min_confidence", 0.5))
+            fmt = arguments.get("format", "markdown")
+
+            analyzer = DiffGraphAnalyzer(loader.store, repo_path)
+            diff_report = analyzer.diff_refs(base=base, head=head)
+
+            changed_symbols = [
+                {"name": sc.symbol, "file_path": sc.file_path}
+                for sc in diff_report.new_symbols + diff_report.changed_symbols
+            ]
+
+            gen = ReviewGenerator(loader.store)
+            report = gen.review_diff(
+                changed_symbols=changed_symbols,
+                changed_files=list(diff_report.affected_files),
+            )
+            report.comments = [c for c in report.comments if c.confidence >= min_confidence]
+
+            text = report.to_json() if fmt == "json" else report.to_markdown()
+            return [TextContent(type="text", text=text)]
+
+        elif name == "release_check":
+            from navegador.analysis.release import ReleaseChecker
+
+            base = arguments.get("base", "main")
+            head = arguments.get("head", "HEAD")
+            repo_path = arguments.get("repo_path", ".")
+            fmt = arguments.get("format", "markdown")
+
+            checker = ReleaseChecker(loader.store, repo_path)
+            report = checker.check(base=base, head=head)
+            text = report.to_json() if fmt == "json" else report.to_markdown()
             return [TextContent(type="text", text=text)]
 
         return [TextContent(type="text", text=f"Unknown tool: {name}")]

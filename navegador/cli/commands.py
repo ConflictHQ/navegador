@@ -1534,6 +1534,67 @@ def diff_graph(base: str, head: str, as_json: bool, snapshot: bool, repo_path: s
         console.print(report.to_markdown())
 
 
+# ── ANALYSIS: rule-aware review comments ────────────────────────────────────
+
+
+@main.command("review")
+@click.option("--base", default="main", show_default=True, help="Base ref (branch, tag, SHA).")
+@click.option("--head", default="HEAD", show_default=True, help="Head ref to compare.")
+@click.option(
+    "--min-confidence",
+    default=0.5,
+    show_default=True,
+    type=float,
+    help="Minimum confidence threshold for comments.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@click.option(
+    "--repo-path",
+    default=".",
+    type=click.Path(exists=True),
+    help="Path to the git repo.",
+)
+@DB_OPTION
+def review(base: str, head: str, min_confidence: float, as_json: bool, repo_path: str, db: str):
+    """Generate rule-aware review comments for a diff.
+
+    Analyses structural changes between BASE and HEAD, then queries the
+    knowledge graph for governing rules, ADRs, and documentation links.
+    Each finding is tied back to the exact Rule, Decision, or WikiPage.
+
+    \b
+    Examples:
+      navegador review                              # main vs HEAD
+      navegador review --base develop --head HEAD
+      navegador review --min-confidence 0.7 --json
+    """
+    from navegador.analysis.diffgraph import DiffGraphAnalyzer
+    from navegador.analysis.review import ReviewGenerator
+
+    store = _get_store(db)
+    analyzer = DiffGraphAnalyzer(store, repo_path)
+    diff_report = analyzer.diff_refs(base=base, head=head)
+
+    changed_symbols = [
+        {"name": sc.symbol, "file_path": sc.file_path}
+        for sc in diff_report.new_symbols + diff_report.changed_symbols
+    ]
+
+    gen = ReviewGenerator(store)
+    report = gen.review_diff(
+        changed_symbols=changed_symbols,
+        changed_files=list(diff_report.affected_files),
+    )
+
+    # Filter by confidence
+    report.comments = [c for c in report.comments if c.confidence >= min_confidence]
+
+    if as_json:
+        click.echo(report.to_json())
+    else:
+        console.print(report.to_markdown())
+
+
 # ── ANALYSIS: cross-repo blast radius ─────────────────────────────────────────
 
 
@@ -2657,9 +2718,7 @@ def graph_at(ref: str, as_json: bool, db: str):
         if not symbols:
             console.print(f"[yellow]No snapshot found for ref[/yellow] [bold]{ref}[/bold]")
             return
-        console.print(
-            f"[bold]{len(symbols)}[/bold] symbols at [bold]{ref}[/bold]\n"
-        )
+        console.print(f"[bold]{len(symbols)}[/bold] symbols at [bold]{ref}[/bold]\n")
         for s in symbols:
             console.print(f"  [{s.label}] {s.name}  [dim]{s.file_path}[/dim]")
 
@@ -2848,6 +2907,4 @@ def doclink_accept_all(min_confidence: float, dry_run: bool, db: str):
         return
 
     count = linker.accept_all(candidates, min_confidence=min_confidence)
-    console.print(
-        f"[green]Accepted[/green] {count} doc links (min_confidence={min_confidence})"
-    )
+    console.print(f"[green]Accepted[/green] {count} doc links (min_confidence={min_confidence})")

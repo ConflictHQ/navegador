@@ -200,10 +200,10 @@ class TestDriftReport:
 
 class TestDriftCheckerStructure:
     def test_checks_run_equals_builtin_count(self):
-        """With no extras, checks_run should equal the number of built-in checks (3)."""
+        """With no extras, checks_run should equal the number of built-in checks (5)."""
         store = _mock_store()
         report = DriftChecker(store).check()
-        assert report.checks_run == 3
+        assert report.checks_run == 5
 
     def test_register_check_increments_checks_run(self):
         """Registering a custom check should increment checks_run by 1."""
@@ -211,7 +211,7 @@ class TestDriftCheckerStructure:
         checker = DriftChecker(store)
         checker.register_check(lambda: [])
         report = checker.check()
-        assert report.checks_run == 4
+        assert report.checks_run == 6
 
     def test_custom_check_error_appears_in_violations(self):
         store = _mock_store()
@@ -406,13 +406,17 @@ class TestDriftCheckerIntegration:
             MagicMock(result_set=[["own-rule", "CoreDomain"]]),
             # _check_required_owners (unowned symbols query)
             MagicMock(result_set=[["Function", "unowned_fn", "core.py"]]),
+            # _check_declarative_rules (no constraint-bearing Rule nodes)
+            MagicMock(result_set=[]),
+            # _check_declarative_decisions (no constraint-bearing Decision nodes)
+            MagicMock(result_set=[]),
         ]
         store.query.side_effect = results_iter
 
         report = DriftChecker(store).check()
 
-        # All three built-in checks produce warnings
-        assert report.checks_run == 3
+        # All five built-in checks ran; first three produce warnings
+        assert report.checks_run == 5
         assert len(report.warnings) == 3
         assert {w.check for w in report.warnings} == {
             "STALE_MEMORY_REF",
@@ -425,7 +429,227 @@ class TestDriftCheckerIntegration:
         store = _mock_store(result_set=[])
         report = DriftChecker(store).check()
 
-        assert report.checks_run == 3
+        assert report.checks_run == 5
         assert report.violations == []
         assert report.warnings == []
         assert report.has_violations is False
+
+
+# ── Declarative constraint evaluation ────────────────────────────────────────
+
+
+class TestDeclarativeRules:
+    def test_malformed_json_constraint_is_skipped(self):
+        """A Rule with invalid JSON in its constraint should be silently skipped."""
+        store = MagicMock()
+        store.query.side_effect = [
+            # _check_stale_memory_refs
+            MagicMock(result_set=[]),
+            # _check_undocumented_domain_symbols
+            MagicMock(result_set=[]),
+            # _check_required_owners
+            MagicMock(result_set=[]),
+            # _check_declarative_rules — one rule with broken JSON
+            MagicMock(result_set=[["bad-rule", "NOT{VALID JSON", "warning"]]),
+            # _check_declarative_decisions
+            MagicMock(result_set=[]),
+        ]
+        report = DriftChecker(store).check()
+        assert report.checks_run == 5
+        assert report.violations == []
+        assert report.warnings == []
+
+    def test_forbidden_dep_violation_when_matching_rows(self):
+        """FORBIDDEN_DEP constraint produces violations when the query finds matching deps."""
+        constraint = json.dumps({"type": "FORBIDDEN_DEP", "from": "billing", "to": "auth"})
+        store = MagicMock()
+        store.query.side_effect = [
+            # _check_stale_memory_refs
+            MagicMock(result_set=[]),
+            # _check_undocumented_domain_symbols
+            MagicMock(result_set=[]),
+            # _check_required_owners
+            MagicMock(result_set=[]),
+            # _check_declarative_rules — one Rule with a FORBIDDEN_DEP constraint
+            MagicMock(result_set=[["no-billing-to-auth", constraint, "error"]]),
+            # _eval_forbidden_dep query — one offending dep
+            MagicMock(result_set=[["charge_card", "billing/pay.py", "get_token"]]),
+            # _check_declarative_decisions
+            MagicMock(result_set=[]),
+        ]
+        report = DriftChecker(store).check()
+        forbidden = [v for v in report.violations if v.check == "FORBIDDEN_DEP"]
+        assert len(forbidden) == 1
+        assert forbidden[0].offending_node == "charge_card"
+        assert forbidden[0].offending_file == "billing/pay.py"
+        assert "billing" in forbidden[0].message
+        assert "auth" in forbidden[0].message
+        assert forbidden[0].knowledge_node == "no-billing-to-auth"
+        assert forbidden[0].knowledge_type == "Rule"
+
+    def test_forbidden_dep_no_violation_when_clean(self):
+        """FORBIDDEN_DEP constraint produces no violations when query returns empty."""
+        constraint = json.dumps({"type": "FORBIDDEN_DEP", "from": "billing", "to": "auth"})
+        store = MagicMock()
+        store.query.side_effect = [
+            MagicMock(result_set=[]),  # stale memory
+            MagicMock(result_set=[]),  # undocumented
+            MagicMock(result_set=[]),  # required owners
+            # declarative rules — constraint present, eval query returns nothing
+            MagicMock(result_set=[["no-billing-to-auth", constraint, "error"]]),
+            MagicMock(result_set=[]),  # forbidden dep query: no matches
+            MagicMock(result_set=[]),  # declarative decisions
+        ]
+        report = DriftChecker(store).check()
+        assert report.violations == []
+
+    def test_required_layer_violation_when_skipping_layer(self):
+        """REQUIRED_LAYER constraint flags calls that skip a layer."""
+        constraint = json.dumps(
+            {"type": "REQUIRED_LAYER", "order": ["Controller", "Service", "Repository"]}
+        )
+        store = MagicMock()
+        store.query.side_effect = [
+            MagicMock(result_set=[]),  # stale memory
+            MagicMock(result_set=[]),  # undocumented
+            MagicMock(result_set=[]),  # required owners
+            # declarative rules — one REQUIRED_LAYER rule
+            MagicMock(result_set=[["layer-order", constraint, "error"]]),
+            # required layer query — Controller calls Repository (skips Service)
+            MagicMock(
+                result_set=[
+                    ["Controller", "handle_request", "api/ctrl.py", "Repository", "find_user"],
+                ]
+            ),
+            MagicMock(result_set=[]),  # declarative decisions
+        ]
+        report = DriftChecker(store).check()
+        layer_violations = [v for v in report.violations if v.check == "REQUIRED_LAYER"]
+        assert len(layer_violations) == 1
+        assert layer_violations[0].offending_node == "handle_request"
+        assert "skips layers" in layer_violations[0].message
+        assert "Controller -> Service -> Repository" in layer_violations[0].message
+
+    def test_required_layer_no_violation_for_adjacent_calls(self):
+        """REQUIRED_LAYER constraint allows valid adjacent-layer calls."""
+        constraint = json.dumps(
+            {"type": "REQUIRED_LAYER", "order": ["Controller", "Service", "Repository"]}
+        )
+        store = MagicMock()
+        store.query.side_effect = [
+            MagicMock(result_set=[]),  # stale memory
+            MagicMock(result_set=[]),  # undocumented
+            MagicMock(result_set=[]),  # required owners
+            # declarative rules
+            MagicMock(result_set=[["layer-order", constraint, "error"]]),
+            # required layer query — Controller calls Service (adjacent, valid)
+            MagicMock(
+                result_set=[
+                    ["Controller", "handle_request", "api/ctrl.py", "Service", "process_order"],
+                ]
+            ),
+            MagicMock(result_set=[]),  # declarative decisions
+        ]
+        report = DriftChecker(store).check()
+        layer_violations = [v for v in report.violations if v.check == "REQUIRED_LAYER"]
+        assert len(layer_violations) == 0
+
+    def test_required_layer_backward_call_violation(self):
+        """REQUIRED_LAYER flags backward calls (e.g. Service -> Controller)."""
+        constraint = json.dumps(
+            {"type": "REQUIRED_LAYER", "order": ["Controller", "Service", "Repository"]}
+        )
+        store = MagicMock()
+        store.query.side_effect = [
+            MagicMock(result_set=[]),  # stale memory
+            MagicMock(result_set=[]),  # undocumented
+            MagicMock(result_set=[]),  # required owners
+            MagicMock(result_set=[["layer-order", constraint, "error"]]),
+            # Service calls Controller — backward
+            MagicMock(
+                result_set=[
+                    ["Service", "notify", "svc/notify.py", "Controller", "handle_webhook"],
+                ]
+            ),
+            MagicMock(result_set=[]),  # declarative decisions
+        ]
+        report = DriftChecker(store).check()
+        layer_violations = [v for v in report.violations if v.check == "REQUIRED_LAYER"]
+        assert len(layer_violations) == 1
+        assert "backward" in layer_violations[0].message
+
+    def test_max_outgoing_calls_violation_when_exceeds(self):
+        """MAX_OUTGOING_CALLS constraint flags nodes exceeding the call limit."""
+        constraint = json.dumps(
+            {"type": "MAX_OUTGOING_CALLS", "label": "Function", "domain": "auth", "max": 5}
+        )
+        store = MagicMock()
+        store.query.side_effect = [
+            MagicMock(result_set=[]),  # stale memory
+            MagicMock(result_set=[]),  # undocumented
+            MagicMock(result_set=[]),  # required owners
+            MagicMock(result_set=[["max-calls-rule", constraint, "warning"]]),
+            # max calls query — one function with 12 outgoing calls
+            MagicMock(result_set=[["do_everything", "auth/god.py", 12]]),
+            MagicMock(result_set=[]),  # declarative decisions
+        ]
+        report = DriftChecker(store).check()
+        max_violations = [w for w in report.warnings if w.check == "MAX_OUTGOING_CALLS"]
+        assert len(max_violations) == 1
+        assert max_violations[0].offending_node == "do_everything"
+        assert max_violations[0].offending_file == "auth/god.py"
+        assert "12" in max_violations[0].message
+        assert "max 5" in max_violations[0].message
+
+    def test_max_outgoing_calls_no_violation_within_limit(self):
+        """MAX_OUTGOING_CALLS produces no violation when counts are within the limit."""
+        constraint = json.dumps(
+            {"type": "MAX_OUTGOING_CALLS", "label": "Function", "domain": "auth", "max": 10}
+        )
+        store = MagicMock()
+        store.query.side_effect = [
+            MagicMock(result_set=[]),  # stale memory
+            MagicMock(result_set=[]),  # undocumented
+            MagicMock(result_set=[]),  # required owners
+            MagicMock(result_set=[["max-calls-rule", constraint, "warning"]]),
+            # max calls query returns nothing (all within limit)
+            MagicMock(result_set=[]),
+            MagicMock(result_set=[]),  # declarative decisions
+        ]
+        report = DriftChecker(store).check()
+        max_violations = [w for w in report.warnings if w.check == "MAX_OUTGOING_CALLS"]
+        assert len(max_violations) == 0
+
+    def test_deprecated_decision_is_skipped(self):
+        """Decision nodes with status='deprecated' should not be evaluated."""
+        # The Cypher query filters out deprecated decisions, so the query
+        # result set should be empty for deprecated nodes.
+        store = MagicMock()
+        store.query.side_effect = [
+            MagicMock(result_set=[]),  # stale memory
+            MagicMock(result_set=[]),  # undocumented
+            MagicMock(result_set=[]),  # required owners
+            MagicMock(result_set=[]),  # declarative rules
+            # declarative decisions — query itself filters deprecated, so empty
+            MagicMock(result_set=[]),
+        ]
+        report = DriftChecker(store).check()
+        assert report.checks_run == 5
+        assert report.violations == []
+        assert report.warnings == []
+
+    def test_unknown_constraint_type_is_skipped(self):
+        """Constraint with an unrecognized type should be silently skipped."""
+        constraint = json.dumps({"type": "IMAGINARY_CHECK", "foo": "bar"})
+        store = MagicMock()
+        store.query.side_effect = [
+            MagicMock(result_set=[]),  # stale memory
+            MagicMock(result_set=[]),  # undocumented
+            MagicMock(result_set=[]),  # required owners
+            # declarative rules — one rule with unknown constraint type
+            MagicMock(result_set=[["mystery-rule", constraint, "error"]]),
+            MagicMock(result_set=[]),  # declarative decisions
+        ]
+        report = DriftChecker(store).check()
+        assert report.violations == []
+        assert report.warnings == []

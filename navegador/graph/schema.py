@@ -112,6 +112,7 @@ NODE_PROPS = {
         "severity",  # info|warning|critical
         "rationale",
         "examples",
+        "constraint",  # JSON-encoded declarative constraint (FORBIDDEN_DEP, REQUIRED_LAYER, …)
     ],
     NodeLabel.Decision: [
         "name",
@@ -121,6 +122,7 @@ NODE_PROPS = {
         "rationale",
         "alternatives",
         "date",
+        "constraint",  # JSON-encoded declarative constraint evaluated by drift checker
     ],
     NodeLabel.WikiPage: [
         "name",
