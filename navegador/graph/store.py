@@ -73,6 +73,18 @@ class GraphStore:
         """Execute a raw Cypher query and return the result."""
         return self._graph.query(cypher, params or {})
 
+    def close(self) -> None:
+        """Close the underlying client if it exposes a close method."""
+        close = getattr(self._client, "close", None)
+        if callable(close):
+            close()
+
+    def __enter__(self) -> "GraphStore":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
     # Labels that are uniquely identified by their path rather than (name, file_path).
     # These nodes represent filesystem artifacts where two files CAN share a basename
     # but never share a path.

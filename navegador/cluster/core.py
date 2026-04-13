@@ -117,57 +117,63 @@ class ClusterManager:
         from navegador.graph.store import GraphStore
 
         store = GraphStore.sqlite(self.local_db_path)
-        nodes_result = store.query("MATCH (n) RETURN n")
-        edges_result = store.query("MATCH (a)-[r]->(b) RETURN a, type(r), r, b")
+        try:
+            nodes_result = store.query("MATCH (n) RETURN n")
+            edges_result = store.query("MATCH (a)-[r]->(b) RETURN a, type(r), r, b")
 
-        nodes = []
-        if nodes_result.result_set:
-            for row in nodes_result.result_set:
-                node = row[0]
-                nodes.append({"labels": list(node.labels), "properties": dict(node.properties)})
+            nodes = []
+            if nodes_result.result_set:
+                for row in nodes_result.result_set:
+                    node = row[0]
+                    nodes.append({"labels": list(node.labels), "properties": dict(node.properties)})
 
-        edges = []
-        if edges_result.result_set:
-            for row in edges_result.result_set:
-                src, rel_type, rel, dst = row
-                edges.append(
-                    {
-                        "src_labels": list(src.labels),
-                        "src_props": dict(src.properties),
-                        "rel_type": rel_type,
-                        "rel_props": dict(rel.properties) if rel.properties else {},
-                        "dst_labels": list(dst.labels),
-                        "dst_props": dict(dst.properties),
-                    }
-                )
+            edges = []
+            if edges_result.result_set:
+                for row in edges_result.result_set:
+                    src, rel_type, rel, dst = row
+                    edges.append(
+                        {
+                            "src_labels": list(src.labels),
+                            "src_props": dict(src.properties),
+                            "rel_type": rel_type,
+                            "rel_props": dict(rel.properties) if rel.properties else {},
+                            "dst_labels": list(dst.labels),
+                            "dst_props": dict(dst.properties),
+                        }
+                    )
 
-        return {"nodes": nodes, "edges": edges}
+            return {"nodes": nodes, "edges": edges}
+        finally:
+            store.close()
 
     def _import_to_local_graph(self, data: dict[str, Any]) -> None:
         """Write snapshot data into the local SQLite graph."""
         from navegador.graph.store import GraphStore
 
         store = GraphStore.sqlite(self.local_db_path)
-        store.clear()
+        try:
+            store.clear()
 
-        for node in data.get("nodes", []):
-            label = node["labels"][0] if node["labels"] else "Node"
-            props = node["properties"]
-            store.create_node(label, props)
+            for node in data.get("nodes", []):
+                label = node["labels"][0] if node["labels"] else "Node"
+                props = node["properties"]
+                store.create_node(label, props)
 
-        for edge in data.get("edges", []):
-            src_label = edge["src_labels"][0] if edge["src_labels"] else "Node"
-            dst_label = edge["dst_labels"][0] if edge["dst_labels"] else "Node"
-            rel_type = edge["rel_type"]
-            src_props = edge["src_props"]
-            dst_props = edge["dst_props"]
-            rel_props = edge.get("rel_props") or None
+            for edge in data.get("edges", []):
+                src_label = edge["src_labels"][0] if edge["src_labels"] else "Node"
+                dst_label = edge["dst_labels"][0] if edge["dst_labels"] else "Node"
+                rel_type = edge["rel_type"]
+                src_props = edge["src_props"]
+                dst_props = edge["dst_props"]
+                rel_props = edge.get("rel_props") or None
 
-            src_key = _edge_key(src_label, src_props)
-            dst_key = _edge_key(dst_label, dst_props)
+                src_key = _edge_key(src_label, src_props)
+                dst_key = _edge_key(dst_label, dst_props)
 
-            if src_key and dst_key:
-                store.create_edge(src_label, src_key, rel_type, dst_label, dst_key, rel_props)
+                if src_key and dst_key:
+                    store.create_edge(src_label, src_key, rel_type, dst_label, dst_key, rel_props)
+        finally:
+            store.close()
 
     # ── Public API ────────────────────────────────────────────────────────────
 

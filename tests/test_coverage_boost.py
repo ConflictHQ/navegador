@@ -439,6 +439,7 @@ class TestClusterManagerLocalVersion:
         with patch("navegador.graph.store.GraphStore.sqlite", return_value=mock_store):
             data = mgr._export_local_graph()
         assert data == {"nodes": [], "edges": []}
+        mock_store.close.assert_called_once()
 
     def test_import_to_local_graph_creates_nodes(self, tmp_path):
         mgr, r, _ = self._make(tmp_path)
@@ -461,6 +462,7 @@ class TestClusterManagerLocalVersion:
             mgr._import_to_local_graph(data)
         mock_store.create_node.assert_called_once()
         mock_store.create_edge.assert_called_once()
+        mock_store.close.assert_called_once()
 
     def test_import_to_local_graph_skips_edge_without_src_key(self, tmp_path):
         mgr, r, _ = self._make(tmp_path)
@@ -482,6 +484,7 @@ class TestClusterManagerLocalVersion:
         with patch("navegador.graph.store.GraphStore.sqlite", return_value=mock_store):
             mgr._import_to_local_graph(data)
         mock_store.create_edge.assert_not_called()
+        mock_store.close.assert_called_once()
 
 
 # ===========================================================================
