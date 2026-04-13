@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "navegador"
-version = "0.8.0"
+version = "1.0.0"
 description = "AST + knowledge graph context engine for AI coding agents"
 readme = "README.md"
 license = "MIT"

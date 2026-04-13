@@ -597,6 +597,37 @@ class TestCallToolMemoryGet:
         assert "No memory node found" in result[0]["text"]
         assert "missing" in result[0]["text"]
 
+    @pytest.mark.asyncio
+    async def test_ambiguous_name_fails_closed(self):
+        """When the same name exists in multiple repos and no repo is given,
+        memory_get must return an error — not an arbitrary match."""
+        self.fx.store.query.return_value = MagicMock(
+            result_set=[
+                ["Rule", "deploy-rule", "desc", "feedback", "repo1", "body1"],
+                ["Rule", "deploy-rule", "desc", "feedback", "repo2", "body2"],
+            ]
+        )
+        result = await self.fx.call_tool_fn("memory_get", {"name": "deploy-rule"})
+        data = json.loads(result[0]["text"])
+        assert data["error"] == "ambiguous"
+        assert "repo1" in data["repos"]
+        assert "repo2" in data["repos"]
+
+    @pytest.mark.asyncio
+    async def test_repo_scoped_lookup_returns_correct_match(self):
+        """With repo= provided, a single match is returned unambiguously."""
+        self.fx.store.query.return_value = MagicMock(
+            result_set=[
+                ["Rule", "deploy-rule", "desc", "feedback", "repo1", "body1"],
+            ]
+        )
+        result = await self.fx.call_tool_fn(
+            "memory_get", {"name": "deploy-rule", "repo": "repo1"}
+        )
+        data = json.loads(result[0]["text"])
+        assert data["name"] == "deploy-rule"
+        assert data["repo"] == "repo1"
+
 
 class TestCallToolMemoryForFile:
     """memory_for_file handler — memories linked to a file's symbols."""

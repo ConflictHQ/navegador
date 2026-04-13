@@ -269,6 +269,40 @@ class TestKnowledgeMemoryGoverns:
         # Should have created both ANNOTATES (concept) and GOVERNS (memory) edges
         assert store.create_edge.call_count == 2
 
+    def test_memory_governs_fails_closed_on_ambiguous_name(self):
+        """If the same memory name exists in multiple repos and no repo is specified,
+        _memory_governs must not create any edge (fail closed, not fan out)."""
+        from navegador.ingestion.knowledge import KnowledgeIngester
+
+        store = MagicMock()
+        r = MagicMock()
+        # Two repos both have a memory node named "deploy_rule"
+        r.result_set = [["Rule", "repo1"], ["Rule", "repo2"]]
+        store.query.return_value = r
+
+        ki = KnowledgeIngester(store)
+        ki.annotate_code("deploy", "Function", memory="deploy_rule")  # no repo=
+
+        # Must not create any edge — ambiguity detected, fail closed
+        store.create_edge.assert_not_called()
+
+    def test_memory_governs_succeeds_when_repo_disambiguates(self):
+        """When repo is provided and a single match is returned, the edge is created
+        with the (name, repo) composite key."""
+        from navegador.ingestion.knowledge import KnowledgeIngester
+
+        store = MagicMock()
+        r = MagicMock()
+        r.result_set = [["Rule", "repo1"]]  # scoped — only one match
+        store.query.return_value = r
+
+        ki = KnowledgeIngester(store)
+        ki.annotate_code("deploy", "Function", memory="deploy_rule", repo="repo1")
+
+        store.create_edge.assert_called_once()
+        args = store.create_edge.call_args[0]
+        assert args[1] == {"name": "deploy_rule", "repo": "repo1"}
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # docgen.py — LLM-mode methods (lines 268-296)
