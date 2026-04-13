@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.1 — 2026-04-13
+
+### Release Readiness
+
+- **Credential handling hardening** — moved authenticated wiki and Fossil Git access out of process argv to avoid token exposure
+- **Graph correctness fixes** — cleaned up stale import subgraphs, aligned cluster snapshot edge restore with persisted node identities, and closed temporary graph stores reliably
+- **Workspace and dependency resolution** — fixed Go `use (...)` parsing, manifest-name resolution for scoped packages, and `bare` workspace dependency mapping
+- **Diff accuracy** — included untracked files in working-tree change detection
+- **CI reliability** — added `pyyaml>=6.0` to dev extras for Python 3.13 Ansible parser coverage and upgraded GitHub Actions to Node 24-based majors
+
 ## 0.7.0 — 2026-03-23
 
 ### v0.2 — Foundation
