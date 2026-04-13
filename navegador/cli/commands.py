@@ -1452,6 +1452,107 @@ def impact(name: str, file_path: str, depth: int, db: str, as_json: bool):
             console.print(f"  [{kn['type']}] {kn['name']}")
 
 
+# ── ANALYSIS: architecture drift ──────────────────────────────────────────────
+
+
+@main.command("drift")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON (CI-friendly).")
+@click.option(
+    "--fail-on-violations",
+    is_flag=True,
+    help="Exit with code 1 if any violations are found.",
+)
+@DB_OPTION
+def drift(as_json: bool, fail_on_violations: bool, db: str):
+    """Detect architecture drift — compare rules, ADRs, and memory against live code.
+
+    Runs built-in checks derived from the knowledge layer and reports
+    violations with concrete evidence. Use --fail-on-violations for CI gating.
+    """
+    from navegador.analysis.drift import DriftChecker
+
+    report = DriftChecker(_get_store(db)).check()
+
+    if as_json:
+        click.echo(report.to_json())
+    else:
+        console.print(report.to_markdown())
+
+    if fail_on_violations and report.has_violations:
+        raise SystemExit(1)
+
+
+# ── ANALYSIS: structural diff graph ───────────────────────────────────────────
+
+
+@main.command("diff-graph")
+@click.option("--base", default="HEAD", show_default=True, help="Base ref (branch, tag, SHA).")
+@click.option("--head", default="working tree", show_default=True, help="Head ref to compare.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@click.option(
+    "--repo-path",
+    default=".",
+    type=click.Path(exists=True),
+    help="Path to the git repo.",
+)
+@DB_OPTION
+def diff_graph(base: str, head: str, as_json: bool, repo_path: str, db: str):
+    """Structural diff — what graph changes did this branch introduce?
+
+    Reports new/changed symbols, blast-radius summary, and affected knowledge
+    nodes for all lines changed between BASE and HEAD.
+
+    \b
+    Examples:
+      navegador diff-graph                        # working tree vs HEAD
+      navegador diff-graph --base main            # current branch vs main
+      navegador diff-graph --base main --head HEAD
+    """
+    from navegador.analysis.diffgraph import DiffGraphAnalyzer
+
+    analyzer = DiffGraphAnalyzer(_get_store(db), repo_path)
+    if base == "HEAD" and head == "working tree":
+        report = analyzer.diff_working_tree()
+    else:
+        report = analyzer.diff_refs(base=base, head=head)
+
+    if as_json:
+        click.echo(report.to_json())
+    else:
+        console.print(report.to_markdown())
+
+
+# ── ANALYSIS: cross-repo blast radius ─────────────────────────────────────────
+
+
+@main.command("cross-impact")
+@click.argument("name")
+@click.option("--file", "file_path", default="", help="Narrow to a specific file.")
+@click.option("--repo", default="", help="Source repository name for attribution.")
+@click.option("--depth", default=3, show_default=True, help="Traversal depth.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@DB_OPTION
+def cross_impact(name: str, file_path: str, repo: str, depth: int, as_json: bool, db: str):
+    """Cross-repo blast-radius — find impact across all repos in a unified graph.
+
+    Traverses the graph across repository boundaries to find every downstream
+    symbol, file, and repo that would be affected by changing NAME.
+
+    Requires a unified workspace graph (navegador workspace ingest ...).
+    """
+    from navegador.analysis.crossrepo import CrossRepoImpactAnalyzer
+
+    result = CrossRepoImpactAnalyzer(_get_store(db)).blast_radius(
+        name, file_path=file_path, repo=repo, depth=depth
+    )
+
+    if as_json:
+        click.echo(result.to_json())
+        return
+
+    console.print(result.to_markdown())
+
+
 # ── ANALYSIS: flow trace ──────────────────────────────────────────────────────
 
 
@@ -2139,6 +2240,50 @@ def workspace_ingest(repos: tuple, mode: str, db: str, clear: bool, as_json: boo
                     f"{repo_stats.get('files', 0)} files, "
                     f"{repo_stats.get('nodes', 0)} nodes"
                 )
+
+
+# ── Task packs ────────────────────────────────────────────────────────────────
+
+
+@main.command("pack")
+@click.argument("target")
+@click.option("--file", "file_path", default="", help="Narrow to a specific file.")
+@click.option(
+    "--mode",
+    default="implement",
+    type=click.Choice(["implement", "review", "debug", "refactor"]),
+    show_default=True,
+    help="Agent workflow mode — shapes which context is prioritised.",
+)
+@click.option("--depth", default=2, show_default=True, help="Call graph traversal depth.")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@DB_OPTION
+def pack(target: str, file_path: str, mode: str, depth: int, as_json: bool, db: str):
+    """Build a compact task pack for a symbol or file.
+
+    TARGET can be a symbol name (function, class) or a relative file path.
+
+    \b
+    Examples:
+      navegador pack validate_token --file app/auth.py
+      navegador pack app/payments/service.py
+      navegador pack AuthService --mode review
+    """
+    from navegador.taskpack import TaskPackBuilder
+
+    store = _get_store(db)
+    builder = TaskPackBuilder(store)
+
+    # Treat as file if TARGET looks like a path
+    if "/" in target or target.endswith((".py", ".ts", ".go", ".rb", ".java")):
+        pack_obj = builder.for_file(target, mode=mode)
+    else:
+        pack_obj = builder.for_symbol(target, file_path=file_path, depth=depth, mode=mode)
+
+    if as_json:
+        click.echo(pack_obj.to_json())
+    else:
+        console.print(pack_obj.to_markdown())
 
 
 # ── Intelligence: semantic search ─────────────────────────────────────────────

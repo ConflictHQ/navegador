@@ -274,6 +274,119 @@ def create_mcp_server(store_factory, read_only: bool = False):
                     "required": ["path"],
                 },
             ),
+            Tool(
+                name="diff_graph",
+                description=(
+                    "Structural diff between two git refs. Reports new/changed symbols, "
+                    "blast-radius summary, and affected knowledge nodes for lines changed "
+                    "between base and head. Use for PR review context."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "base": {
+                            "type": "string",
+                            "default": "HEAD",
+                            "description": "Base git ref (branch, tag, SHA).",
+                        },
+                        "head": {
+                            "type": "string",
+                            "default": "working tree",
+                            "description": "Head ref to compare against base.",
+                        },
+                        "repo_path": {
+                            "type": "string",
+                            "default": ".",
+                            "description": "Absolute path to the git repository.",
+                        },
+                        "format": {
+                            "type": "string",
+                            "enum": ["markdown", "json"],
+                            "default": "markdown",
+                        },
+                    },
+                },
+            ),
+            Tool(
+                name="drift_check",
+                description=(
+                    "Run architecture drift checks: compare rules, ADRs, and memory nodes "
+                    "against the live code graph. Returns violations (stale refs, undocumented "
+                    "domain symbols, missing owners) with evidence."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "format": {
+                            "type": "string",
+                            "enum": ["markdown", "json"],
+                            "default": "markdown",
+                        },
+                    },
+                },
+            ),
+            Tool(
+                name="blast_radius_cross_repo",
+                description=(
+                    "Cross-repo blast-radius analysis. Given a symbol, traverses the unified "
+                    "workspace graph across repository boundaries to find all affected symbols, "
+                    "files, and repos. Requires a unified workspace graph."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Symbol name to analyse."},
+                        "file_path": {"type": "string", "default": ""},
+                        "repo": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Source repository name for attribution.",
+                        },
+                        "depth": {"type": "integer", "default": 3},
+                        "format": {
+                            "type": "string",
+                            "enum": ["markdown", "json"],
+                            "default": "markdown",
+                        },
+                    },
+                    "required": ["name"],
+                },
+            ),
+            Tool(
+                name="build_task_pack",
+                description=(
+                    "Build a compact, high-signal task pack for a symbol or file. "
+                    "Assembles code structure, callers/callees, governing rules, memory nodes, "
+                    "docs, owners, and related tests into one artifact — ready for agent prompt "
+                    "injection without requiring multiple separate tool calls."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "description": "Symbol name or relative file path.",
+                        },
+                        "file_path": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Narrow symbol lookup to a specific file.",
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["implement", "review", "debug", "refactor"],
+                            "default": "implement",
+                        },
+                        "depth": {"type": "integer", "default": 2},
+                        "format": {
+                            "type": "string",
+                            "enum": ["markdown", "json"],
+                            "default": "markdown",
+                        },
+                    },
+                    "required": ["target"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -439,6 +552,64 @@ def create_mcp_server(store_factory, read_only: bool = False):
                 for row in rows
             ]
             return [TextContent(type="text", text=json.dumps(items, indent=2))]
+
+        elif name == "diff_graph":
+            from navegador.analysis.diffgraph import DiffGraphAnalyzer
+
+            base = arguments.get("base", "HEAD")
+            head = arguments.get("head", "working tree")
+            repo_path = arguments.get("repo_path", ".")
+            fmt = arguments.get("format", "markdown")
+
+            analyzer = DiffGraphAnalyzer(loader.store, repo_path)
+            if base == "HEAD" and head == "working tree":
+                report = analyzer.diff_working_tree()
+            else:
+                report = analyzer.diff_refs(base=base, head=head)
+
+            text = report.to_json() if fmt == "json" else report.to_markdown()
+            return [TextContent(type="text", text=text)]
+
+        elif name == "drift_check":
+            from navegador.analysis.drift import DriftChecker
+
+            report = DriftChecker(loader.store).check()
+            fmt = arguments.get("format", "markdown")
+            text = report.to_json() if fmt == "json" else report.to_markdown()
+            return [TextContent(type="text", text=text)]
+
+        elif name == "blast_radius_cross_repo":
+            from navegador.analysis.crossrepo import CrossRepoImpactAnalyzer
+
+            result = CrossRepoImpactAnalyzer(loader.store).blast_radius(
+                arguments["name"],
+                file_path=arguments.get("file_path", ""),
+                repo=arguments.get("repo", ""),
+                depth=arguments.get("depth", 3),
+            )
+            fmt = arguments.get("format", "markdown")
+            text = result.to_json() if fmt == "json" else result.to_markdown()
+            return [TextContent(type="text", text=text)]
+
+        elif name == "build_task_pack":
+            from navegador.taskpack import TaskPackBuilder
+
+            target = arguments["target"]
+            file_path = arguments.get("file_path", "")
+            mode = arguments.get("mode", "implement")
+            depth = arguments.get("depth", 2)
+            fmt = arguments.get("format", "markdown")
+
+            builder = TaskPackBuilder(loader.store)
+            if "/" in target or any(target.endswith(ext) for ext in (
+                ".py", ".ts", ".tsx", ".js", ".go", ".rb", ".java", ".rs"
+            )):
+                pack = builder.for_file(target, mode=mode)
+            else:
+                pack = builder.for_symbol(target, file_path=file_path, depth=depth, mode=mode)
+
+            text = pack.to_json() if fmt == "json" else pack.to_markdown()
+            return [TextContent(type="text", text=text)]
 
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
