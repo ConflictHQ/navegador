@@ -2676,3 +2676,166 @@ def lineage_cmd(name: str, file_path: str, as_json: bool, db: str):
         click.echo(report.to_json())
     else:
         console.print(report.to_markdown())
+
+
+# ── DocLink: confidence-ranked doc-to-code linking ───────────────────────────
+
+
+@main.group()
+def doclink():
+    """Confidence-ranked linking from documentation to code symbols."""
+
+
+@doclink.command("suggest")
+@click.option(
+    "--min-confidence",
+    type=float,
+    default=0.5,
+    show_default=True,
+    help="Minimum confidence threshold.",
+)
+@click.option(
+    "--strategy",
+    type=str,
+    default="",
+    help="Filter by strategy (EXACT_NAME, FUZZY, SEMANTIC).",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@DB_OPTION
+def doclink_suggest(min_confidence: float, strategy: str, as_json: bool, db: str):
+    """List doc-to-code link candidates above a confidence threshold.
+
+    Scans documentation nodes (Document, WikiPage, Decision, Rule) and
+    suggests confidence-ranked links to code symbols (Function, Class,
+    Method, Concept).
+
+    \b
+    Examples:
+      navegador doclink suggest
+      navegador doclink suggest --min-confidence 0.8
+      navegador doclink suggest --strategy EXACT_NAME --json
+    """
+    from navegador.intelligence.doclink import DocLinker
+
+    store = _get_store(db)
+    linker = DocLinker(store)
+    candidates = linker.suggest_links(min_confidence=min_confidence)
+
+    if strategy:
+        candidates = [c for c in candidates if c.strategy == strategy]
+
+    if as_json:
+        click.echo(json.dumps([c.__dict__ for c in candidates], indent=2))
+        return
+
+    if not candidates:
+        console.print("No link candidates found.")
+        return
+
+    table = Table(title="Doc Link Candidates")
+    table.add_column("Source", style="bold")
+    table.add_column("Target", style="cyan")
+    table.add_column("File", style="dim")
+    table.add_column("Strategy")
+    table.add_column("Confidence", justify="right")
+    for c in candidates:
+        table.add_row(
+            c.source_name,
+            c.target_name,
+            c.target_file,
+            c.strategy,
+            f"{c.confidence:.2f}",
+        )
+    console.print(table)
+
+
+@doclink.command("accept")
+@click.argument("source")
+@click.argument("target")
+@click.option(
+    "--edge-type",
+    type=str,
+    default="DOCUMENTS",
+    show_default=True,
+    help="Edge type for the accepted link.",
+)
+@DB_OPTION
+def doclink_accept(source: str, target: str, edge_type: str, db: str):
+    """Accept a single doc-to-code link candidate.
+
+    SOURCE and TARGET are node names. If a matching candidate is found
+    via suggest_links(), its metadata is preserved; otherwise a link
+    with confidence=1.0 is created.
+
+    \b
+    Examples:
+      navegador doclink accept "API Guide" "AuthService"
+      navegador doclink accept "README" "parse_token" --edge-type ANNOTATES
+    """
+    from navegador.intelligence.doclink import DocLinker, LinkCandidate
+
+    store = _get_store(db)
+    linker = DocLinker(store)
+
+    # Try to find an existing candidate to preserve metadata
+    candidates = linker.suggest_links(min_confidence=0.0)
+    match = next(
+        (c for c in candidates if c.source_name == source and c.target_name == target),
+        None,
+    )
+
+    if match:
+        match.edge_type = edge_type
+        linker.accept(match)
+    else:
+        candidate = LinkCandidate(
+            source_label="Document",
+            source_name=source,
+            target_label="Function",
+            target_name=target,
+            edge_type=edge_type,
+            confidence=1.0,
+            strategy="MANUAL",
+            rationale="manually accepted via CLI",
+        )
+        linker.accept(candidate)
+
+    console.print(f"Accepted: {source} -> {target}")
+
+
+@doclink.command("accept-all")
+@click.option(
+    "--min-confidence",
+    type=float,
+    default=0.8,
+    show_default=True,
+    help="Minimum confidence threshold for acceptance.",
+)
+@click.option("--dry-run", is_flag=True, help="Preview without writing edges.")
+@DB_OPTION
+def doclink_accept_all(min_confidence: float, dry_run: bool, db: str):
+    """Bulk-accept doc-to-code link candidates above a confidence threshold.
+
+    \b
+    Examples:
+      navegador doclink accept-all
+      navegador doclink accept-all --min-confidence 0.9
+      navegador doclink accept-all --dry-run
+    """
+    from navegador.intelligence.doclink import DocLinker
+
+    store = _get_store(db)
+    linker = DocLinker(store)
+    candidates = linker.suggest_links(min_confidence=min_confidence)
+
+    if dry_run:
+        console.print(
+            f"[yellow]Dry run:[/yellow] would accept {len(candidates)} links "
+            f"(min_confidence={min_confidence})"
+        )
+        return
+
+    count = linker.accept_all(candidates, min_confidence=min_confidence)
+    console.print(
+        f"[green]Accepted[/green] {count} doc links (min_confidence={min_confidence})"
+    )

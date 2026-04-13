@@ -113,9 +113,9 @@ class TestListTools:
         self.fx = _ServerFixture()
 
     @pytest.mark.asyncio
-    async def test_returns_nineteen_tools(self):
+    async def test_returns_twenty_tools(self):
         tools = await self.fx.list_tools_fn()
-        assert len(tools) == 19
+        assert len(tools) == 20
 
     @pytest.mark.asyncio
     async def test_tool_names(self):
@@ -141,6 +141,7 @@ class TestListTools:
             "drift_check",
             "diff_graph",
             "symbol_history",
+            "suggest_doc_links",
         }
 
     @pytest.mark.asyncio

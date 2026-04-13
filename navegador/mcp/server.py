@@ -429,6 +429,36 @@ def create_mcp_server(store_factory, read_only: bool = False):
                     "required": ["name"],
                 },
             ),
+            Tool(
+                name="suggest_doc_links",
+                description=(
+                    "Suggest confidence-ranked links from documentation nodes to code "
+                    "symbols. Returns candidates with source, target, confidence, "
+                    "strategy, and rationale."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "min_confidence": {
+                            "type": "number",
+                            "default": 0.5,
+                            "description": "Minimum confidence threshold.",
+                        },
+                        "strategy": {
+                            "type": "string",
+                            "enum": ["EXACT_NAME", "FUZZY", "SEMANTIC", ""],
+                            "default": "",
+                            "description": "Filter by match strategy.",
+                        },
+                        "format": {
+                            "type": "string",
+                            "enum": ["markdown", "json"],
+                            "default": "markdown",
+                        },
+                    },
+                    "required": [],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -678,6 +708,34 @@ def create_mcp_server(store_factory, read_only: bool = False):
             else:
                 report = h.history(sym_name, file_path=file_path)
                 text = report.to_json() if fmt == "json" else report.to_markdown()
+            return [TextContent(type="text", text=text)]
+
+        elif name == "suggest_doc_links":
+            from navegador.intelligence.doclink import DocLinker
+
+            min_conf = float(arguments.get("min_confidence", 0.5))
+            strategy = arguments.get("strategy", "")
+            fmt = arguments.get("format", "markdown")
+            linker = DocLinker(loader.store)
+            candidates = linker.suggest_links(min_confidence=min_conf)
+            if strategy:
+                candidates = [c for c in candidates if c.strategy == strategy]
+            if fmt == "json":
+                import json as _json
+
+                text = _json.dumps([c.__dict__ for c in candidates], indent=2)
+            else:
+                if not candidates:
+                    text = "No link candidates found."
+                else:
+                    lines = [f"## Doc Link Suggestions ({len(candidates)})\n"]
+                    for c in candidates:
+                        lines.append(
+                            f"- **{c.source_name}** -> `{c.target_name}` "
+                            f"`{c.target_file}` [{c.strategy}] conf={c.confidence:.2f}  \n"
+                            f"  _{c.rationale}_"
+                        )
+                    text = "\n".join(lines)
             return [TextContent(type="text", text=text)]
 
         return [TextContent(type="text", text=f"Unknown tool: {name}")]

@@ -163,7 +163,7 @@ class DiffGraphAnalyzer:
                 _sym_type, sym_name, sym_file, line_start, line_end = (
                     row[0], row[1], row[2], row[3], row[4]
                 )
-                if not _lines_overlap(line_start, line_end, changed_ranges):
+                if not _lines_overlap(changed_ranges, line_start, line_end):
                     continue
 
                 key = f"{sym_name}:{sym_file}"
