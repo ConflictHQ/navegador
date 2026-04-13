@@ -71,7 +71,7 @@ class KotlinParser(LanguageParser):
         if node.type == "function_declaration":
             self._handle_function(node, source, file_path, store, stats, class_name)
             return
-        if node.type == "import_header":
+        if node.type in ("import_header", "import"):
             self._handle_import(node, source, file_path, store, stats)
             return
         for child in node.children:
@@ -208,12 +208,16 @@ class KotlinParser(LanguageParser):
                         (
                             c
                             for c in node.children
-                            if c.type in ("simple_identifier", "navigation_expression")
+                            if c.type in (
+                                "simple_identifier",
+                                "identifier",
+                                "navigation_expression",
+                            )
                         ),
                         None,
                     )
                 if func:
-                    callee = _node_text(func, source).split(".")[-1]
+                    callee = _node_text(func, source).split(".")[-1].split("::")[-1]
                     store.create_edge(
                         fn_label,
                         {"name": fn_name, "file_path": file_path},

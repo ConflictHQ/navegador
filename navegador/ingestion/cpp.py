@@ -191,7 +191,7 @@ class CppParser(LanguageParser):
         """Recursively dig through C++ declarator nodes to find the function name."""
         if declarator is None:
             return None
-        if declarator.type == "identifier":
+        if declarator.type in ("identifier", "field_identifier"):
             return _node_text(declarator, source)
         if declarator.type == "qualified_identifier":
             # MyClass::method — take the last component
@@ -205,9 +205,9 @@ class CppParser(LanguageParser):
         if declarator.type in ("function_declarator", "pointer_declarator", "reference_declarator"):
             inner = declarator.child_by_field_name("declarator")
             return self._extract_function_name(inner, source)
-        # Fallback: first identifier child
+        # Fallback: first identifier or field_identifier child
         for child in declarator.children:
-            if child.type == "identifier":
+            if child.type in ("identifier", "field_identifier"):
                 return _node_text(child, source)
         return None
 

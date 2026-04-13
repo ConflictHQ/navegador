@@ -550,7 +550,8 @@ function draw() {{
   for (const n of nodes) {{
     const isSelected = n === selectedNode;
     const isHovered = n === hoveredNode;
-    const inSnapshot = !snapshotFilterNames || snapshotFilterNames.has(n.name);
+    const nodeKey = n.name + ':' + ((n.props && n.props.file_path) || '');
+    const inSnapshot = !snapshotFilterNames || snapshotFilterNames.has(nodeKey);
     const inLens = !lensNodeNames || lensNodeNames.has(n.name);
     const color = inLens && lensNodeNames ? '#f4d03f' : nodeColor(n.label);
     const baseAlpha = (!inSnapshot ? 0.15 : (!inLens && lensNodeNames ? 0.2 : 0.9));
@@ -666,13 +667,15 @@ canvas.addEventListener('wheel', e => {{
 // ── Node selection ──────────────────────────────────────────────────────────
 async function selectNode(node) {{
   selectedNode = node;
+  const filePath = (node.props && node.props.file_path) || '';
+  const fpParam = filePath ? '?file_path=' + encodeURIComponent(filePath) : '';
   try {{
-    const data = await fetch('/api/node/' + encodeURIComponent(node.name)).then(r => r.json());
+    const data = await fetch('/api/node/' + encodeURIComponent(node.name) + fpParam).then(r => r.json());
     renderDetail(data);
   }} catch(e) {{
     renderDetail({{ name: node.name, label: node.label, props: node.props, neighbors: [] }});
   }}
-  loadSymbolHistory(node.name);
+  loadSymbolHistory(node.name, filePath);
 }}
 
 function renderDetail(data) {{
@@ -706,7 +709,8 @@ function renderDetail(data) {{
   if (neighbors.length > 0) {{
     html += `<div class="detail-label">Neighbors (${{neighbors.length}})</div>`;
     for (const nb of neighbors.slice(0, 50)) {{
-      html += `<div class="neighbor-item" onclick="jumpToNode(${{JSON.stringify(nb.name)}})">
+      const nbFp = nb.file_path || '';
+      html += `<div class="neighbor-item" onclick="jumpToNode(${{JSON.stringify(nb.name)}}, ${{JSON.stringify(nbFp)}})">
         <span class="neighbor-name">${{escHtml(nb.name)}}</span>
         <span class="neighbor-type">${{escHtml(nb.label || '')}} · ${{escHtml(nb.rel || '')}}</span>
       </div>`;
@@ -723,9 +727,13 @@ function escHtml(s) {{
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }}
 
-// ── Jump to node by name ────────────────────────────────────────────────────
-function jumpToNode(name) {{
-  const n = nodes.find(x => x.name === name);
+// ── Jump to node by name + optional file_path ───────────────────────────────
+function jumpToNode(name, filePath) {{
+  // Prefer exact match by name+file_path; fall back to first name match
+  let n = filePath
+    ? nodes.find(x => x.name === name && (x.props && x.props.file_path) === filePath)
+    : null;
+  if (!n) n = nodes.find(x => x.name === name);
   if (!n) return;
   selectedNode = n;
   // Pan to node
@@ -796,7 +804,8 @@ function renderSnapshots(snapshots) {{
 async function selectSnapshot(ref, el) {{
   try {{
     const symbols = await fetch('/api/snapshots/' + encodeURIComponent(ref) + '/symbols').then(r => r.json());
-    snapshotFilterNames = new Set(symbols.map(s => s.name));
+    // Key by "name:file_path" to disambiguate same-named symbols in different files
+    snapshotFilterNames = new Set(symbols.map(s => s.name + ':' + (s.file_path || '')));
     const items = document.querySelectorAll('.snapshot-item');
     items.forEach(i => i.classList.remove('active'));
     if (el) el.classList.add('active');
@@ -815,11 +824,12 @@ function clearSnapshotFilter() {{
 }}
 window.clearSnapshotFilter = clearSnapshotFilter;
 
-async function loadSymbolHistory(name) {{
+async function loadSymbolHistory(name, filePath) {{
   const section = document.getElementById('symbol-history-section');
   const list = document.getElementById('history-list');
+  const fpParam = filePath ? '?file_path=' + encodeURIComponent(filePath) : '';
   try {{
-    const data = await fetch('/api/node/' + encodeURIComponent(name) + '/history').then(r => r.json());
+    const data = await fetch('/api/node/' + encodeURIComponent(name) + '/history' + fpParam).then(r => r.json());
     if (!data.events || data.events.length === 0) {{
       section.style.display = 'none';
       return;

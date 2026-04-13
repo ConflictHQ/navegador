@@ -344,7 +344,7 @@ class TestIngest:
             {"name": "my-app"},
             EdgeType.CONTAINS,
             NodeLabel.Rule,
-            {"name": "Test Rule"},
+            {"name": "Test Rule", "repo": "my-app"},
         )
 
     def test_link_to_repo_tolerates_missing_repository_node(self):

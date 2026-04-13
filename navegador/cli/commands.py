@@ -520,8 +520,19 @@ def add_domain(name: str, desc: str, db: str):
 @click.option("--concept", default="", help="Link to this concept.")
 @click.option("--rule", default="", help="Link to this rule.")
 @click.option("--memory", default="", help="Link to a memory node by name (GOVERNS edge).")
+@click.option("--file-path", "file_path", default="", help="File path to scope the code symbol.")
+@click.option("--repo", default="", help="Repo name to scope the memory node lookup.")
 @DB_OPTION
-def annotate(code_name: str, code_label: str, concept: str, rule: str, memory: str, db: str):
+def annotate(
+    code_name: str,
+    code_label: str,
+    concept: str,
+    rule: str,
+    memory: str,
+    file_path: str,
+    repo: str,
+    db: str,
+):
     """Link a code node to a concept, rule, or memory node."""
     from navegador.ingestion import KnowledgeIngester
 
@@ -532,6 +543,8 @@ def annotate(code_name: str, code_label: str, concept: str, rule: str, memory: s
         concept=concept or None,
         rule=rule or None,
         memory=memory or None,
+        file_path=file_path,
+        repo=repo,
     )
     console.print(f"[green]Annotated:[/green] {code_name}")
 

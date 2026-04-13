@@ -34,7 +34,8 @@ RETURN r.name, r.severity, coalesce(r.rationale, r.description, '') LIMIT 10
 
 _ADR_CONFLICTS_QUERY = """
 MATCH (n)-[:BELONGS_TO]->(d:Domain)<-[:BELONGS_TO]-(dec:Decision)
-WHERE n.name = $name AND dec.status = 'accepted'
+WHERE n.name = $name AND ($file_path = '' OR n.file_path = $file_path)
+  AND dec.status = 'accepted'
 RETURN dec.name, coalesce(dec.rationale, dec.description, '') LIMIT 5
 """
 
@@ -240,7 +241,7 @@ class ReviewGenerator:
         try:
             result = self.store.query(
                 _ADR_CONFLICTS_QUERY,
-                {"name": name},
+                {"name": name, "file_path": file_path},
             )
             for row in result.result_set or []:
                 comments.append(

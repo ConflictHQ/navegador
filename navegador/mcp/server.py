@@ -247,11 +247,19 @@ def create_mcp_server(store_factory, read_only: bool = False):
             ),
             Tool(
                 name="memory_get",
-                description="Return a single memory node by name.",
+                description=(
+                    "Return a single memory node by name. "
+                    "Provide repo to disambiguate when multiple repos share the same memory name."
+                ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "name": {"type": "string", "description": "Exact memory node name."},
+                        "repo": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Repo name to scope the lookup (optional).",
+                        },
                     },
                     "required": ["name"],
                 },
@@ -683,7 +691,10 @@ def create_mcp_server(store_factory, read_only: bool = False):
         elif name == "memory_get":
             from navegador.graph import queries
 
-            result = loader.store.query(queries.MEMORY_GET, {"name": arguments["name"]})
+            result = loader.store.query(
+                queries.MEMORY_GET,
+                {"name": arguments["name"], "repo": arguments.get("repo", "")},
+            )
             rows = result.result_set or []
             if not rows:
                 return [TextContent(type="text", text=f"No memory node found: {arguments['name']}")]

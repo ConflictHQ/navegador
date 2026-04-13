@@ -201,16 +201,18 @@ class LensEngine:
             "LIMIT 200"
         )
         rows = self._query(cypher, {"domain": domain})
-        seen_nodes: dict[str, LensNode] = {}
+        seen_nodes: dict[tuple[str, str], LensNode] = {}
         edges: list[LensEdge] = []
         for row in rows:
             label, name, file_path, owner = row[0] or "", row[1] or "", row[2] or "", row[3] or ""
-            if name and name not in seen_nodes:
-                seen_nodes[name] = LensNode(
+            nk = (name, file_path)
+            if name and nk not in seen_nodes:
+                seen_nodes[nk] = LensNode(
                     label=label, name=name, file_path=file_path, owner=owner
                 )
-            if owner and owner not in seen_nodes:
-                seen_nodes[owner] = LensNode(label="Person", name=owner)
+            ok = (owner, "")
+            if owner and ok not in seen_nodes:
+                seen_nodes[ok] = LensNode(label="Person", name=owner)
             if name and owner:
                 edges.append(LensEdge(source=name, target=owner, type="ASSIGNED_TO"))
         return LensResult(
@@ -233,7 +235,7 @@ class LensEngine:
             "labels(b)[0], b.name, coalesce(b.file_path,''), db.name LIMIT 100"
         )
         rows = self._query(cypher, {"domain": domain})
-        seen_nodes: dict[str, LensNode] = {}
+        seen_nodes: dict[tuple[str, str], LensNode] = {}
         edges: list[LensEdge] = []
         for row in rows:
             a_label = row[0] or ""
@@ -244,12 +246,14 @@ class LensEngine:
             b_name = row[5] or ""
             b_file = row[6] or ""
             b_domain = row[7] or ""
-            if a_name and a_name not in seen_nodes:
-                seen_nodes[a_name] = LensNode(
+            ak = (a_name, a_file)
+            if a_name and ak not in seen_nodes:
+                seen_nodes[ak] = LensNode(
                     label=a_label, name=a_name, file_path=a_file, domain=a_domain
                 )
-            if b_name and b_name not in seen_nodes:
-                seen_nodes[b_name] = LensNode(
+            bk = (b_name, b_file)
+            if b_name and bk not in seen_nodes:
+                seen_nodes[bk] = LensNode(
                     label=b_label, name=b_name, file_path=b_file, domain=b_domain
                 )
             if a_name and b_name:
@@ -263,34 +267,64 @@ class LensEngine:
 
     def _lens_dependency_layers(self, file_path: str = "", **_kw: Any) -> LensResult:
         cypher = (
-            "MATCH (a)-[:IMPORTS|DEPENDS_ON]->(b) "
+            "MATCH (a)-[r:IMPORTS|DEPENDS_ON]->(b) "
             "WHERE ($file_path = '' OR a.file_path = $file_path OR b.file_path = $file_path) "
             "RETURN DISTINCT labels(a)[0], a.name, coalesce(a.file_path,''), "
-            "labels(b)[0], b.name, coalesce(b.file_path,'') LIMIT 200"
+            "labels(b)[0], b.name, coalesce(b.file_path,''), type(r) LIMIT 200"
         )
         rows = self._query(cypher, {"file_path": file_path})
-        nodes, edges = self._build_pair_graph(rows, edge_type="IMPORTS")
+        seen_nodes: dict[tuple[str, str], LensNode] = {}
+        edges: list[LensEdge] = []
+        for row in rows:
+            a_label = row[0] or ""
+            a_name = row[1] or ""
+            a_file = row[2] or ""
+            b_label = row[3] or ""
+            b_name = row[4] or ""
+            b_file = row[5] or ""
+            edge_type = (row[6] if len(row) > 6 else None) or "IMPORTS"
+            ak = (a_name, a_file)
+            if a_name and ak not in seen_nodes:
+                seen_nodes[ak] = LensNode(label=a_label, name=a_name, file_path=a_file)
+            bk = (b_name, b_file)
+            if b_name and bk not in seen_nodes:
+                seen_nodes[bk] = LensNode(label=b_label, name=b_name, file_path=b_file)
+            if a_name and b_name:
+                edges.append(LensEdge(source=a_name, target=b_name, type=edge_type))
         return LensResult(
             lens="dependency_layers",
-            nodes=nodes,
+            nodes=list(seen_nodes.values()),
             edges=edges,
             params={"file_path": file_path},
         )
 
+    # Common framework component suffixes produced by framework enrichers
+    _FRAMEWORK_SUFFIXES = (
+        "Controller", "Service", "Repository", "Model",
+        "Middleware", "Serializer", "View", "Handler",
+        "Router", "Provider", "Resolver", "Gateway",
+        "Component", "Module", "Guard", "Interceptor",
+    )
+
     def _lens_framework_components(self, label: str = "", **_kw: Any) -> LensResult:
+        # Match exact label OR any label whose name ends with a known framework suffix.
+        # This catches enriched labels like ExpressController, DjangoView, RailsModel, etc.
+        suffix_checks = " OR ".join(
+            f"labels(n)[0] ENDS WITH '{s}'" for s in self._FRAMEWORK_SUFFIXES
+        )
         cypher = (
             "MATCH (n) "
-            "WHERE ($label = '' OR labels(n)[0] = $label) "
-            "AND (n:Controller OR n:Service OR n:Repository OR n:Model "
-            "OR n:Middleware OR n:Serializer OR n:View OR n:Handler) "
+            f"WHERE ($label = '' OR labels(n)[0] = $label) "
+            f"AND ({suffix_checks}) "
             "RETURN DISTINCT labels(n)[0], n.name, coalesce(n.file_path,'') LIMIT 200"
         )
         rows = self._query(cypher, {"label": label})
-        seen_nodes: dict[str, LensNode] = {}
+        seen_nodes: dict[tuple[str, str], LensNode] = {}
         for row in rows:
             r_label, name, file_path = row[0] or "", row[1] or "", row[2] or ""
-            if name and name not in seen_nodes:
-                seen_nodes[name] = LensNode(label=r_label, name=name, file_path=file_path)
+            nk = (name, file_path)
+            if name and nk not in seen_nodes:
+                seen_nodes[nk] = LensNode(label=r_label, name=name, file_path=file_path)
         return LensResult(
             lens="framework_components",
             nodes=list(seen_nodes.values()),
@@ -303,16 +337,14 @@ class LensEngine:
     def _apply_custom(self, lens: str, **params: Any) -> LensResult:
         info = self._custom[lens]
         rows = self._query(info["cypher"], params)
-        seen_nodes: dict[str, LensNode] = {}
+        seen_nodes: dict[tuple[str, str], LensNode] = {}
         for row in rows:
-            r_label = row[0] if len(row) > 0 else ""
-            name = row[1] if len(row) > 1 else ""
-            file_path = row[2] if len(row) > 2 else ""
-            r_label = r_label or ""
-            name = name or ""
-            file_path = file_path or ""
-            if name and name not in seen_nodes:
-                seen_nodes[name] = LensNode(label=r_label, name=name, file_path=file_path)
+            r_label = (row[0] if len(row) > 0 else "") or ""
+            name = (row[1] if len(row) > 1 else "") or ""
+            file_path = (row[2] if len(row) > 2 else "") or ""
+            nk = (name, file_path)
+            if name and nk not in seen_nodes:
+                seen_nodes[nk] = LensNode(label=r_label, name=name, file_path=file_path)
         return LensResult(
             lens=lens,
             nodes=list(seen_nodes.values()),
@@ -334,8 +366,12 @@ class LensEngine:
         rows: list,
         edge_type: str = "CALLS",
     ) -> tuple[list[LensNode], list[LensEdge]]:
-        """Build nodes/edges from rows: [a_label, a_name, a_file, b_label, b_name, b_file]."""
-        seen_nodes: dict[str, LensNode] = {}
+        """Build nodes/edges from rows: [a_label, a_name, a_file, b_label, b_name, b_file].
+
+        Nodes are keyed by (name, file_path) to avoid collapsing same-named symbols
+        from different files.
+        """
+        seen_nodes: dict[tuple[str, str], LensNode] = {}
         edges: list[LensEdge] = []
         for row in rows:
             a_label = row[0] or ""
@@ -344,10 +380,12 @@ class LensEngine:
             b_label = row[3] or ""
             b_name = row[4] or ""
             b_file = row[5] or ""
-            if a_name and a_name not in seen_nodes:
-                seen_nodes[a_name] = LensNode(label=a_label, name=a_name, file_path=a_file)
-            if b_name and b_name not in seen_nodes:
-                seen_nodes[b_name] = LensNode(label=b_label, name=b_name, file_path=b_file)
+            ak = (a_name, a_file)
+            if a_name and ak not in seen_nodes:
+                seen_nodes[ak] = LensNode(label=a_label, name=a_name, file_path=a_file)
+            bk = (b_name, b_file)
+            if b_name and bk not in seen_nodes:
+                seen_nodes[bk] = LensNode(label=b_label, name=b_name, file_path=b_file)
             if a_name and b_name:
                 edges.append(LensEdge(source=a_name, target=b_name, type=edge_type))
         return list(seen_nodes.values()), edges

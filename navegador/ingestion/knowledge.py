@@ -223,24 +223,29 @@ class KnowledgeIngester:
         concept: str | None = None,
         rule: str | None = None,
         memory: str | None = None,
+        file_path: str = "",
+        repo: str = "",
     ) -> None:
         """
         Link a code node to a concept, rule, or memory node.
 
         - concept/rule   → ANNOTATES edge (knowledge → code)
         - memory         → GOVERNS edge from the memory node (Rule/Decision/WikiPage/Person)
-                           resolved by name. Falls back gracefully if node not found.
+                           resolved by name + optional repo. Falls back gracefully if not found.
 
         code_label should be a string matching a NodeLabel value.
+        file_path scopes the code symbol so same-named symbols in different files
+        do not both receive the edge.
         """
         label = NodeLabel(code_label)
+        code_key = {"name": code_name, "file_path": file_path} if file_path else {"name": code_name}
         if concept:
             self.store.create_edge(
                 NodeLabel.Concept,
                 {"name": concept},
                 EdgeType.ANNOTATES,
                 label,
-                {"name": code_name},
+                code_key,
             )
         if rule:
             self.store.create_edge(
@@ -248,24 +253,32 @@ class KnowledgeIngester:
                 {"name": rule},
                 EdgeType.ANNOTATES,
                 label,
-                {"name": code_name},
+                code_key,
             )
         if memory:
-            self._memory_governs(memory, label, code_name)
+            self._memory_governs(memory, label, code_name, file_path=file_path, repo=repo)
 
     def _memory_governs(
-        self, memory_name: str, code_label: NodeLabel, code_name: str
+        self,
+        memory_name: str,
+        code_label: NodeLabel,
+        code_name: str,
+        file_path: str = "",
+        repo: str = "",
     ) -> None:
         """
         Create a GOVERNS edge from a memory node to a code symbol.
 
         Searches across all node types that MemoryIngester can produce
         (Rule, Decision, WikiPage, Person) for a node with memory_type set.
+        Scopes the lookup by repo when provided, and targets only the specific
+        code symbol identified by (code_name, file_path) when file_path is given.
         """
         result = self.store.query(
             "MATCH (n {name: $name}) WHERE n.memory_type IS NOT NULL "
+            "AND ($repo = '' OR n.repo = $repo) "
             "RETURN labels(n)[0] AS label LIMIT 1",
-            {"name": memory_name},
+            {"name": memory_name, "repo": repo},
         )
         rows = result.result_set or []
         if not rows:
@@ -273,12 +286,13 @@ class KnowledgeIngester:
             return
 
         mem_label = NodeLabel(rows[0][0])
+        code_key = {"name": code_name, "file_path": file_path} if file_path else {"name": code_name}
         self.store.create_edge(
             mem_label,
             {"name": memory_name},
             EdgeType.GOVERNS,
             code_label,
-            {"name": code_name},
+            code_key,
         )
         logger.info("Memory GOVERNS: %s → %s %s", memory_name, code_label, code_name)
 

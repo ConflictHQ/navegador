@@ -328,7 +328,7 @@ class MemoryIngester:
                 {"name": repo_name},
                 EdgeType.CONTAINS,
                 label,
-                {"name": name},
+                {"name": name, "repo": repo_name},
             )
         except Exception:
             # Repository node may not exist yet — non-fatal

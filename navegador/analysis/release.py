@@ -23,13 +23,13 @@ RETURN count(t)
 
 _KNOWLEDGE_LINKS_QUERY = """
 MATCH (n)<-[:DOCUMENTS|ANNOTATES|GOVERNS]-(k)
-WHERE n.name = $name
+WHERE n.name = $name AND ($file_path = '' OR n.file_path = $file_path)
 RETURN labels(k)[0], k.name
 """
 
 _OWNER_QUERY = """
 MATCH (n)-[:ASSIGNED_TO]->(p:Person)
-WHERE n.name = $name
+WHERE n.name = $name AND ($file_path = '' OR n.file_path = $file_path)
 RETURN DISTINCT p.name
 """
 
@@ -199,8 +199,8 @@ class ReleaseChecker:
 
         for sc in all_symbols:
             self._check_test_coverage(report, sc.symbol, sc.file_path)
-            self._check_knowledge_links(report, sc.symbol)
-            self._collect_owners(report, sc.symbol, owners_seen)
+            self._check_knowledge_links(report, sc.symbol, sc.file_path)
+            self._collect_owners(report, sc.symbol, sc.file_path, owners_seen)
 
         report.owners_required = sorted(owners_seen)
 
@@ -233,10 +233,14 @@ class ReleaseChecker:
         except Exception:
             pass
 
-    def _check_knowledge_links(self, report: ReleaseReport, symbol: str) -> None:
+    def _check_knowledge_links(
+        self, report: ReleaseReport, symbol: str, file_path: str
+    ) -> None:
         """Warn when a changed symbol has linked knowledge nodes that may be stale."""
         try:
-            result = self.store.query(_KNOWLEDGE_LINKS_QUERY, {"name": symbol})
+            result = self.store.query(
+                _KNOWLEDGE_LINKS_QUERY, {"name": symbol, "file_path": file_path}
+            )
             for row in result.result_set or []:
                 k_name = row[1] or ""
                 report.items.append(
@@ -244,6 +248,7 @@ class ReleaseChecker:
                         category="stale_doc",
                         severity="warning",
                         symbol=symbol,
+                        file_path=file_path,
                         detail=f"review: {k_name}",
                         knowledge_node=k_name,
                     )
@@ -255,11 +260,12 @@ class ReleaseChecker:
         self,
         report: ReleaseReport,
         symbol: str,
+        file_path: str,
         owners_seen: set[str],
     ) -> None:
         """Collect unique owners of changed symbols."""
         try:
-            result = self.store.query(_OWNER_QUERY, {"name": symbol})
+            result = self.store.query(_OWNER_QUERY, {"name": symbol, "file_path": file_path})
             for row in result.result_set or []:
                 name = row[0]
                 if name:

@@ -105,14 +105,17 @@ def _search_nodes(store: "GraphStore", query: str, limit: int = 50) -> list[dict
     return result
 
 
-def _get_node_detail(store: "GraphStore", name: str) -> dict:
-    # Node properties
+def _get_node_detail(store: "GraphStore", name: str, file_path: str = "") -> dict:
+    # Scope by file_path when provided to avoid duplicate-name ambiguity
+    scope = "AND n.file_path = $file_path" if file_path else ""
+    params: dict[str, Any] = {"name": name, "file_path": file_path}
+
     rows = _query(
         store,
-        "MATCH (n) WHERE n.name = $name "
+        f"MATCH (n) WHERE n.name = $name {scope} "
         "RETURN labels(n)[0] AS label, properties(n) AS props "
         "LIMIT 1",
-        {"name": name},
+        params,
     )
     if not rows:
         return {"name": name, "label": "", "props": {}, "neighbors": []}
@@ -123,28 +126,35 @@ def _get_node_detail(store: "GraphStore", name: str) -> dict:
     # Outbound neighbours
     out_rows = _query(
         store,
-        "MATCH (n)-[r]->(nb) WHERE n.name = $name "
-        "RETURN labels(nb)[0] AS nb_label, nb.name AS nb_name, type(r) AS rel "
+        f"MATCH (n)-[r]->(nb) WHERE n.name = $name {scope} "
+        "RETURN labels(nb)[0] AS nb_label, nb.name AS nb_name, "
+        "coalesce(nb.file_path, '') AS nb_file_path, type(r) AS rel "
         "LIMIT 100",
-        {"name": name},
+        params,
     )
     # Inbound neighbours
     in_rows = _query(
         store,
-        "MATCH (nb)-[r]->(n) WHERE n.name = $name "
-        "RETURN labels(nb)[0] AS nb_label, nb.name AS nb_name, type(r) AS rel "
+        f"MATCH (nb)-[r]->(n) WHERE n.name = $name {scope} "
+        "RETURN labels(nb)[0] AS nb_label, nb.name AS nb_name, "
+        "coalesce(nb.file_path, '') AS nb_file_path, type(r) AS rel "
         "LIMIT 100",
-        {"name": name},
+        params,
     )
 
     seen: set[str] = set()
     neighbors = []
     for row in list(out_rows) + list(in_rows):
-        nb_label, nb_name, rel = row[0] or "", row[1] or "", row[2] or ""
-        key = f"{nb_name}|{rel}"
+        nb_label = row[0] or ""
+        nb_name = row[1] or ""
+        nb_file = row[2] or ""
+        rel = row[3] or ""
+        key = f"{nb_name}|{nb_file}|{rel}"
         if key not in seen:
             seen.add(key)
-            neighbors.append({"label": nb_label, "name": nb_name, "rel": rel})
+            neighbors.append(
+                {"label": nb_label, "name": nb_name, "file_path": nb_file, "rel": rel}
+            )
 
     return {"name": name, "label": label, "props": props, "neighbors": neighbors}
 
@@ -313,11 +323,12 @@ def _make_handler(store: "GraphStore"):
                 file_path = qs.get("file_path", [""])[0]
                 self._send_json(_get_node_history(self._store, name, file_path))
 
-            # ── Node detail — /api/node/<name>
+            # ── Node detail — /api/node/<name>?file_path=<path>
             elif path.startswith("/api/node/"):
                 raw_name = path[len("/api/node/") :]
                 name = unquote(raw_name)
-                detail = _get_node_detail(self._store, name)
+                file_path = qs.get("file_path", [""])[0]
+                detail = _get_node_detail(self._store, name, file_path)
                 self._send_json(detail)
 
             # ── Lenses list

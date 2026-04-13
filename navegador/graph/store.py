@@ -83,6 +83,8 @@ class GraphStore:
         Upsert a node using a label-appropriate merge key.
 
         - File / Document / Repository  → keyed by ``path`` (unique per filesystem entry)
+        - Memory nodes (have ``memory_type``) → keyed by ``(name, repo)`` to prevent
+          same-named memories from different repos colliding
         - Code symbols (Function, Class, …) → keyed by ``(name, file_path)``
         - Knowledge nodes (Rule, Concept, …) → keyed by ``name``
         """
@@ -93,6 +95,10 @@ class GraphStore:
         if label in self._PATH_KEYED_LABELS:
             props.setdefault("path", "")
             cypher = f"MERGE (n:{label} {{path: $path}}) SET {prop_str}"
+        elif props.get("memory_type", "") and props.get("repo", ""):
+            # Memory node — scope to (name, repo) so same-named nodes across repos are distinct
+            props.setdefault("name", "")
+            cypher = f"MERGE (n:{label} {{name: $name, repo: $repo}}) SET {prop_str}"
         elif props.get("file_path", ""):
             # Code symbol with a known file — disambiguate by (name, file_path)
             props.setdefault("name", "")

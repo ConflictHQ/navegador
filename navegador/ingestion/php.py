@@ -79,7 +79,7 @@ class PHPParser(LanguageParser):
         if node.type == "function_definition":
             self._handle_function(node, source, file_path, store, stats, class_name)
             return
-        if node.type == "use_declaration":
+        if node.type in ("use_declaration", "namespace_use_declaration"):
             self._handle_use(node, source, file_path, store, stats)
             return
         for child in node.children:
