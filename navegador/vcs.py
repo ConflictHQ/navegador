@@ -15,9 +15,12 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # ── Abstract base ──────────────────────────────────────────────────────────────
 
@@ -218,7 +221,12 @@ class FossilAdapter(VCSAdapter):
     All other methods run ``fossil`` sub-commands via subprocess.
     """
 
-    def _run(self, args: list[str], check: bool = True) -> subprocess.CompletedProcess:
+    def _run(
+        self,
+        args: list[str],
+        check: bool = True,
+        input: str | None = None,
+    ) -> subprocess.CompletedProcess:
         """Run a fossil sub-command inside *repo_path* and return the result."""
         return subprocess.run(
             ["fossil", *args],
@@ -226,6 +234,7 @@ class FossilAdapter(VCSAdapter):
             capture_output=True,
             text=True,
             check=check,
+            input=input,
         )
 
     def is_repo(self) -> bool:
@@ -301,6 +310,28 @@ class FossilAdapter(VCSAdapter):
         """Return the raw content of a wiki page."""
         result = self._run(["wiki", "export", page_name], check=False)
         return result.stdout
+
+    def wiki_commit(self, page_name: str, content: str, mimetype: str = "text/x-markdown") -> None:
+        """
+        Write or update a Fossil wiki page.
+
+        Runs ``fossil wiki commit --mimetype MIME PAGE_NAME`` with *content*
+        supplied on stdin.  Uses ``text/x-markdown`` by default so Fossil
+        renders content as Markdown rather than WikiCreole.
+
+        Falls back to committing without ``--mimetype`` if the installed
+        Fossil version does not support that flag (pre-2.12).
+        """
+        result = self._run(
+            ["wiki", "commit", "--mimetype", mimetype, page_name],
+            check=False,
+            input=content,
+        )
+        if result.returncode != 0 and "--mimetype" in (result.stderr or ""):
+            # Older Fossil: retry without --mimetype
+            self._run(["wiki", "commit", page_name], check=True, input=content)
+        elif result.returncode != 0:
+            logger.warning("fossil wiki commit failed for %r: %s", page_name, result.stderr.strip())
 
     def ticket_list(self, limit: int = 200) -> list[dict]:
         """

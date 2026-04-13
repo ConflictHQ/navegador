@@ -1,4 +1,4 @@
-from .fossil import FossilIngester
+from .fossil import FossilIngester, FossilWikiSync
 from .knowledge import KnowledgeIngester
 from .memory import MemoryIngester
 from .parser import RepoIngester
@@ -12,4 +12,5 @@ __all__ = [
     "WikiIngester",
     "PlanopticonIngester",
     "FossilIngester",
+    "FossilWikiSync",
 ]

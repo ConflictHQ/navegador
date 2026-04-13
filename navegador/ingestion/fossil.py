@@ -1,26 +1,38 @@
 """
 FossilIngester — ingests Fossil SCM wiki pages and tickets into the graph.
+FossilWikiSync — syncs wiki content between Fossil and GitHub wiki.
 
 Fossil is a self-contained DVCS that ships with its own wiki and bug-tracker.
-This ingester reads both, creating WikiPage nodes for wiki pages and Ticket
-nodes for tracker items.
+This module provides two top-level classes:
+
+FossilIngester
+    Reads Fossil wiki pages and tickets into the navegador graph.
 
     Wiki pages  → WikiPage nodes (same label used for GitHub wiki)
     Tickets     → Ticket nodes  (label added in schema v12)
 
-Each WikiPage gets the usual DOCUMENTS edges to code symbols found in its
-headings and bold terms.  Each Ticket gets a BELONGS_TO edge to the
-Repository it was read from.
+FossilWikiSync
+    Copies wiki content between a Fossil checkout and a GitHub wiki.
+    Direction is always explicit — caller chooses push (Fossil→GitHub) or
+    pull (GitHub→Fossil).  Pages present only on the destination are left
+    untouched; source pages overwrite their counterpart.
 
-Usage:
+Usage::
+
     from navegador.vcs import FossilAdapter
-    from navegador.ingestion.fossil import FossilIngester
+    from navegador.ingestion.fossil import FossilIngester, FossilWikiSync
 
     adapter = FossilAdapter("/path/to/fossil-checkout")
-    ingester = FossilIngester(store, adapter)
 
-    wiki_stats   = ingester.ingest_wiki()
-    ticket_stats = ingester.ingest_tickets()
+    # Graph ingestion
+    ingester = FossilIngester(store, adapter)
+    ingester.ingest_wiki()
+    ingester.ingest_tickets()
+
+    # Wiki sync
+    sync = FossilWikiSync(adapter, "owner/repo", token="ghp_...")
+    sync.fossil_to_github()   # push Fossil → GitHub
+    sync.github_to_fossil()   # pull GitHub → Fossil
 """
 
 import logging
@@ -206,3 +218,222 @@ class FossilIngester:
                 {"name": self.repo_name},
             )
             stats["edges"] += 1
+
+
+# ── Wiki sync ─────────────────────────────────────────────────────────────────
+
+
+class FossilWikiSync:
+    """
+    Sync wiki content between a Fossil checkout and a GitHub wiki.
+
+    Direction is always explicit — call :meth:`fossil_to_github` to push
+    Fossil pages to GitHub, or :meth:`github_to_fossil` to pull GitHub pages
+    into Fossil.  Pages that exist only on the destination are left untouched.
+    Pages present on the source side overwrite their counterpart on the
+    destination (last-write-wins per sync run).
+
+    The GitHub wiki is accessed as a bare git repo
+    (``https://github.com/<repo>.wiki.git``).  A *token* is required for
+    private wikis and for any push (``fossil_to_github``).
+
+    Page name mapping
+    -----------------
+    Fossil page names use spaces: ``"Auth Setup"``
+    GitHub wiki filenames use hyphens and a ``.md`` extension: ``"Auth-Setup.md"``
+    The conversion is reversible for ASCII names.  Unicode spaces are
+    preserved through the round-trip.
+
+    Markup
+    ------
+    Fossil supports both WikiCreole (default) and Markdown.  This class
+    writes Fossil pages with ``--mimetype text/x-markdown`` so that content
+    authored on the GitHub side (Markdown) renders correctly in Fossil.
+    Pages already in WikiCreole format will still be committed but may not
+    render as intended on the GitHub side — that is a content problem, not
+    a sync problem.
+    """
+
+    def __init__(
+        self,
+        fossil_adapter: FossilAdapter,
+        gh_repo: str,
+        token: str = "",
+    ) -> None:
+        self.fossil = fossil_adapter
+        self.gh_repo = gh_repo  # "owner/repo"
+        self.token = token
+
+    # ── Name mapping ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def fossil_name_to_github_filename(name: str) -> str:
+        """``'Auth Setup'`` → ``'Auth-Setup.md'``"""
+        return name.replace(" ", "-") + ".md"
+
+    @staticmethod
+    def github_filename_to_fossil_name(filename: str) -> str:
+        """``'Auth-Setup.md'`` → ``'Auth Setup'``"""
+        return Path(filename).stem.replace("-", " ")
+
+    # ── Fossil → GitHub ───────────────────────────────────────────────────────
+
+    def fossil_to_github(self, work_dir: str | Path | None = None) -> dict[str, int]:
+        """
+        Push all Fossil wiki pages to the GitHub wiki.
+
+        Clones the GitHub wiki repo into a temporary directory (or *work_dir*),
+        writes one ``.md`` file per Fossil page, then commits and pushes.
+
+        Parameters
+        ----------
+        work_dir:
+            Parent directory for the wiki clone.  Defaults to a
+            system-managed temp directory that is cleaned up on return.
+
+        Returns
+        -------
+        dict with keys ``pages`` (synced) and ``skipped`` (empty pages).
+
+        Raises
+        ------
+        subprocess.CalledProcessError
+            If the git clone or push fails (e.g. bad token, no network).
+        """
+        import shutil
+        import tempfile
+
+        stats: dict[str, int] = {"pages": 0, "skipped": 0}
+        own_tmp = work_dir is None
+        root = Path(tempfile.mkdtemp(prefix="navegador-fsync-")) if own_tmp else Path(work_dir)
+
+        try:
+            wiki_dir = self._clone_gh_wiki(root)
+
+            for page_name in self.fossil.wiki_pages():
+                content = self.fossil.wiki_export(page_name)
+                if not content.strip():
+                    stats["skipped"] += 1
+                    continue
+                filename = self.fossil_name_to_github_filename(page_name)
+                (wiki_dir / filename).write_text(content, encoding="utf-8")
+                stats["pages"] += 1
+
+            if stats["pages"] > 0:
+                self._git_commit_push(
+                    wiki_dir,
+                    f"sync {stats['pages']} page(s) from Fossil",
+                )
+        finally:
+            if own_tmp:
+                shutil.rmtree(root, ignore_errors=True)
+
+        logger.info(
+            "FossilWikiSync.fossil_to_github [%s]: %d synced, %d skipped",
+            self.gh_repo,
+            stats["pages"],
+            stats["skipped"],
+        )
+        return stats
+
+    # ── GitHub → Fossil ───────────────────────────────────────────────────────
+
+    def github_to_fossil(self, work_dir: str | Path | None = None) -> dict[str, int]:
+        """
+        Pull all GitHub wiki pages into Fossil.
+
+        Clones the GitHub wiki repo, reads each ``.md`` file, and writes it
+        to Fossil via ``fossil wiki commit``.
+
+        Parameters
+        ----------
+        work_dir:
+            Parent directory for the wiki clone.  Defaults to a
+            system-managed temp directory that is cleaned up on return.
+
+        Returns
+        -------
+        dict with keys ``pages`` (synced) and ``skipped`` (empty pages).
+
+        Raises
+        ------
+        subprocess.CalledProcessError
+            If the git clone fails (e.g. no network, private wiki without token).
+        """
+        import shutil
+        import tempfile
+
+        stats: dict[str, int] = {"pages": 0, "skipped": 0}
+        own_tmp = work_dir is None
+        root = Path(tempfile.mkdtemp(prefix="navegador-fsync-")) if own_tmp else Path(work_dir)
+
+        try:
+            wiki_dir = self._clone_gh_wiki(root)
+
+            for md_file in sorted(wiki_dir.glob("*.md")):
+                content = md_file.read_text(encoding="utf-8")
+                if not content.strip():
+                    stats["skipped"] += 1
+                    continue
+                page_name = self.github_filename_to_fossil_name(md_file.name)
+                self.fossil.wiki_commit(page_name, content)
+                stats["pages"] += 1
+        finally:
+            if own_tmp:
+                shutil.rmtree(root, ignore_errors=True)
+
+        logger.info(
+            "FossilWikiSync.github_to_fossil [%s]: %d synced, %d skipped",
+            self.gh_repo,
+            stats["pages"],
+            stats["skipped"],
+        )
+        return stats
+
+    # ── Internal helpers ──────────────────────────────────────────────────────
+
+    def _clone_url(self) -> str:
+        if self.token:
+            return f"https://x-access-token:{self.token}@github.com/{self.gh_repo}.wiki.git"
+        return f"https://github.com/{self.gh_repo}.wiki.git"
+
+    def _clone_gh_wiki(self, parent_dir: Path) -> Path:
+        """Clone the GitHub wiki repo into *parent_dir*/wiki. Returns the clone path."""
+        import subprocess
+
+        wiki_dir = parent_dir / "wiki"
+        result = subprocess.run(
+            ["git", "clone", "--depth=1", self._clone_url(), str(wiki_dir)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode,
+                "git clone",
+                output=result.stdout,
+                stderr=result.stderr,
+            )
+        return wiki_dir
+
+    def _git_commit_push(self, wiki_dir: Path, message: str) -> None:
+        """Stage all changes in *wiki_dir*, commit, and push."""
+        import subprocess
+
+        subprocess.run(["git", "add", "-A"], cwd=wiki_dir, check=True, capture_output=True)
+        # Exit code 0 means no diff — nothing to commit
+        diff = subprocess.run(
+            ["git", "diff", "--staged", "--quiet"],
+            cwd=wiki_dir,
+            capture_output=True,
+        )
+        if diff.returncode == 0:
+            logger.info("FossilWikiSync: no changes to push")
+            return
+        subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=wiki_dir,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(["git", "push"], cwd=wiki_dir, check=True, capture_output=True)

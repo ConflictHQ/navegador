@@ -662,7 +662,7 @@ def wiki_ingest(repo: str, wiki_dir: str, token: str, api: bool, db: str):
 
 @main.group()
 def fossil():
-    """Ingest Fossil SCM wiki pages and tickets."""
+    """Ingest Fossil SCM wiki/tickets and sync with GitHub wiki."""
 
 
 @fossil.command("wiki")
@@ -698,6 +698,52 @@ def fossil_tickets(repo_path: str, repo: str, limit: int, db: str):
     console.print(
         f"[green]Fossil tickets ingested:[/green] "
         f"{stats['tickets']} tickets, {stats['edges']} edges"
+    )
+
+
+@fossil.command("push-wiki")
+@click.option("--repo", required=True, help="GitHub repo to push to (owner/repo).")
+@click.option("--token", default="", envvar="GITHUB_TOKEN", help="GitHub token.")
+@click.option("--path", "repo_path", default=".", help="Path to Fossil checkout.")
+def fossil_push_wiki(repo: str, token: str, repo_path: str):
+    """Push Fossil wiki pages to the GitHub wiki (Fossil → GitHub)."""
+    import subprocess
+
+    from navegador.ingestion.fossil import FossilWikiSync
+    from navegador.vcs import FossilAdapter
+
+    adapter = FossilAdapter(repo_path)
+    sync = FossilWikiSync(adapter, repo, token=token)
+    try:
+        stats = sync.fossil_to_github()
+    except subprocess.CalledProcessError as exc:
+        raise click.ClickException(f"git operation failed: {exc.stderr or exc}") from exc
+    console.print(
+        f"[green]Fossil → GitHub:[/green] {stats['pages']} page(s) synced, "
+        f"{stats['skipped']} skipped"
+    )
+
+
+@fossil.command("pull-wiki")
+@click.option("--repo", required=True, help="GitHub repo to pull from (owner/repo).")
+@click.option("--token", default="", envvar="GITHUB_TOKEN", help="GitHub token.")
+@click.option("--path", "repo_path", default=".", help="Path to Fossil checkout.")
+def fossil_pull_wiki(repo: str, token: str, repo_path: str):
+    """Pull GitHub wiki pages into Fossil (GitHub → Fossil)."""
+    import subprocess
+
+    from navegador.ingestion.fossil import FossilWikiSync
+    from navegador.vcs import FossilAdapter
+
+    adapter = FossilAdapter(repo_path)
+    sync = FossilWikiSync(adapter, repo, token=token)
+    try:
+        stats = sync.github_to_fossil()
+    except subprocess.CalledProcessError as exc:
+        raise click.ClickException(f"git operation failed: {exc.stderr or exc}") from exc
+    console.print(
+        f"[green]GitHub → Fossil:[/green] {stats['pages']} page(s) synced, "
+        f"{stats['skipped']} skipped"
     )
 
 
