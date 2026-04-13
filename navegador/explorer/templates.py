@@ -196,6 +196,93 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   ::-webkit-scrollbar {{ width: 5px; }}
   ::-webkit-scrollbar-track {{ background: #0d1b35; }}
   ::-webkit-scrollbar-thumb {{ background: #0f3460; border-radius: 3px; }}
+  #timeline-panel {{
+    background: #16213e;
+    border-top: 1px solid #0f3460;
+    flex-shrink: 0;
+    max-height: 40%;
+    overflow-y: auto;
+    display: none;
+  }}
+  .timeline-section-title {{
+    padding: 8px 14px 4px;
+    font-size: 0.8rem;
+    color: #7a8aaa;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }}
+  .snapshot-list {{
+    padding: 0 8px 4px;
+  }}
+  .snapshot-item {{
+    padding: 6px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.15s;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.78rem;
+  }}
+  .snapshot-item:hover {{ background: #0f3460; }}
+  .snapshot-item.active {{ background: #0f3460; border-left: 2px solid #4e9af1; }}
+  .snapshot-ref {{ color: #4e9af1; font-weight: 600; }}
+  .snapshot-date {{ color: #5a6a8a; font-size: 0.7rem; }}
+  .snapshot-count {{ color: #7a8aaa; font-size: 0.7rem; }}
+  .snapshot-all-btn {{
+    display: inline-block;
+    padding: 3px 10px;
+    margin: 4px 8px 6px;
+    border: 1px solid #0f3460;
+    border-radius: 4px;
+    background: transparent;
+    color: #7a8aaa;
+    font-size: 0.72rem;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }}
+  .snapshot-all-btn:hover {{ background: #0f3460; color: #e0e0e0; }}
+  .snapshot-all-btn.active {{ background: #0f3460; color: #4e9af1; }}
+  .history-list {{
+    padding: 0 8px 8px;
+  }}
+  .history-event {{
+    padding: 6px 8px;
+    border-radius: 4px;
+    transition: background 0.15s;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 0.78rem;
+  }}
+  .history-event:hover {{ background: #0f3460; }}
+  .event-ref {{
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 8px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    background: #0f346044;
+    color: #7a8aaa;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }}
+  .event-type {{
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 8px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }}
+  .event-type.first_seen {{ background: #27ae6022; color: #27ae60; }}
+  .event-type.moved {{ background: #4e9af122; color: #4e9af1; }}
+  .event-type.renamed {{ background: #e67e2222; color: #e67e22; }}
+  .event-type.removed {{ background: #e74c3c22; color: #e74c3c; }}
+  .event-type.seen {{ background: #7a8aaa22; color: #7a8aaa; }}
+  .event-type.changed {{ background: #f39c1222; color: #f39c12; }}
+  .event-detail {{ color: #c8d8f0; word-break: break-word; }}
 </style>
 </head>
 <body>
@@ -214,6 +301,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="search-results"></div>
     <div id="detail-panel">
       <div id="empty-hint">Click a node<br>or search above<br>to see details.</div>
+    </div>
+    <div id="timeline-panel">
+      <div class="timeline-section-title">Snapshots</div>
+      <button class="snapshot-all-btn active" id="snapshot-all-btn" onclick="clearSnapshotFilter()">All</button>
+      <div class="snapshot-list" id="snapshot-list"></div>
+      <div id="symbol-history-section" style="display:none">
+        <div class="timeline-section-title">Symbol History</div>
+        <div class="history-list" id="history-list"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -236,6 +332,9 @@ let nodeById = {{}};  // id → node
 
 let selectedNode = null;
 let hoveredNode = null;
+
+// Snapshot filter state
+let snapshotFilterNames = null;  // null = no filter, Set = names in snapshot
 
 // Camera
 let camX = 0, camY = 0, camScale = 1;
@@ -419,15 +518,18 @@ function draw() {{
     const isSelected = n === selectedNode;
     const isHovered = n === hoveredNode;
     const color = nodeColor(n.label);
+    const inSnapshot = !snapshotFilterNames || snapshotFilterNames.has(n.name);
+    const baseAlpha = inSnapshot ? 0.9 : 0.15;
 
     ctx.beginPath();
     ctx.arc(n.x, n.y, nodeR + (isSelected ? 3 : isHovered ? 1 : 0), 0, 2*Math.PI);
     ctx.fillStyle = color;
-    ctx.globalAlpha = 0.9;
+    ctx.globalAlpha = baseAlpha;
     ctx.fill();
     if (isSelected || isHovered) {{
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2 / camScale;
+      ctx.globalAlpha = inSnapshot ? 1 : 0.3;
       ctx.stroke();
     }}
     ctx.globalAlpha = 1;
@@ -438,8 +540,10 @@ function draw() {{
       const fontSize = Math.max(8, 11 / camScale);
       ctx.font = `${{isSelected ? 'bold ' : ''}}${{fontSize}}px sans-serif`;
       ctx.fillStyle = '#e0e8ff';
-      ctx.globalAlpha = Math.min(1, (camScale - labelThreshold + 0.1) * 3);
-      if (isSelected || isHovered) ctx.globalAlpha = 1;
+      let labelAlpha = Math.min(1, (camScale - labelThreshold + 0.1) * 3);
+      if (isSelected || isHovered) labelAlpha = 1;
+      if (!inSnapshot) labelAlpha *= 0.2;
+      ctx.globalAlpha = labelAlpha;
       ctx.fillText(n.name, n.x + nodeR + 2, n.y + 4);
       ctx.globalAlpha = 1;
     }}
@@ -533,6 +637,7 @@ async function selectNode(node) {{
   }} catch(e) {{
     renderDetail({{ name: node.name, label: node.label, props: node.props, neighbors: [] }});
   }}
+  loadSymbolHistory(node.name);
 }}
 
 function renderDetail(data) {{
@@ -627,8 +732,78 @@ function renderSearchResults(results) {{
   `).join('');
 }}
 
+// ── Timeline / Snapshots ────────────────────────────────────────────────────
+async function loadSnapshots() {{
+  try {{
+    const data = await fetch('/api/snapshots').then(r => r.json());
+    renderSnapshots(data);
+  }} catch(_) {{}}
+}}
+
+function renderSnapshots(snapshots) {{
+  const panel = document.getElementById('timeline-panel');
+  const list = document.getElementById('snapshot-list');
+  if (!snapshots || snapshots.length === 0) {{
+    panel.style.display = 'none';
+    return;
+  }}
+  panel.style.display = 'block';
+  list.innerHTML = snapshots.map(s => {{
+    const date = s.committed_at ? s.committed_at.split(' ')[0] : '';
+    return `<div class="snapshot-item" onclick="selectSnapshot('${{escHtml(s.ref)}}', this)">
+      <span class="snapshot-ref">${{escHtml(s.ref)}}</span>
+      <span class="snapshot-date">${{date}}</span>
+      <span class="snapshot-count">${{s.symbol_count}} sym</span>
+    </div>`;
+  }}).join('');
+}}
+
+async function selectSnapshot(ref, el) {{
+  try {{
+    const symbols = await fetch('/api/snapshots/' + encodeURIComponent(ref) + '/symbols').then(r => r.json());
+    snapshotFilterNames = new Set(symbols.map(s => s.name));
+    const items = document.querySelectorAll('.snapshot-item');
+    items.forEach(i => i.classList.remove('active'));
+    if (el) el.classList.add('active');
+    document.getElementById('snapshot-all-btn').classList.remove('active');
+  }} catch(_) {{
+    snapshotFilterNames = null;
+  }}
+}}
+window.selectSnapshot = selectSnapshot;
+
+function clearSnapshotFilter() {{
+  snapshotFilterNames = null;
+  const items = document.querySelectorAll('.snapshot-item');
+  items.forEach(i => i.classList.remove('active'));
+  document.getElementById('snapshot-all-btn').classList.add('active');
+}}
+window.clearSnapshotFilter = clearSnapshotFilter;
+
+async function loadSymbolHistory(name) {{
+  const section = document.getElementById('symbol-history-section');
+  const list = document.getElementById('history-list');
+  try {{
+    const data = await fetch('/api/node/' + encodeURIComponent(name) + '/history').then(r => r.json());
+    if (!data.events || data.events.length === 0) {{
+      section.style.display = 'none';
+      return;
+    }}
+    section.style.display = 'block';
+    list.innerHTML = data.events.map(e => {{
+      return `<div class="history-event">
+        <span class="event-ref">${{escHtml(e.ref)}}</span>
+        <span class="event-type ${{e.event}}">${{e.event}}</span>
+        <span class="event-detail">${{escHtml(e.detail)}}</span>
+      </div>`;
+    }}).join('');
+  }} catch(_) {{
+    section.style.display = 'none';
+  }}
+}}
+
 // ── Boot ────────────────────────────────────────────────────────────────────
-loadGraph().then(() => loop());
+loadGraph().then(() => {{ loop(); loadSnapshots(); }});
 }());
 </script>
 </body>

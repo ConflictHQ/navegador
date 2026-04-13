@@ -7,11 +7,14 @@ Python's built-in http.server and json modules (no Flask/FastAPI).
 
 Routes
 ------
-GET /               — self-contained HTML visualisation page
-GET /api/graph      — full graph as {nodes: [...], edges: [...]}
-GET /api/search?q=  — search nodes by name (case-insensitive substring)
-GET /api/node/<name>— node details + immediate neighbours
-GET /api/stats      — {nodes: N, edges: M, node_types: {...}, edge_types: {...}}
+GET /                           — self-contained HTML visualisation page
+GET /api/graph                  — full graph as {nodes: [...], edges: [...]}
+GET /api/search?q=              — search nodes by name (case-insensitive substring)
+GET /api/node/<name>            — node details + immediate neighbours
+GET /api/node/<name>/history    — symbol history across snapshots
+GET /api/stats                  — {nodes: N, edges: M, node_types: {...}, edge_types: {...}}
+GET /api/snapshots              — list all snapshots
+GET /api/snapshots/<ref>/symbols — symbols at a specific snapshot
 """
 
 from __future__ import annotations
@@ -144,6 +147,62 @@ def _get_node_detail(store: "GraphStore", name: str) -> dict:
     return {"name": name, "label": label, "props": props, "neighbors": neighbors}
 
 
+def _get_snapshots(store: "GraphStore") -> list[dict]:
+    rows = _query(
+        store,
+        "MATCH (s:Snapshot) RETURN s.ref, s.commit_sha, s.committed_at, s.symbol_count "
+        "ORDER BY s.committed_at",
+    )
+    return [
+        {
+            "ref": row[0] or "",
+            "commit_sha": row[1] or "",
+            "committed_at": row[2] or "",
+            "symbol_count": row[3] or 0,
+        }
+        for row in rows
+    ]
+
+
+def _get_node_history(store: "GraphStore", name: str, file_path: str = "") -> dict:
+    from navegador.history import HistoryStore
+
+    hs = HistoryStore(store)
+    report = hs.history(name, file_path=file_path)
+    return {
+        "symbol": report.symbol,
+        "file_path": report.file_path,
+        "events": [
+            {
+                "ref": e.ref,
+                "event": e.event,
+                "name": e.name,
+                "file_path": e.file_path,
+                "detail": e.detail,
+            }
+            for e in report.events
+        ],
+    }
+
+
+def _get_snapshot_symbols(store: "GraphStore", ref: str) -> list[dict]:
+    from navegador.history import HistoryStore
+
+    hs = HistoryStore(store)
+    entries = hs.symbols_at(ref)
+    return [
+        {
+            "ref": entry.ref,
+            "label": entry.label,
+            "name": entry.name,
+            "file_path": entry.file_path,
+            "line_start": entry.line_start,
+            "line_end": entry.line_end,
+        }
+        for entry in entries
+    ]
+
+
 def _get_stats(store: "GraphStore") -> dict:
     node_count = store.node_count()
     edge_count = store.edge_count()
@@ -213,6 +272,23 @@ def _make_handler(store: "GraphStore"):
                 q = qs.get("q", [""])[0]
                 results = _search_nodes(self._store, q) if q else []
                 self._send_json({"nodes": results})
+
+            # ── Snapshots list
+            elif path == "/api/snapshots":
+                self._send_json(_get_snapshots(self._store))
+
+            # ── Snapshot symbols — /api/snapshots/<ref>/symbols
+            elif path.startswith("/api/snapshots/") and path.endswith("/symbols"):
+                raw_ref = path[len("/api/snapshots/") : -len("/symbols")]
+                ref = unquote(raw_ref)
+                self._send_json(_get_snapshot_symbols(self._store, ref))
+
+            # ── Node history — /api/node/<name>/history
+            elif path.startswith("/api/node/") and path.endswith("/history"):
+                raw_name = path[len("/api/node/") : -len("/history")]
+                name = unquote(raw_name)
+                file_path = qs.get("file_path", [""])[0]
+                self._send_json(_get_node_history(self._store, name, file_path))
 
             # ── Node detail — /api/node/<name>
             elif path.startswith("/api/node/"):

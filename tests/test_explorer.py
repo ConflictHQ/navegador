@@ -348,6 +348,224 @@ class TestStatsEndpoint:
         assert total == 3
 
 
+# ── API endpoint: GET /api/snapshots ─────────────────────────────────────
+
+
+class TestSnapshotsEndpoint:
+    def _snapshot_store(self):
+        """Return a store mock that returns snapshot data for the /api/snapshots Cypher."""
+        store = MagicMock()
+        store.node_count.return_value = 3
+        store.edge_count.return_value = 2
+
+        def _query_side_effect(cypher, params=None):
+            result = MagicMock()
+            cypher_lower = cypher.lower()
+            if "match (s:snapshot)" in cypher_lower and "order by" in cypher_lower:
+                result.result_set = [
+                    ["v1.0.0", "abc123", "2025-01-10 12:00:00", 42],
+                    ["v2.0.0", "def456", "2025-06-15 09:30:00", 87],
+                ]
+            else:
+                result.result_set = []
+            return result
+
+        store.query.side_effect = _query_side_effect
+        return store
+
+    def test_returns_list(self):
+        port = _free_port()
+        with ExplorerServer(self._snapshot_store(), port=port):
+            status, data = _fetch_json(f"http://127.0.0.1:{port}/api/snapshots")
+        assert status == 200
+        assert isinstance(data, list)
+
+    def test_snapshot_fields(self):
+        port = _free_port()
+        with ExplorerServer(self._snapshot_store(), port=port):
+            _, data = _fetch_json(f"http://127.0.0.1:{port}/api/snapshots")
+        assert len(data) == 2
+        snap = data[0]
+        assert snap["ref"] == "v1.0.0"
+        assert snap["commit_sha"] == "abc123"
+        assert snap["committed_at"] == "2025-01-10 12:00:00"
+        assert snap["symbol_count"] == 42
+
+    def test_empty_snapshots(self):
+        port = _free_port()
+        store = MagicMock()
+        store.node_count.return_value = 0
+        store.edge_count.return_value = 0
+
+        def _query_side_effect(cypher, params=None):
+            result = MagicMock()
+            result.result_set = []
+            return result
+
+        store.query.side_effect = _query_side_effect
+        with ExplorerServer(store, port=port):
+            _, data = _fetch_json(f"http://127.0.0.1:{port}/api/snapshots")
+        assert data == []
+
+
+# ── API endpoint: GET /api/node/<name>/history ───────────────────────────
+
+
+class TestNodeHistoryEndpoint:
+    def _history_store(self):
+        """Return a store mock whose queries satisfy HistoryStore.history()."""
+        store = MagicMock()
+        store.node_count.return_value = 3
+        store.edge_count.return_value = 2
+
+        def _query_side_effect(cypher, params=None):
+            result = MagicMock()
+            cypher_lower = cypher.lower()
+            if (
+                "match (s:snapshot)-[:snapshot_of]->(n)" in cypher_lower
+                and "n.name" in cypher_lower
+            ):
+                # _SNAPSHOTS_FOR_SYMBOL result
+                result.result_set = [
+                    ["v1.0.0", "2025-01-10", "Function", "AuthService", "app/auth.py"],
+                    ["v2.0.0", "2025-06-15", "Function", "AuthService", "app/auth.py"],
+                ]
+            elif "match (s:snapshot)" in cypher_lower and "order by" in cypher_lower:
+                # _LIST_SNAPSHOTS result (used for removal detection)
+                result.result_set = [
+                    ["v1.0.0", "abc123", "2025-01-10", 42],
+                    ["v2.0.0", "def456", "2025-06-15", 87],
+                ]
+            else:
+                result.result_set = []
+            return result
+
+        store.query.side_effect = _query_side_effect
+        return store
+
+    def test_returns_symbol_and_events(self):
+        port = _free_port()
+        with ExplorerServer(self._history_store(), port=port):
+            status, data = _fetch_json(f"http://127.0.0.1:{port}/api/node/AuthService/history")
+        assert status == 200
+        assert data["symbol"] == "AuthService"
+        assert "events" in data
+        assert isinstance(data["events"], list)
+
+    def test_first_event_is_first_seen(self):
+        port = _free_port()
+        with ExplorerServer(self._history_store(), port=port):
+            _, data = _fetch_json(f"http://127.0.0.1:{port}/api/node/AuthService/history")
+        events = data["events"]
+        assert len(events) >= 1
+        assert events[0]["event"] == "first_seen"
+        assert events[0]["ref"] == "v1.0.0"
+
+    def test_event_fields(self):
+        port = _free_port()
+        with ExplorerServer(self._history_store(), port=port):
+            _, data = _fetch_json(f"http://127.0.0.1:{port}/api/node/AuthService/history")
+        for event in data["events"]:
+            assert "ref" in event
+            assert "event" in event
+            assert "name" in event
+            assert "file_path" in event
+            assert "detail" in event
+
+    def test_file_path_query_param(self):
+        port = _free_port()
+        with ExplorerServer(self._history_store(), port=port):
+            status, data = _fetch_json(
+                f"http://127.0.0.1:{port}/api/node/AuthService/history?file_path=app/auth.py"
+            )
+        assert status == 200
+        assert data["file_path"] == "app/auth.py"
+
+    def test_no_history_returns_empty_events(self):
+        port = _free_port()
+        store = MagicMock()
+        store.node_count.return_value = 0
+        store.edge_count.return_value = 0
+
+        def _query_side_effect(cypher, params=None):
+            result = MagicMock()
+            result.result_set = []
+            return result
+
+        store.query.side_effect = _query_side_effect
+        with ExplorerServer(store, port=port):
+            _, data = _fetch_json(f"http://127.0.0.1:{port}/api/node/Unknown/history")
+        assert data["events"] == []
+
+
+# ── API endpoint: GET /api/snapshots/<ref>/symbols ───────────────────────
+
+
+class TestSnapshotSymbolsEndpoint:
+    def _symbols_store(self):
+        """Return a store mock whose queries satisfy HistoryStore.symbols_at()."""
+        store = MagicMock()
+        store.node_count.return_value = 3
+        store.edge_count.return_value = 2
+
+        def _query_side_effect(cypher, params=None):
+            result = MagicMock()
+            cypher_lower = cypher.lower()
+            if "match (s:snapshot" in cypher_lower and "snapshot_of" in cypher_lower:
+                result.result_set = [
+                    ["Function", "authenticate", "app/auth.py", 10, 45],
+                    ["Class", "AuthService", "app/auth.py", 1, 80],
+                ]
+            else:
+                result.result_set = []
+            return result
+
+        store.query.side_effect = _query_side_effect
+        return store
+
+    def test_returns_list(self):
+        port = _free_port()
+        with ExplorerServer(self._symbols_store(), port=port):
+            status, data = _fetch_json(f"http://127.0.0.1:{port}/api/snapshots/v1.0.0/symbols")
+        assert status == 200
+        assert isinstance(data, list)
+
+    def test_symbol_fields(self):
+        port = _free_port()
+        with ExplorerServer(self._symbols_store(), port=port):
+            _, data = _fetch_json(f"http://127.0.0.1:{port}/api/snapshots/v1.0.0/symbols")
+        assert len(data) == 2
+        sym = data[0]
+        assert sym["ref"] == "v1.0.0"
+        assert sym["label"] == "Function"
+        assert sym["name"] == "authenticate"
+        assert sym["file_path"] == "app/auth.py"
+        assert sym["line_start"] == 10
+        assert sym["line_end"] == 45
+
+    def test_url_encoded_ref(self):
+        port = _free_port()
+        with ExplorerServer(self._symbols_store(), port=port):
+            status, _ = _fetch_json(f"http://127.0.0.1:{port}/api/snapshots/v1.0.0/symbols")
+        assert status == 200
+
+    def test_empty_snapshot(self):
+        port = _free_port()
+        store = MagicMock()
+        store.node_count.return_value = 0
+        store.edge_count.return_value = 0
+
+        def _query_side_effect(cypher, params=None):
+            result = MagicMock()
+            result.result_set = []
+            return result
+
+        store.query.side_effect = _query_side_effect
+        with ExplorerServer(store, port=port):
+            _, data = _fetch_json(f"http://127.0.0.1:{port}/api/snapshots/nonexistent/symbols")
+        assert data == []
+
+
 # ── 404 for unknown routes ─────────────────────────────────────────────────
 
 
@@ -390,6 +608,18 @@ class TestHtmlTemplate:
 
     def test_contains_api_stats_fetch(self):
         assert "/api/stats" in HTML_TEMPLATE
+
+    def test_contains_timeline_panel(self):
+        assert "timeline-panel" in HTML_TEMPLATE
+
+    def test_contains_api_snapshots_fetch(self):
+        assert "/api/snapshots" in HTML_TEMPLATE
+
+    def test_contains_history_fetch(self):
+        assert "/history" in HTML_TEMPLATE
+
+    def test_contains_snapshot_filter_state(self):
+        assert "snapshotFilterNames" in HTML_TEMPLATE
 
     def test_no_external_deps(self):
         """No CDN or external URLs should appear in the template."""
