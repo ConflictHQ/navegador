@@ -698,6 +698,21 @@ def create_mcp_server(store_factory, read_only: bool = False):
             rows = result.result_set or []
             if not rows:
                 return [TextContent(type="text", text=f"No memory node found: {arguments['name']}")]
+            # Fail closed: if multiple repos contain the same name and no repo was specified,
+            # return an error instead of an arbitrary match.
+            if len(rows) > 1 and not arguments.get("repo", ""):
+                repos = sorted({row[4] for row in rows if row[4]})
+                return [TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "error": "ambiguous",
+                        "message": (
+                            f"Memory name {arguments['name']!r} exists in multiple repos. "
+                            "Pass repo= to disambiguate."
+                        ),
+                        "repos": repos,
+                    }),
+                )]
             row = rows[0]
             item = {
                 "label": row[0],

@@ -270,7 +270,6 @@ WHERE n.memory_type IS NOT NULL
 RETURN labels(n)[0] AS label, n.name AS name, n.description AS description,
        n.memory_type AS memory_type, n.repo AS repo,
        coalesce(n.rationale, n.content, n.description, '') AS content
-LIMIT 1
 """
 
 MEMORY_FOR_FILE = """

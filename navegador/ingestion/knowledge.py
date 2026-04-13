@@ -277,7 +277,7 @@ class KnowledgeIngester:
         result = self.store.query(
             "MATCH (n {name: $name}) WHERE n.memory_type IS NOT NULL "
             "AND ($repo = '' OR n.repo = $repo) "
-            "RETURN labels(n)[0] AS label LIMIT 1",
+            "RETURN labels(n)[0] AS label, coalesce(n.repo, '') AS repo",
             {"name": memory_name, "repo": repo},
         )
         rows = result.result_set or []
@@ -285,11 +285,22 @@ class KnowledgeIngester:
             logger.warning("Memory node not found: %r — skipping GOVERNS edge", memory_name)
             return
 
+        # Fail closed: if multiple repos contain the same memory name and no repo was
+        # specified, refuse to create the edge rather than fanning out to all of them.
+        if len(rows) > 1 and not repo:
+            repos = sorted({r[1] for r in rows if r[1]})
+            logger.warning(
+                "Memory name %r is ambiguous (found in repos: %s) — "
+                "pass repo= to annotate_code() to disambiguate. Skipping GOVERNS edge.",
+                memory_name,
+                ", ".join(repos),
+            )
+            return
+
         mem_label = NodeLabel(rows[0][0])
+        actual_repo = rows[0][1]  # use the repo from the matched node
         code_key = {"name": code_name, "file_path": file_path} if file_path else {"name": code_name}
-        # Use (name, repo) key for the memory node when repo is known, to match how
-        # MemoryIngester stores it (MERGE on name+repo).
-        mem_key = {"name": memory_name, "repo": repo} if repo else {"name": memory_name}
+        mem_key = {"name": memory_name, "repo": actual_repo} if actual_repo else {"name": memory_name}
         self.store.create_edge(
             mem_label,
             mem_key,

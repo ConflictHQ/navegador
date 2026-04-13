@@ -208,9 +208,9 @@ class TestKnowledgeMemoryGoverns:
         from navegador.ingestion.knowledge import KnowledgeIngester
 
         store = MagicMock()
-        # Query returns a Rule node
+        # Query returns a Rule node (label, repo)
         r = MagicMock()
-        r.result_set = [["Rule"]]
+        r.result_set = [["Rule", "my-repo"]]
         store.query.return_value = r
 
         ki = KnowledgeIngester(store)
@@ -220,7 +220,7 @@ class TestKnowledgeMemoryGoverns:
         store.create_edge.assert_called()
         args = store.create_edge.call_args[0]
         assert args[0] == NodeLabel.Rule
-        assert args[1] == {"name": "token_expiry_rule"}
+        assert args[1] == {"name": "token_expiry_rule", "repo": "my-repo"}
         assert args[2] == EdgeType.GOVERNS
         assert args[3] == NodeLabel.Function
         assert args[4] == {"name": "validate_token"}
@@ -245,7 +245,7 @@ class TestKnowledgeMemoryGoverns:
 
         store = MagicMock()
         r = MagicMock()
-        r.result_set = [["Decision"]]
+        r.result_set = [["Decision", "my-repo"]]
         store.query.return_value = r
 
         ki = KnowledgeIngester(store)
@@ -260,7 +260,7 @@ class TestKnowledgeMemoryGoverns:
 
         store = MagicMock()
         r = MagicMock()
-        r.result_set = [["WikiPage"]]
+        r.result_set = [["WikiPage", "my-repo"]]
         store.query.return_value = r
 
         ki = KnowledgeIngester(store)
