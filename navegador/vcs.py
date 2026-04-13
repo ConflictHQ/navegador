@@ -109,16 +109,25 @@ class GitAdapter(VCSAdapter):
 
         When *since* is given, runs ``git diff --name-only <since>``.
         When *since* is empty, runs ``git diff HEAD --name-only`` which
-        includes both staged and unstaged changes relative to HEAD.
+        includes both staged and unstaged changes relative to HEAD,
+        plus ``git ls-files --others --exclude-standard`` to capture
+        untracked files.
         """
         if since:
             args = ["diff", "--name-only", since]
+            result = self._run(args)
+            lines = result.stdout.strip().splitlines()
+            return [line for line in lines if line]
         else:
-            args = ["diff", "HEAD", "--name-only"]
-
-        result = self._run(args)
-        lines = result.stdout.strip().splitlines()
-        return [line for line in lines if line]
+            diff = self._run(["diff", "HEAD", "--name-only"])
+            untracked = self._run(["ls-files", "--others", "--exclude-standard"])
+            seen: set[str] = set()
+            files: list[str] = []
+            for line in diff.stdout.strip().splitlines() + untracked.stdout.strip().splitlines():
+                if line and line not in seen:
+                    seen.add(line)
+                    files.append(line)
+            return files
 
     def file_history(self, file_path: str, limit: int = 10) -> list[dict]:
         """

@@ -45,17 +45,44 @@ class TestNameMapping:
         )
 
 
-# ── Clone URL ─────────────────────────────────────────────────────────────────
+# ── Clone command ─────────────────────────────────────────────────────────────
 
 
-class TestCloneUrl:
-    def test_with_token(self):
+class TestCloneCommand:
+    def test_with_token_uses_extra_header(self, tmp_path):
         sync = _make_sync(gh_repo="acme/docs", token="ghp_abc")
-        assert sync._clone_url() == "https://x-access-token:ghp_abc@github.com/acme/docs.wiki.git"
+        wiki_dir = tmp_path / "wiki"
 
-    def test_without_token(self):
+        def fake_run(cmd, **kwargs):
+            wiki_dir.mkdir(parents=True, exist_ok=True)
+            return MagicMock(returncode=0)
+
+        with patch("subprocess.run", side_effect=fake_run) as mock_run:
+            sync._clone_gh_wiki(tmp_path)
+
+        cmd = mock_run.call_args[0][0]
+        assert "-c" in cmd
+        assert "http.extraHeader=Authorization: token ghp_abc" in cmd
+        # Token must NOT appear in the URL
+        url = cmd[-2]
+        assert "ghp_abc" not in url
+        assert url == "https://github.com/acme/docs.wiki.git"
+
+    def test_without_token_no_extra_header(self, tmp_path):
         sync = _make_sync(gh_repo="acme/docs", token="")
-        assert sync._clone_url() == "https://github.com/acme/docs.wiki.git"
+        wiki_dir = tmp_path / "wiki"
+
+        def fake_run(cmd, **kwargs):
+            wiki_dir.mkdir(parents=True, exist_ok=True)
+            return MagicMock(returncode=0)
+
+        with patch("subprocess.run", side_effect=fake_run) as mock_run:
+            sync._clone_gh_wiki(tmp_path)
+
+        cmd = mock_run.call_args[0][0]
+        assert "-c" not in cmd
+        url = cmd[-2]
+        assert url == "https://github.com/acme/docs.wiki.git"
 
 
 # ── fossil_to_github ──────────────────────────────────────────────────────────

@@ -135,17 +135,16 @@ class GitHubWikiProvider(WikiProvider):
         self._tmpdir = tempfile.mkdtemp(prefix="navegador-wiki-sync-")
         wiki_dir = Path(self._tmpdir) / "wiki"
 
+        url = f"https://github.com/{self._gh_repo}.wiki.git"
+        cmd = ["git", "clone", "--depth=1"]
         if self._token:
-            url = f"https://x-access-token:{self._token}@github.com/{self._gh_repo}.wiki.git"
-        else:
-            url = f"https://github.com/{self._gh_repo}.wiki.git"
-
-        subprocess.run(
-            ["git", "clone", "--depth=1", url, str(wiki_dir)],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+            cmd += ["-c", f"http.extraHeader=Authorization: token {self._token}"]
+        cmd += [url, str(wiki_dir)]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode, "git clone", output=result.stdout, stderr=result.stderr
+            )
         self._wiki_dir = wiki_dir
 
     def close(self) -> None:

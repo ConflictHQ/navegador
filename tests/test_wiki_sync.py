@@ -180,9 +180,14 @@ class TestGitHubWikiProvider:
     def test_open_raises_on_clone_failure(self):
         provider = GitHubWikiProvider("owner/repo")
 
+        failed = MagicMock()
+        failed.returncode = 128
+        failed.stdout = ""
+        failed.stderr = "repo not found"
+
         with patch(
             "navegador.wiki_sync.subprocess.run",
-            side_effect=subprocess.CalledProcessError(128, "git clone"),
+            return_value=failed,
         ):
             with pytest.raises(subprocess.CalledProcessError):
                 provider.open()

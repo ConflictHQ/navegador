@@ -422,21 +422,17 @@ class FossilWikiSync:
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
-    def _clone_url(self) -> str:
-        if self.token:
-            return f"https://x-access-token:{self.token}@github.com/{self.gh_repo}.wiki.git"
-        return f"https://github.com/{self.gh_repo}.wiki.git"
-
     def _clone_gh_wiki(self, parent_dir: Path) -> Path:
         """Clone the GitHub wiki repo into *parent_dir*/wiki. Returns the clone path."""
         import subprocess
 
         wiki_dir = parent_dir / "wiki"
-        result = subprocess.run(
-            ["git", "clone", "--depth=1", self._clone_url(), str(wiki_dir)],
-            capture_output=True,
-            text=True,
-        )
+        url = f"https://github.com/{self.gh_repo}.wiki.git"
+        cmd = ["git", "clone", "--depth=1"]
+        if self.token:
+            cmd += ["-c", f"http.extraHeader=Authorization: token {self.token}"]
+        cmd += [url, str(wiki_dir)]
+        result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise subprocess.CalledProcessError(
                 result.returncode,

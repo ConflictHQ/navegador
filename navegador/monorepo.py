@@ -355,10 +355,20 @@ class WorkspaceDetector:
             return self._fallback_packages(root)
 
         packages: list[Path] = []
+        in_use_block = False
         for line in text.splitlines():
             stripped = line.strip()
-            if stripped.startswith("use "):
-                path_str = stripped[4:].strip().strip("()")
+            if in_use_block:
+                if stripped == ")":
+                    in_use_block = False
+                elif stripped and not stripped.startswith("//"):
+                    resolved = (root / stripped).resolve()
+                    if resolved.is_dir():
+                        packages.append(resolved)
+            elif stripped == "use (":
+                in_use_block = True
+            elif stripped.startswith("use ") and not stripped.startswith("use ("):
+                path_str = stripped[4:].strip()
                 if path_str:
                     resolved = (root / path_str).resolve()
                     if resolved.is_dir():
@@ -495,6 +505,19 @@ class MonorepoIngester:
 
         Returns the number of edges created.
         """
+        # Build manifest_name -> dir_name lookup so that deps referencing
+        # the manifest name (e.g. "@myorg/my-api") resolve to the directory-
+        # based package name even when they differ.
+        manifest_to_dir: dict[str, str] = {}
+        for pkg_name, pkg_path in packages:
+            mname = self._read_manifest_name(config.type, pkg_path)
+            if mname and mname != pkg_name:
+                manifest_to_dir[mname] = pkg_name
+                # Also map bare name for scoped packages
+                bare_m = mname.lstrip("@").split("/")[-1] if "/" in mname else mname
+                if bare_m != pkg_name:
+                    manifest_to_dir.setdefault(bare_m, pkg_name)
+
         pkg_names = {name for name, _ in packages}
         edges_created = 0
 
@@ -503,8 +526,17 @@ class MonorepoIngester:
             for dep_name in deps:
                 # Normalise: strip org scope (@scope/name → name)
                 bare = dep_name.lstrip("@").split("/")[-1] if "/" in dep_name else dep_name
-                if dep_name in pkg_names or bare in pkg_names:
-                    target = dep_name if dep_name in pkg_names else bare
+                # Try: exact dep name, bare dep name, manifest-to-dir mapping
+                target = None
+                if dep_name in pkg_names:
+                    target = dep_name
+                elif bare in pkg_names:
+                    target = bare
+                elif dep_name in manifest_to_dir:
+                    target = manifest_to_dir[dep_name]
+                elif bare in manifest_to_dir:
+                    target = manifest_to_dir[bare]
+                if target:
                     try:
                         self.store.create_edge(
                             from_label=NodeLabel.Repository,
@@ -518,6 +550,45 @@ class MonorepoIngester:
                         logger.debug("Could not create DEPENDS_ON edge %s → %s", pkg_name, target)
 
         return edges_created
+
+    def _read_manifest_name(self, workspace_type: str, pkg_path: Path) -> str:
+        """Read the actual package name from the manifest file.
+
+        Returns the manifest name (e.g. ``@myorg/my-api`` for JS, ``my-crate``
+        for Cargo) or ``""`` if the manifest is missing or unreadable.
+        """
+        if workspace_type in ("turborepo", "nx", "yarn", "pnpm"):
+            pkg_json = pkg_path / "package.json"
+            if pkg_json.exists():
+                try:
+                    data = json.loads(pkg_json.read_text(encoding="utf-8"))
+                    return data.get("name", "")
+                except (OSError, json.JSONDecodeError):
+                    return ""
+        elif workspace_type == "cargo":
+            cargo_toml = pkg_path / "Cargo.toml"
+            if cargo_toml.exists():
+                try:
+                    for line in cargo_toml.read_text(encoding="utf-8").splitlines():
+                        stripped = line.strip()
+                        if stripped.startswith("name") and "=" in stripped:
+                            # name = "my-crate"
+                            value = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+                            if value:
+                                return value
+                except OSError:
+                    return ""
+        elif workspace_type == "go":
+            go_mod = pkg_path / "go.mod"
+            if go_mod.exists():
+                try:
+                    for line in go_mod.read_text(encoding="utf-8").splitlines():
+                        stripped = line.strip()
+                        if stripped.startswith("module "):
+                            return stripped.split(None, 1)[1]
+                except OSError:
+                    return ""
+        return ""
 
     def _read_package_deps(self, workspace_type: str, pkg_path: Path) -> list[str]:
         """Return a flat list of declared dependency names for a package."""

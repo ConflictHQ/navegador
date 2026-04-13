@@ -237,6 +237,9 @@ RETURN f.content_hash AS hash
 DELETE_FILE_SUBGRAPH = """
 MATCH (f:File {path: $path})-[:CONTAINS]->(child)
 DETACH DELETE child
+WITH f
+OPTIONAL MATCH (i:Import {file_path: $path})
+DETACH DELETE i
 """
 
 DOCUMENT_HASH = """

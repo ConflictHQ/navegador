@@ -26,6 +26,20 @@ _VERSION_KEY = "navegador:graph:version"
 _META_KEY = "navegador:graph:meta"
 _SNAPSHOT_KEY = "navegador:graph:snapshot"
 
+_PATH_KEYED_RESTORE = frozenset({"File", "Document", "Repository"})
+
+
+def _edge_key(label: str, props: dict) -> dict:
+    """Build a lookup key for reconnecting edges during snapshot restore.
+
+    File, Document, and Repository nodes are uniquely identified by ``path``
+    (matching GraphStore.create_node), while code-symbol nodes use
+    ``(name, file_path)``.
+    """
+    if label in _PATH_KEYED_RESTORE:
+        return {"path": props.get("path", "")}
+    return {k: v for k, v in props.items() if k in ("name", "file_path")}
+
 
 class ClusterManager:
     """
@@ -142,8 +156,8 @@ class ClusterManager:
             dst_props = edge["dst_props"]
             rel_props = edge.get("rel_props") or None
 
-            src_key = {k: v for k, v in src_props.items() if k in ("name", "file_path")}
-            dst_key = {k: v for k, v in dst_props.items() if k in ("name", "file_path")}
+            src_key = _edge_key(src_label, src_props)
+            dst_key = _edge_key(dst_label, dst_props)
 
             if src_key and dst_key:
                 store.create_edge(src_label, src_key, rel_type, dst_label, dst_key, rel_props)

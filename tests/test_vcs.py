@@ -157,6 +157,50 @@ class TestGitAdapterChangedFiles:
         files = GitAdapter(git_repo).changed_files(since=first_hash)
         assert "extra.txt" in files
 
+    def test_detects_untracked_file(self, git_repo: Path):
+        # Create a new file without staging it — should appear via ls-files
+        untracked = git_repo / "brand_new.py"
+        untracked.write_text("# new\n")
+
+        files = GitAdapter(git_repo).changed_files()
+        assert "brand_new.py" in files
+
+    def test_untracked_and_modified_combined(self, git_repo: Path):
+        # Modify a tracked file
+        readme = git_repo / "README.md"
+        readme.write_text("# modified\n")
+
+        # Create an untracked file
+        untracked = git_repo / "untracked.txt"
+        untracked.write_text("hello\n")
+
+        files = GitAdapter(git_repo).changed_files()
+        assert "README.md" in files
+        assert "untracked.txt" in files
+
+    def test_untracked_no_duplicates(self, git_repo: Path):
+        # Create a file, stage it (so it shows in diff HEAD), but it's also
+        # "new" — verify no duplicates in the returned list
+        new_file = git_repo / "dup_check.py"
+        new_file.write_text("x = 1\n")
+        _git(["add", "dup_check.py"], cwd=git_repo)
+
+        files = GitAdapter(git_repo).changed_files()
+        assert files.count("dup_check.py") == 1
+
+    def test_untracked_respects_gitignore(self, git_repo: Path):
+        # Files matching .gitignore should NOT appear
+        gitignore = git_repo / ".gitignore"
+        gitignore.write_text("*.log\n")
+        _git(["add", ".gitignore"], cwd=git_repo)
+        _git(["commit", "-m", "add gitignore"], cwd=git_repo)
+
+        ignored_file = git_repo / "debug.log"
+        ignored_file.write_text("some log\n")
+
+        files = GitAdapter(git_repo).changed_files()
+        assert "debug.log" not in files
+
     def test_returns_list(self, git_repo: Path):
         result = GitAdapter(git_repo).changed_files()
         assert isinstance(result, list)
@@ -288,8 +332,7 @@ class TestFossilAdapterImplemented:
 
         mock_result = MagicMock()
         mock_result.stdout = (
-            "=== 2024-01-15 ===\n"
-            "14:23:07 [abc123] Fix bug. (user: alice, tags: trunk)\n"
+            "=== 2024-01-15 ===\n14:23:07 [abc123] Fix bug. (user: alice, tags: trunk)\n"
         )
         with patch("subprocess.run", return_value=mock_result):
             history = adapter.file_history("README.md")
