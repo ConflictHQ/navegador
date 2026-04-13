@@ -63,6 +63,8 @@ LANGUAGE_MAP: dict[str, str] = {
     ".sh": "bash",
     ".bash": "bash",
     ".zsh": "bash",
+    ".md": "markdown",
+    ".markdown": "markdown",
 }
 
 
@@ -212,21 +214,40 @@ class RepoIngester:
             if callback and callback(stats) is False:
                 return
 
+    # Extensions handled by MarkdownParser — these produce Document nodes, not File nodes.
+    _DOCUMENT_EXTENSIONS = frozenset({".md", ".markdown"})
+
     def _file_unchanged(self, rel_path: str, content_hash: str) -> bool:
-        result = self.store.query(queries.FILE_HASH, {"path": rel_path})
+        suffix = Path(rel_path).suffix.lower()
+        if suffix in self._DOCUMENT_EXTENSIONS:
+            q = queries.DOCUMENT_HASH
+        else:
+            q = queries.FILE_HASH
+        result = self.store.query(q, {"path": rel_path})
         rows = result.result_set or []
         if not rows or rows[0][0] is None:
             return False
         return rows[0][0] == content_hash
 
     def _clear_file_subgraph(self, rel_path: str) -> None:
-        self.store.query(queries.DELETE_FILE_SUBGRAPH, {"path": rel_path})
+        suffix = Path(rel_path).suffix.lower()
+        if suffix in self._DOCUMENT_EXTENSIONS:
+            self.store.query(queries.DELETE_DOCUMENT, {"path": rel_path})
+        else:
+            self.store.query(queries.DELETE_FILE_SUBGRAPH, {"path": rel_path})
 
     def _store_file_hash(self, rel_path: str, content_hash: str) -> None:
-        self.store.query(
-            "MATCH (f:File {path: $path}) SET f.content_hash = $hash",
-            {"path": rel_path, "hash": content_hash},
-        )
+        suffix = Path(rel_path).suffix.lower()
+        if suffix in self._DOCUMENT_EXTENSIONS:
+            self.store.query(
+                "MATCH (d:Document {path: $path}) SET d.content_hash = $hash",
+                {"path": rel_path, "hash": content_hash},
+            )
+        else:
+            self.store.query(
+                "MATCH (f:File {path: $path}) SET f.content_hash = $hash",
+                {"path": rel_path, "hash": content_hash},
+            )
 
     def _maybe_redact_to_tmp(self, source_file: Path, repo_root: Path) -> tuple[Path, Path]:
         """
@@ -414,6 +435,10 @@ class RepoIngester:
                 from navegador.ingestion.bash import BashParser
 
                 self._parsers[language] = BashParser()
+            elif language == "markdown":
+                from navegador.ingestion.markdown import MarkdownParser
+
+                self._parsers[language] = MarkdownParser()
             else:
                 raise ValueError(f"Unsupported language: {language}")
         return self._parsers[language]

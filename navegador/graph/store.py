@@ -73,15 +73,37 @@ class GraphStore:
         """Execute a raw Cypher query and return the result."""
         return self._graph.query(cypher, params or {})
 
+    # Labels that are uniquely identified by their path rather than (name, file_path).
+    # These nodes represent filesystem artifacts where two files CAN share a basename
+    # but never share a path.
+    _PATH_KEYED_LABELS = frozenset({"File", "Document", "Repository"})
+
     def create_node(self, label: str, props: dict[str, Any]) -> None:
-        """Upsert a node by (label, name[, file_path])."""
-        # Ensure merge key fields exist
-        props.setdefault("name", "")
-        props.setdefault("file_path", "")
+        """
+        Upsert a node using a label-appropriate merge key.
+
+        - File / Document / Repository  → keyed by ``path`` (unique per filesystem entry)
+        - Code symbols (Function, Class, …) → keyed by ``(name, file_path)``
+        - Knowledge nodes (Rule, Concept, …) → keyed by ``name``
+        """
         # Filter out None values — FalkorDB rejects them as params
         props = {k: ("" if v is None else v) for k, v in props.items()}
         prop_str = ", ".join(f"n.{k} = ${k}" for k in props)
-        cypher = f"MERGE (n:{label} {{name: $name, file_path: $file_path}}) SET {prop_str}"
+
+        if label in self._PATH_KEYED_LABELS:
+            props.setdefault("path", "")
+            cypher = f"MERGE (n:{label} {{path: $path}}) SET {prop_str}"
+        elif props.get("file_path", ""):
+            # Code symbol with a known file — disambiguate by (name, file_path)
+            props.setdefault("name", "")
+            cypher = (
+                f"MERGE (n:{label} {{name: $name, file_path: $file_path}}) SET {prop_str}"
+            )
+        else:
+            # Knowledge node or symbol without a file — key by name only
+            props.setdefault("name", "")
+            cypher = f"MERGE (n:{label} {{name: $name}}) SET {prop_str}"
+
         self.query(cypher, props)
 
     def create_edge(

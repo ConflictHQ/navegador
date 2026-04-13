@@ -9,10 +9,20 @@ so callers/callees/references work across the whole graph by name alone.
 # ── Code: file contents ───────────────────────────────────────────────────────
 
 FILE_CONTENTS = """
-MATCH (f:File {path: $path})-[:CONTAINS]->(n)
-RETURN labels(n)[0] AS type, n.name AS name, n.line_start AS line,
-       n.docstring AS docstring, n.signature AS signature
-ORDER BY n.line_start
+MATCH (f:File {path: $path})
+CALL {
+  WITH f
+  MATCH (f)-[:CONTAINS]->(n)
+  RETURN labels(n)[0] AS type, n.name AS name, n.line_start AS line,
+         n.docstring AS docstring, n.signature AS signature
+  UNION
+  WITH f
+  MATCH (f)-[:IMPORTS]->(i:Import)
+  RETURN labels(i)[0] AS type, i.name AS name, i.line_start AS line,
+         null AS docstring, null AS signature
+}
+RETURN type, name, line, docstring, signature
+ORDER BY line
 """
 
 DIRECT_IMPORTS = """
@@ -40,12 +50,14 @@ RETURN DISTINCT labels(callee)[0] AS type, callee.name AS name,
 # ── Code: class hierarchy ─────────────────────────────────────────────────────
 
 CLASS_HIERARCHY = """
-MATCH (c:Class {name: $name})-[:INHERITS*]->(parent)
+MATCH (c:Class)-[:INHERITS*]->(parent)
+WHERE c.name = $name AND ($file_path = '' OR c.file_path = $file_path)
 RETURN parent.name AS name, parent.file_path AS file_path
 """
 
 SUBCLASSES = """
-MATCH (child:Class)-[:INHERITS*]->(c:Class {name: $name})
+MATCH (child:Class)-[:INHERITS*]->(c:Class)
+WHERE c.name = $name AND ($file_path = '' OR c.file_path = $file_path)
 RETURN child.name AS name, child.file_path AS file_path
 """
 
@@ -225,6 +237,16 @@ RETURN f.content_hash AS hash
 DELETE_FILE_SUBGRAPH = """
 MATCH (f:File {path: $path})-[:CONTAINS]->(child)
 DETACH DELETE child
+"""
+
+DOCUMENT_HASH = """
+MATCH (d:Document {path: $path})
+RETURN d.content_hash AS hash
+"""
+
+DELETE_DOCUMENT = """
+MATCH (d:Document {path: $path})
+DETACH DELETE d
 """
 
 # ── Memory: CONFLICT-format knowledge nodes ──────────────────────────────────

@@ -168,17 +168,19 @@ class ContextLoader:
         nodes: list[ContextNode] = []
         edges: list[dict[str, str]] = []
 
-        parents = self.store.query(queries.CLASS_HIERARCHY, {"name": name})
+        params = {"name": name, "file_path": file_path}
+
+        parents = self.store.query(queries.CLASS_HIERARCHY, params)
         for row in parents.result_set or []:
             nodes.append(ContextNode(type="Class", name=row[0], file_path=row[1]))
             edges.append({"from": name, "type": "INHERITS", "to": row[0]})
 
-        subs = self.store.query(queries.SUBCLASSES, {"name": name})
+        subs = self.store.query(queries.SUBCLASSES, params)
         for row in subs.result_set or []:
             nodes.append(ContextNode(type="Class", name=row[0], file_path=row[1]))
             edges.append({"from": row[0], "type": "INHERITS", "to": name})
 
-        refs = self.store.query(queries.REFERENCES_TO, {"name": name, "file_path": ""})
+        refs = self.store.query(queries.REFERENCES_TO, params)
         for row in refs.result_set or []:
             nodes.append(ContextNode(type=row[0], name=row[1], file_path=row[2], line_start=row[3]))
             edges.append({"from": row[1], "type": "REFERENCES", "to": name})

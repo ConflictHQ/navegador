@@ -4,9 +4,8 @@ MarkdownParser — ingests *.md files as Document nodes in the navegador graph.
 Each markdown file becomes a Document node. Inter-document links (via
 [text](other.md) syntax) become REFERENCES edges between Document nodes.
 
-This makes documentation and scaffold-stage repos (no code yet) navigable
-through navegador — bootstrap.md, CLAUDE.md, AGENTS.md, README.md, and
-any other markdown documentation are first-class graph nodes.
+Document identity is path-based (not title-based), so two docs that share
+an H1 heading or filename stem don't collide.
 
 Note: memory/ directory files are intentionally excluded here — they are
 handled by MemoryIngester which maps them to typed knowledge nodes
@@ -66,6 +65,8 @@ class MarkdownParser(LanguageParser):
         rel_path = str(path.relative_to(repo_root))
         title = _extract_title(content, path.name)
 
+        # Document identity is path-based (GraphStore uses path as merge key for Document).
+        # name is set to title for human-readable display but is NOT the merge key.
         store.create_node(
             NodeLabel.Document,
             {
@@ -76,7 +77,8 @@ class MarkdownParser(LanguageParser):
             },
         )
 
-        # Create REFERENCES edges for internal markdown links
+        # Create REFERENCES edges for internal markdown links.
+        # Edges use path as the lookup key, matching GraphStore's path-based identity.
         links_created = 0
         for linked_rel in _extract_md_links(content):
             # Resolve relative to the document's directory
@@ -101,12 +103,13 @@ class MarkdownParser(LanguageParser):
                     },
                 )
                 try:
+                    # Use path-based lookup so same-titled docs don't merge
                     store.create_edge(
                         NodeLabel.Document,
-                        {"name": title},
+                        {"path": rel_path},
                         EdgeType.REFERENCES,
                         NodeLabel.Document,
-                        {"name": linked_title},
+                        {"path": linked_rel_path},
                     )
                     links_created += 1
                 except Exception:
