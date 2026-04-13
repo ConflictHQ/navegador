@@ -163,6 +163,11 @@ class MemoryIngester:
                 name = meta.get("name", "").strip()
                 description = meta.get("description", "").strip()
                 mem_type = meta.get("type", "").strip().lower()
+                # Some files have frontmatter but omit type — derive from filename prefix
+                if not mem_type:
+                    prefix_m = _PREFIX_TYPE_RE.match(md_file.name)
+                    if prefix_m:
+                        mem_type = prefix_m.group(1)
             else:
                 # Bare format — derive from filename and MEMORY.md index
                 prefix_m = _PREFIX_TYPE_RE.match(md_file.name)
