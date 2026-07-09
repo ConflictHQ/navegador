@@ -4,7 +4,23 @@ Cypher query templates for navegador.
 Parameters passed as $name are substituted by FalkorDB at query time.
 Optional file_path filtering: when file_path is "" the WHERE clause is omitted
 so callers/callees/references work across the whole graph by name alone.
+
+Exception: variable-length bounds (``*1..$depth``) cannot be real query
+parameters — FalkorDB rejects them. Templates using $depth must go through
+``inline_depth()`` before execution.
 """
+
+
+def inline_depth(query: str, depth: int) -> str:
+    """
+    Inline a traversal depth into a ``*1..$depth`` bound.
+
+    FalkorDB cannot parameterize variable-length pattern bounds
+    ("Encountered unhandled type in inlined properties"); int() coercion
+    keeps the substitution injection-safe.
+    """
+    return query.replace("$depth", str(int(depth)))
+
 
 # ── Code: file contents ───────────────────────────────────────────────────────
 

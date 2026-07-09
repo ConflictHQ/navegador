@@ -134,14 +134,14 @@ class ContextLoader:
         nodes: list[ContextNode] = []
         edges: list[dict[str, str]] = []
 
-        params = {"name": name, "file_path": file_path, "depth": depth}
+        params = {"name": name, "file_path": file_path}
 
-        callees = self.store.query(queries.CALLEES, params)
+        callees = self.store.query(queries.inline_depth(queries.CALLEES, depth), params)
         for row in callees.result_set or []:
             nodes.append(ContextNode(type=row[0], name=row[1], file_path=row[2], line_start=row[3]))
             edges.append({"from": name, "type": "CALLS", "to": row[1]})
 
-        callers = self.store.query(queries.CALLERS, params)
+        callers = self.store.query(queries.inline_depth(queries.CALLERS, depth), params)
         for row in callers.result_set or []:
             nodes.append(ContextNode(type=row[0], name=row[1], file_path=row[2], line_start=row[3]))
             edges.append({"from": row[1], "type": "CALLS", "to": name})

@@ -79,8 +79,9 @@ class CrossRepoImpactResult:
 
     def to_markdown(self) -> str:
         lines = [f"# Cross-Repo Blast Radius — `{self.name}`\n"]
-        lines.append(f"**Source repo:** {self.source_repo or 'unknown'}  "
-                     f"**Depth:** {self.depth}\n")
+        lines.append(
+            f"**Source repo:** {self.source_repo or 'unknown'}  " f"**Depth:** {self.depth}\n"
+        )
 
         if self.affected_repos:
             lines.append(f"\n## Affected Repos ({len(self.affected_repos)})\n")
@@ -97,10 +98,7 @@ class CrossRepoImpactResult:
             for n in self.affected_nodes[:50]:  # cap for readability
                 repo = f" [{n.get('repo', '')}]" if n.get("repo") else ""
                 loc = f":{n['line_start']}" if n.get("line_start") else ""
-                lines.append(
-                    f"- **{n['type']}** `{n['name']}` — "
-                    f"`{n['file_path']}`{loc}{repo}"
-                )
+                lines.append(f"- **{n['type']}** `{n['name']}` — " f"`{n['file_path']}`{loc}{repo}")
             if len(self.affected_nodes) > 50:
                 lines.append(f"  _…and {len(self.affected_nodes) - 50} more_")
 
@@ -142,10 +140,12 @@ class CrossRepoImpactAnalyzer:
             repo:      Source repository name for attribution (optional).
             depth:     Traversal depth.
         """
-        params: dict[str, Any] = {"name": name, "file_path": file_path, "depth": depth}
+        from navegador.graph.queries import inline_depth
+
+        params: dict[str, Any] = {"name": name, "file_path": file_path}
 
         try:
-            result = self.store.query(_CROSS_REPO_BLAST, params)
+            result = self.store.query(inline_depth(_CROSS_REPO_BLAST, depth), params)
             rows = result.result_set or []
         except Exception:
             rows = []
@@ -161,13 +161,15 @@ class CrossRepoImpactAnalyzer:
             line = row[3]
             repo_name = row[4] or ""
 
-            affected_nodes.append({
-                "type": node_type,
-                "name": node_name,
-                "file_path": node_file,
-                "line_start": line,
-                "repo": repo_name,
-            })
+            affected_nodes.append(
+                {
+                    "type": node_type,
+                    "name": node_name,
+                    "file_path": node_file,
+                    "line_start": line,
+                    "repo": repo_name,
+                }
+            )
             if node_file:
                 affected_files.add(node_file)
             if repo_name:
@@ -234,13 +236,15 @@ class CrossRepoImpactAnalyzer:
                 node_name = row[1] or ""
                 node_file = row[2] or ""
                 line = row[3]
-                affected_nodes.append({
-                    "type": node_type,
-                    "name": node_name,
-                    "file_path": node_file,
-                    "line_start": line,
-                    "repo": repo_name,
-                })
+                affected_nodes.append(
+                    {
+                        "type": node_type,
+                        "name": node_name,
+                        "file_path": node_file,
+                        "line_start": line,
+                        "repo": repo_name,
+                    }
+                )
                 if node_file:
                     affected_files.add(node_file)
                 if rows:
