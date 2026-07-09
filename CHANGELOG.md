@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.2.0 — 2026-07-08
+
+### Federation
+
+- **Super-graph aggregator** — `navegador aggregate [NAME=]PATH...` rolls repo-local graphs bottom-up into one central FalkorDB meta-graph: per-repo namespacing (`repo` property + path prefixes), synthetic Repository anchors, and Concept/Person/Domain/Rule deduped by name with persisted cross-repo edges; re-aggregation is idempotent
+- **MCP multi-graph routing** — new optional `repo` argument on the context, search, blast-radius, and stats tools to scope one namespace or span all repos; new `list_repos` tool (24 tools total); `navegador mcp --federate [NAME=]PATH` rolls shards up at startup
+- **Shard load/unload** — `ShardManager` pages repo shards in and out under LRU with count and memory ceilings (`[cluster] max_resident_shards` / `max_shard_memory_mb` in `config.toml`); eviction persists the RDB and reloads transparently
+
+### Interoperability
+
+- **conflict-kg/v1 interchange** — canonical cross-tool KG format with JSON and SQLite encodings, content-derived stable node ids, and id-referencing edges; `navegador export --format conflict-kg`, auto-detecting `import`, and explorer `GET /api/graph?format=conflict-kg`
+
+### Fixes
+
+- **Traversal queries returned empty results** — FalkorDB rejects parameterized `*1..$depth` bounds and the errors were swallowed, so blast radius, callers/callees, task packs, and cross-repo impact silently returned nothing on the embedded backend; depth is now inlined via `queries.inline_depth()`
+- **`navegador[languages]` was uninstallable** — the `tree-sitter-swift>=0.23.0` pin doesn't exist on PyPI; relaxed to `>=0.7.3` (verified against tree-sitter 0.25)
+- **graph.db documentation** — `.navegador/graph.db` is a FalkorDB (Redis) RDB snapshot, not SQLite; README, generated config comments, and docstrings now say so
+
 ## 1.1.0 — 2026-04-13
 
 ### Interoperability
