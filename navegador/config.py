@@ -123,6 +123,9 @@ def init_project(
         "",
         "[cluster]",
         f"enabled = {'true' if cluster else 'false'}",
+        "# Shard eviction (federated workspaces) — ceilings for resident repo shards:",
+        "# max_resident_shards = 4",
+        "# max_shard_memory_mb = 512",
     ]
     config_path.write_text("\n".join(config_lines) + "\n", encoding="utf-8")
 
