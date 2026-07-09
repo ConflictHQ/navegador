@@ -54,23 +54,20 @@ class TaskPack:
     mode: str = "implement"
 
     # Structured sections
-    code: list[TaskPackNode] = field(default_factory=list)       # direct symbols
+    code: list[TaskPackNode] = field(default_factory=list)  # direct symbols
     callers: list[TaskPackNode] = field(default_factory=list)
     callees: list[TaskPackNode] = field(default_factory=list)
-    rules: list[TaskPackNode] = field(default_factory=list)      # governing rules + memory
-    docs: list[TaskPackNode] = field(default_factory=list)       # wiki + decisions + documents
+    rules: list[TaskPackNode] = field(default_factory=list)  # governing rules + memory
+    docs: list[TaskPackNode] = field(default_factory=list)  # wiki + decisions + documents
     owners: list[TaskPackNode] = field(default_factory=list)
-    tests: list[TaskPackNode] = field(default_factory=list)      # inferred test files/symbols
+    tests: list[TaskPackNode] = field(default_factory=list)  # inferred test files/symbols
     imports: list[TaskPackNode] = field(default_factory=list)
 
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         def _nodes(lst: list[TaskPackNode]) -> list[dict[str, Any]]:
-            return [
-                {k: v for k, v in n.__dict__.items() if v not in (None, "", [])}
-                for n in lst
-            ]
+            return [{k: v for k, v in n.__dict__.items() if v not in (None, "", [])} for n in lst]
 
         return {
             "target": {
@@ -95,9 +92,8 @@ class TaskPack:
 
     def to_markdown(self) -> str:
         lines: list[str] = []
-        target_label = (
-            f"`{self.target_name}`"
-            + (f" in `{self.target_file}`" if self.target_file else "")
+        target_label = f"`{self.target_name}`" + (
+            f" in `{self.target_file}`" if self.target_file else ""
         )
         lines.append(f"# Task Pack — {target_label}\n")
         lines.append(f"**Mode:** {self.mode}  **Type:** {self.target_type}\n")
@@ -217,27 +213,42 @@ class TaskPackBuilder:
             "RETURN labels(n)[0], n.name, n.file_path, n.line_start, "
             "coalesce(n.docstring, n.signature, '') LIMIT 1"
         )
-        rows = (self.store.query(cypher, {"name": name, "file_path": file_path}).result_set or [])
+        rows = self.store.query(cypher, {"name": name, "file_path": file_path}).result_set or []
         for row in rows:
             pack.code.append(
-                TaskPackNode(type=row[0], name=row[1], file_path=row[2] or "",
-                             line_start=row[3], summary=row[4] or "")
+                TaskPackNode(
+                    type=row[0],
+                    name=row[1],
+                    file_path=row[2] or "",
+                    line_start=row[3],
+                    summary=row[4] or "",
+                )
             )
 
-    def _add_callers_callees(
-        self, pack: TaskPack, name: str, file_path: str, depth: int
-    ) -> None:
-        params = {"name": name, "file_path": file_path, "depth": depth}
+    def _add_callers_callees(self, pack: TaskPack, name: str, file_path: str, depth: int) -> None:
+        params = {"name": name, "file_path": file_path}
 
-        for row in (self.store.query(queries.CALLERS, params).result_set or []):
+        callers_q = queries.inline_depth(queries.CALLERS, depth)
+        for row in self.store.query(callers_q, params).result_set or []:
             pack.callers.append(
-                TaskPackNode(type=row[0], name=row[1], file_path=row[2] or "",
-                             line_start=row[3], relation="calls this")
+                TaskPackNode(
+                    type=row[0],
+                    name=row[1],
+                    file_path=row[2] or "",
+                    line_start=row[3],
+                    relation="calls this",
+                )
             )
-        for row in (self.store.query(queries.CALLEES, params).result_set or []):
+        callees_q = queries.inline_depth(queries.CALLEES, depth)
+        for row in self.store.query(callees_q, params).result_set or []:
             pack.callees.append(
-                TaskPackNode(type=row[0], name=row[1], file_path=row[2] or "",
-                             line_start=row[3], relation="called by this")
+                TaskPackNode(
+                    type=row[0],
+                    name=row[1],
+                    file_path=row[2] or "",
+                    line_start=row[3],
+                    relation="called by this",
+                )
             )
 
     def _add_knowledge(self, pack: TaskPack, name: str, file_path: str) -> None:
@@ -249,9 +260,7 @@ class TaskPackBuilder:
             "RETURN labels(k)[0], k.name, coalesce(k.description, k.rationale, '') "
             "LIMIT 20"
         )
-        rows = self.store.query(
-            cypher, {"name": name, "file_path": file_path}
-        ).result_set or []
+        rows = self.store.query(cypher, {"name": name, "file_path": file_path}).result_set or []
         for row in rows:
             label = row[0]
             if label in ("Rule", "Decision", "WikiPage", "Document"):
@@ -268,15 +277,14 @@ class TaskPackBuilder:
             for row in mem_rows:
                 pack.rules.append(
                     TaskPackNode(
-                        type=row[0], name=row[1], summary=row[2] or "",
-                        relation=f"memory:{row[3]}"
+                        type=row[0], name=row[1], summary=row[2] or "", relation=f"memory:{row[3]}"
                     )
                 )
 
     def _add_file_symbols(self, pack: TaskPack, file_path: str) -> None:
         """Add all symbols and imports from a file."""
         result = self.store.query(queries.FILE_CONTENTS, {"path": file_path})
-        for row in (result.result_set or []):
+        for row in result.result_set or []:
             node_type = row[0] or "Unknown"
             node = TaskPackNode(
                 type=node_type,
@@ -299,7 +307,7 @@ class TaskPackBuilder:
             "RETURN DISTINCT labels(k)[0], k.name, "
             "coalesce(k.description, k.rationale, '') LIMIT 30"
         )
-        for row in (self.store.query(cypher, {"path": file_path}).result_set or []):
+        for row in self.store.query(cypher, {"path": file_path}).result_set or []:
             label = row[0]
             node = TaskPackNode(type=label, name=row[1], summary=row[2] or "")
             if label in ("Rule",):
@@ -308,14 +316,11 @@ class TaskPackBuilder:
                 pack.docs.append(node)
 
         # Memory nodes for this file
-        file_mem = (
-            self.store.query(queries.MEMORY_FOR_FILE, {"path": file_path}).result_set or []
-        )
+        file_mem = self.store.query(queries.MEMORY_FOR_FILE, {"path": file_path}).result_set or []
         for row in file_mem:
             pack.rules.append(
                 TaskPackNode(
-                    type=row[0], name=row[1], summary=row[2] or "",
-                    relation=f"memory:{row[3]}"
+                    type=row[0], name=row[1], summary=row[2] or "", relation=f"memory:{row[3]}"
                 )
             )
 
@@ -325,9 +330,7 @@ class TaskPackBuilder:
             "WHERE n.name = $name AND ($file_path = '' OR n.file_path = $file_path) "
             "RETURN p.name, p.role, p.email LIMIT 10"
         )
-        rows = self.store.query(
-            cypher, {"name": name, "file_path": file_path}
-        ).result_set or []
+        rows = self.store.query(cypher, {"name": name, "file_path": file_path}).result_set or []
         for row in rows:
             pack.owners.append(
                 TaskPackNode(type="Person", name=row[0] or "", summary=row[1] or row[2] or "")
@@ -344,11 +347,14 @@ class TaskPackBuilder:
             "     OR t.file_path CONTAINS 'test') "
             "RETURN DISTINCT labels(t)[0], t.name, t.file_path, t.line_start LIMIT 15"
         )
-        rows = self.store.query(
-            cypher, {"name": name, "file_path": file_path}
-        ).result_set or []
+        rows = self.store.query(cypher, {"name": name, "file_path": file_path}).result_set or []
         for row in rows:
             pack.tests.append(
-                TaskPackNode(type=row[0], name=row[1], file_path=row[2] or "",
-                             line_start=row[3], relation="tests this")
+                TaskPackNode(
+                    type=row[0],
+                    name=row[1],
+                    file_path=row[2] or "",
+                    line_start=row[3],
+                    relation="tests this",
+                )
             )

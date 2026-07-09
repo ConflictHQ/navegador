@@ -45,7 +45,9 @@ class TestCrossRepoImpactResultMarkdown:
 
     def test_affected_repos_section(self):
         result = CrossRepoImpactResult(
-            name="foo", source_repo="lib", depth=3,
+            name="foo",
+            source_repo="lib",
+            depth=3,
             affected_repos=["api-service", "web-frontend"],
         )
         md = result.to_markdown()
@@ -55,7 +57,9 @@ class TestCrossRepoImpactResultMarkdown:
 
     def test_affected_files_section(self):
         result = CrossRepoImpactResult(
-            name="foo", source_repo="", depth=3,
+            name="foo",
+            source_repo="",
+            depth=3,
             affected_files=["src/handler.py", "src/utils.py"],
         )
         md = result.to_markdown()
@@ -64,10 +68,17 @@ class TestCrossRepoImpactResultMarkdown:
 
     def test_affected_nodes_section(self):
         result = CrossRepoImpactResult(
-            name="foo", source_repo="", depth=3,
+            name="foo",
+            source_repo="",
+            depth=3,
             affected_nodes=[
-                {"type": "Function", "name": "bar", "file_path": "b.py",
-                 "line_start": 10, "repo": "api"},
+                {
+                    "type": "Function",
+                    "name": "bar",
+                    "file_path": "b.py",
+                    "line_start": 10,
+                    "repo": "api",
+                },
             ],
         )
         md = result.to_markdown()
@@ -79,7 +90,9 @@ class TestCrossRepoImpactResultMarkdown:
 
     def test_affected_knowledge_section(self):
         result = CrossRepoImpactResult(
-            name="foo", source_repo="", depth=3,
+            name="foo",
+            source_repo="",
+            depth=3,
             affected_knowledge=[{"type": "Rule", "name": "no_pii"}],
         )
         md = result.to_markdown()
@@ -97,11 +110,13 @@ class TestCrossRepoImpactResultMarkdown:
 
     def test_nodes_capped_at_50_with_overflow_message(self):
         nodes = [
-            {"type": "Function", "name": f"fn_{i}", "file_path": f"f{i}.py"}
-            for i in range(60)
+            {"type": "Function", "name": f"fn_{i}", "file_path": f"f{i}.py"} for i in range(60)
         ]
         result = CrossRepoImpactResult(
-            name="big", source_repo="", depth=3, affected_nodes=nodes,
+            name="big",
+            source_repo="",
+            depth=3,
+            affected_nodes=nodes,
         )
         md = result.to_markdown()
         assert "and 10 more" in md
@@ -113,10 +128,17 @@ class TestCrossRepoImpactResultMarkdown:
 class TestCrossRepoImpactResultJson:
     def test_round_trip(self):
         result = CrossRepoImpactResult(
-            name="UserSchema", source_repo="models", depth=3,
+            name="UserSchema",
+            source_repo="models",
+            depth=3,
             affected_nodes=[
-                {"type": "Class", "name": "UserView", "file_path": "views.py",
-                 "line_start": 5, "repo": "api"},
+                {
+                    "type": "Class",
+                    "name": "UserView",
+                    "file_path": "views.py",
+                    "line_start": 5,
+                    "repo": "api",
+                },
             ],
             affected_files=["views.py"],
             affected_repos=["api"],
@@ -146,9 +168,10 @@ class TestCrossRepoImpactResultJson:
 
     def test_to_dict_counts_match_lists(self):
         result = CrossRepoImpactResult(
-            name="x", source_repo="", depth=1,
-            affected_nodes=[{"type": "Function", "name": "a"},
-                            {"type": "Function", "name": "b"}],
+            name="x",
+            source_repo="",
+            depth=1,
+            affected_nodes=[{"type": "Function", "name": "a"}, {"type": "Function", "name": "b"}],
             affected_files=["a.py", "b.py", "c.py"],
             affected_repos=["repo1"],
         )
@@ -244,11 +267,13 @@ class TestBlastRadius:
         analyzer = CrossRepoImpactAnalyzer(store)
         analyzer.blast_radius("foo", file_path="specific.py", depth=5)
 
-        # Verify the first query got the params including file_path
+        # Verify the first query got the file_path param and the inlined depth
         first_call_args = store.query.call_args_list[0]
+        query_text = first_call_args[0][0]
         params = first_call_args[0][1]
         assert params["file_path"] == "specific.py"
-        assert params["depth"] == 5
+        assert "*1..5" in query_text
+        assert "$depth" not in query_text
 
     def test_none_values_in_rows_handled(self):
         store = _multi_mock_store(
@@ -267,17 +292,24 @@ class TestBlastRadiusFederated:
     @patch("navegador.analysis.crossrepo.CrossRepoImpactAnalyzer")
     def test_queries_each_store(self, _mock_cls):
         """Each store in the federation should be queried."""
-        store_a = _mock_store([
-            ["Function", "handler_a", "a.py", 10],
-        ])
-        store_b = _mock_store([
-            ["Class", "ModelB", "b.py", 1],
-        ])
+        store_a = _mock_store(
+            [
+                ["Function", "handler_a", "a.py", 10],
+            ]
+        )
+        store_b = _mock_store(
+            [
+                ["Class", "ModelB", "b.py", 1],
+            ]
+        )
 
         # Use real analyzer on a primary store
         primary = _mock_store()
-        analyzer = CrossRepoImpactAnalyzer.__wrapped__(primary) if hasattr(
-            CrossRepoImpactAnalyzer, '__wrapped__') else CrossRepoImpactAnalyzer(primary)
+        analyzer = (
+            CrossRepoImpactAnalyzer.__wrapped__(primary)
+            if hasattr(CrossRepoImpactAnalyzer, "__wrapped__")
+            else CrossRepoImpactAnalyzer(primary)
+        )
 
         # Call blast_radius_federated directly — it does not use self.store
         result = analyzer.blast_radius_federated(
@@ -292,13 +324,17 @@ class TestBlastRadiusFederated:
         assert store_b.query.called
 
     def test_merges_results_from_multiple_stores(self):
-        store_a = _mock_store([
-            ["Function", "fn_a", "a.py", 10],
-        ])
-        store_b = _mock_store([
-            ["Class", "ClassB", "b.py", 1],
-            ["Function", "fn_b2", "b2.py", 5],
-        ])
+        store_a = _mock_store(
+            [
+                ["Function", "fn_a", "a.py", 10],
+            ]
+        )
+        store_b = _mock_store(
+            [
+                ["Class", "ClassB", "b.py", 1],
+                ["Function", "fn_b2", "b2.py", 5],
+            ]
+        )
 
         primary = _mock_store()
         analyzer = CrossRepoImpactAnalyzer(primary)
@@ -320,7 +356,8 @@ class TestBlastRadiusFederated:
         primary = _mock_store()
         analyzer = CrossRepoImpactAnalyzer(primary)
         result = analyzer.blast_radius_federated(
-            "X", stores={"has-hits": store_a, "no-hits": store_b},
+            "X",
+            stores={"has-hits": store_a, "no-hits": store_b},
         )
         # Only repos with actual results should be in affected_repos
         assert "has-hits" in result.affected_repos
@@ -332,7 +369,8 @@ class TestBlastRadiusFederated:
         primary = _mock_store()
         analyzer = CrossRepoImpactAnalyzer(primary)
         result = analyzer.blast_radius_federated(
-            "X", stores={"r1": store_a, "r2": store_b},
+            "X",
+            stores={"r1": store_a, "r2": store_b},
         )
         assert result.affected_files == ["a.py", "z.py"]
 
@@ -353,7 +391,8 @@ class TestBlastRadiusFederated:
         primary = _mock_store()
         analyzer = CrossRepoImpactAnalyzer(primary)
         result = analyzer.blast_radius_federated(
-            "X", stores={"bad": bad_store, "good": good_store},
+            "X",
+            stores={"bad": bad_store, "good": good_store},
         )
         # Should still get results from the good store
         assert len(result.affected_nodes) == 1
