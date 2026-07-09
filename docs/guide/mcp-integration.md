@@ -92,7 +92,7 @@ The server speaks MCP over stdio. It does not bind a port.
 
 ## Available MCP tools
 
-All tools accept and return JSON. There are 11 tools in total.
+All tools accept and return JSON. There are 24 tools in total.
 
 | Tool | Equivalent CLI | Description |
 |---|---|---|
@@ -107,6 +107,22 @@ All tools accept and return JSON. There are 11 tools in total.
 | `find_owners` | `navegador codeowners` | People and domains that own a node |
 | `search_knowledge` | `navegador search --knowledge` | Search knowledge layer only |
 | `blast_radius` | `navegador impact` | Transitive impact set for a node |
+| `list_repos` | — | Repo namespaces in a federated super-graph |
+
+### Federated workspaces
+
+Bind the server to a central super-graph built with `navegador aggregate`, or
+roll repo graphs up at startup:
+
+```bash
+navegador mcp --db central.db --federate backend=/path/a --federate frontend=/path/b
+```
+
+Query/context/search tools take an optional `repo` argument to scope to one
+namespace (`list_repos` returns the available names); omit it to span every
+repo — `query_graph` and `blast_radius` then answer workspace-wide questions
+like "who implements Concept X across all repos". Read-only hardening applies
+to the federated graph exactly as to a single-repo graph.
 
 ### Tool input schemas
 

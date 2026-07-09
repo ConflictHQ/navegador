@@ -270,9 +270,11 @@ class ContextLoader:
 
     # ── Search ────────────────────────────────────────────────────────────────
 
-    def search(self, query: str, limit: int = 20) -> list[ContextNode]:
-        """Search code symbols by name."""
-        result = self.store.query(queries.SYMBOL_SEARCH, {"query": query, "limit": limit})
+    def search(self, query: str, limit: int = 20, repo: str = "") -> list[ContextNode]:
+        """Search code symbols by name; repo scopes to one federated namespace."""
+        result = self.store.query(
+            queries.SYMBOL_SEARCH, {"query": query, "limit": limit, "repo": repo}
+        )
         return [
             ContextNode(
                 type=row[0], name=row[1], file_path=row[2], line_start=row[3], docstring=row[4]
@@ -355,9 +357,11 @@ class ContextLoader:
 
     # ── Knowledge: search ────────────────────────────────────────────────────
 
-    def search_knowledge(self, query: str, limit: int = 20) -> list[ContextNode]:
-        """Search concepts, rules, decisions, and wiki pages."""
-        result = self.store.query(queries.KNOWLEDGE_SEARCH, {"query": query, "limit": limit})
+    def search_knowledge(self, query: str, limit: int = 20, repo: str = "") -> list[ContextNode]:
+        """Search concepts, rules, decisions, and wiki pages; repo scopes to one namespace."""
+        result = self.store.query(
+            queries.KNOWLEDGE_SEARCH, {"query": query, "limit": limit, "repo": repo}
+        )
         return [
             ContextNode(
                 type=row[0],

@@ -31,9 +31,11 @@ RETURN DISTINCT
 """
 
 # Simpler fallback without CALL subquery (FalkorDB compatibility)
+# $repo scopes the root to one federated namespace ('' = any repo)
 _BLAST_RADIUS_SIMPLE = """
 MATCH (root)-[:CALLS|REFERENCES|INHERITS|IMPLEMENTS|ANNOTATES*1..$depth]->(affected)
 WHERE root.name = $name AND ($file_path = '' OR root.file_path = $file_path)
+  AND ($repo = '' OR root.repo = $repo)
 RETURN DISTINCT
     labels(affected)[0] AS node_type,
     affected.name AS node_name,
@@ -45,6 +47,7 @@ RETURN DISTINCT
 _AFFECTED_KNOWLEDGE_QUERY = """
 MATCH (root)-[:ANNOTATES|IMPLEMENTS|GOVERNS*1..2]->(kn)
 WHERE root.name = $name AND ($file_path = '' OR root.file_path = $file_path)
+  AND ($repo = '' OR root.repo = $repo)
   AND (kn:Concept OR kn:Rule OR kn:Decision OR kn:WikiPage)
 RETURN DISTINCT labels(kn)[0] AS type, kn.name AS name
 """
@@ -94,6 +97,7 @@ class ImpactAnalyzer:
         name: str,
         file_path: str = "",
         depth: int = 3,
+        repo: str = "",
     ) -> ImpactResult:
         """
         Compute the blast radius of changing a named node.
@@ -105,11 +109,17 @@ class ImpactAnalyzer:
             name:      Symbol name (function, class, etc.)
             file_path: Narrow to a specific file (optional).
             depth:     Maximum traversal depth.
+            repo:      Scope the root to one federated repo namespace (optional).
 
         Returns:
             ImpactResult with affected_nodes, affected_files, affected_knowledge.
         """
-        params: dict[str, Any] = {"name": name, "file_path": file_path, "depth": depth}
+        params: dict[str, Any] = {
+            "name": name,
+            "file_path": file_path,
+            "depth": depth,
+            "repo": repo,
+        }
 
         try:
             result = self.store.query(_BLAST_RADIUS_SIMPLE, params)
@@ -145,7 +155,7 @@ class ImpactAnalyzer:
         affected_knowledge: list[dict[str, str]] = []
         try:
             k_result = self.store.query(
-                _AFFECTED_KNOWLEDGE_QUERY, {"name": name, "file_path": file_path}
+                _AFFECTED_KNOWLEDGE_QUERY, {"name": name, "file_path": file_path, "repo": repo}
             )
             for row in k_result.result_set or []:
                 affected_knowledge.append({"type": row[0] or "", "name": row[1] or ""})

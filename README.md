@@ -87,6 +87,19 @@ Available MCP tools:
 | `find_owners` | People assigned to any node |
 | `search_knowledge` | Search concepts, rules, decisions, wiki |
 | `blast_radius` | Impact analysis — what's affected by a change |
+| `list_repos` | Repo namespaces in a federated super-graph |
+
+For a federated workspace, aggregate repo graphs and serve the super-graph:
+
+```bash
+navegador aggregate backend=/path/a frontend=/path/b --db central.db
+navegador mcp --db central.db --read-only
+# or roll up at startup:
+navegador mcp --db central.db --federate backend=/path/a --federate frontend=/path/b
+```
+
+Query/context/search tools accept an optional `repo` argument to scope to one
+namespace; omit it to span all repos (e.g. cross-repo blast radius).
 
 ---
 

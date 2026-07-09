@@ -11,7 +11,7 @@ AST + knowledge graph context engine for AI coding agents. Parses codebases into
 - **Python 3.12+**, standalone (no Django dependency)
 - **tree-sitter** for multi-language AST parsing (13 languages)
 - **FalkorDB** graph DB with **falkordblite** (embedded via redislite; graph file is a Redis RDB snapshot, not SQLite) for local use
-- **MCP** (`mcp` Python SDK) for AI agent integration (11 tools)
+- **MCP** (`mcp` Python SDK) for AI agent integration (24 tools)
 - **Click + Rich** for CLI
 - **Pydantic** for data models
 - **Ruff** for linting/formatting
@@ -24,7 +24,7 @@ navegador/
   graph/         — GraphStore + schema + queries + migrations + export
   ingestion/     — RepoIngester + 13 language parsers + optimization
   context/       — ContextLoader + ContextBundle (JSON/markdown)
-  mcp/           — MCP server with 11 tools + security hardening
+  mcp/           — MCP server with 24 tools + security hardening
   enrichment/    — FrameworkEnricher base + 8 framework enrichers
   analysis/      — impact, flow tracing, dead code, cycles, test mapping
   intelligence/  — semantic search, community detection, NLP, doc generation
