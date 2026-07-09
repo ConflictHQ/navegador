@@ -814,17 +814,21 @@ def create_mcp_server(store_factory, read_only: bool = False):
             # return an error instead of an arbitrary match.
             if len(rows) > 1 and not arguments.get("repo", ""):
                 repos = sorted({row[4] for row in rows if row[4]})
-                return [TextContent(
-                    type="text",
-                    text=json.dumps({
-                        "error": "ambiguous",
-                        "message": (
-                            f"Memory name {arguments['name']!r} exists in multiple repos. "
-                            "Pass repo= to disambiguate."
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            {
+                                "error": "ambiguous",
+                                "message": (
+                                    f"Memory name {arguments['name']!r} exists in multiple repos. "
+                                    "Pass repo= to disambiguate."
+                                ),
+                                "repos": repos,
+                            }
                         ),
-                        "repos": repos,
-                    }),
-                )]
+                    )
+                ]
             row = rows[0]
             item = {
                 "label": row[0],

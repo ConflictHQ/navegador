@@ -89,9 +89,10 @@ def _seed_repo(store: GraphStore, suffix: str) -> None:
         "Function", {"name": f"helper_{suffix}", "file_path": "app.py", "line_start": 9}
     )
     store.create_node("Concept", {"name": "Payments"})
-    store.create_edge(
-        "File", {"path": "app.py"}, "CONTAINS", "Function", {"name": "process", "file_path": "app.py"}
-    )
+    for fn in ("process", f"helper_{suffix}"):
+        store.create_edge(
+            "File", {"path": "app.py"}, "CONTAINS", "Function", {"name": fn, "file_path": "app.py"}
+        )
     store.create_edge(
         "Function",
         {"name": "process", "file_path": "app.py"},
@@ -186,7 +187,7 @@ class TestQueryGraph:
             {
                 "cypher": (
                     "MATCH (f:Function)-[:IMPLEMENTS]->(:Concept {name: 'Payments'}) "
-                    "RETURN f.repo ORDER BY f.repo"
+                    "RETURN f.repo ORDER BY f.repo LIMIT 10"
                 )
             },
         )

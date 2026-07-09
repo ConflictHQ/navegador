@@ -70,7 +70,7 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
             key, _, value = line.partition(":")
             meta[key.strip()] = value.strip()
 
-    body = text[m.end():]
+    body = text[m.end() :]
     return meta, body
 
 
@@ -183,7 +183,7 @@ class MemoryIngester:
                 if idx_name:
                     name = idx_name
                 else:
-                    slug = md_file.stem[len(mem_type) + 1:]  # strip "type_" prefix
+                    slug = md_file.stem[len(mem_type) + 1 :]  # strip "type_" prefix
                     name = slug.replace("_", " ").replace("-", " ")
                 # Description: prefer MEMORY.md entry, fall back to first content line
                 description = idx_desc or _first_line(body)
@@ -337,9 +337,7 @@ class MemoryIngester:
     def _clear_memory_nodes(self, repo_name: str) -> None:
         """Remove all memory-typed nodes for a given repo."""
         cypher = (
-            "MATCH (n) "
-            "WHERE n.memory_type IS NOT NULL AND n.repo = $repo "
-            "DETACH DELETE n"
+            "MATCH (n) " "WHERE n.memory_type IS NOT NULL AND n.repo = $repo " "DETACH DELETE n"
         )
         self.store.query(cypher, {"repo": repo_name})
         logger.info("Cleared memory nodes for repo=%s", repo_name)

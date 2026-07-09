@@ -233,9 +233,7 @@ class ReleaseChecker:
         except Exception:
             pass
 
-    def _check_knowledge_links(
-        self, report: ReleaseReport, symbol: str, file_path: str
-    ) -> None:
+    def _check_knowledge_links(self, report: ReleaseReport, symbol: str, file_path: str) -> None:
         """Warn when a changed symbol has linked knowledge nodes that may be stale."""
         try:
             result = self.store.query(
