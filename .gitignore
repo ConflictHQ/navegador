@@ -42,7 +42,6 @@ ENV/
 .aider/
 .continue/
 .copilot/
-AGENTS.md
 GEMINI.md
 
 # API keys and secrets

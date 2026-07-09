@@ -1,5 +1,7 @@
 # Navegador — Claude Context
 
+Primary conventions doc: [`bootstrap.md`](bootstrap.md) — read it before writing any code.
+
 ## What it is
 
 AST + knowledge graph context engine for AI coding agents. Parses codebases into a FalkorDB property graph. Agents query via MCP or Python API.
