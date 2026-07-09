@@ -114,15 +114,12 @@ class ImpactAnalyzer:
         Returns:
             ImpactResult with affected_nodes, affected_files, affected_knowledge.
         """
-        params: dict[str, Any] = {
-            "name": name,
-            "file_path": file_path,
-            "depth": depth,
-            "repo": repo,
-        }
+        from navegador.graph.queries import inline_depth
+
+        params: dict[str, Any] = {"name": name, "file_path": file_path, "repo": repo}
 
         try:
-            result = self.store.query(_BLAST_RADIUS_SIMPLE, params)
+            result = self.store.query(inline_depth(_BLAST_RADIUS_SIMPLE, depth), params)
             rows = result.result_set or []
         except Exception:
             rows = []
