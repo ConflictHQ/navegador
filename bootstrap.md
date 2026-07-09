@@ -10,7 +10,8 @@ An agent given this document and a business requirement should be able to genera
 
 | Layer | What's there |
 |-------|-------------|
-| Graph store | `navegador/graph/` — GraphStore + schema + queries + migrations + export, backed by FalkorDB |
+| Graph store | `navegador/graph/` — GraphStore + schema + queries + migrations + export + conflict-kg/v1 interchange, backed by FalkorDB |
+| Federation | `navegador/federation.py` — SuperGraphAggregator: roll repo-local graphs into a central super-graph (namespacing, knowledge dedup) |
 | Ingestion | `navegador/ingestion/` — RepoIngester + 13 tree-sitter language parsers + optimization |
 | Context | `navegador/context/` — ContextLoader + ContextBundle (JSON/markdown output) |
 | MCP server | `navegador/mcp/` — 24 tools + security hardening, via the `mcp` Python SDK |
@@ -18,7 +19,7 @@ An agent given this document and a business requirement should be able to genera
 | Enrichment | `navegador/enrichment/` — FrameworkEnricher base + 8 framework enrichers, auto-discovered via `pkgutil` |
 | Analysis | `navegador/analysis/` — impact, flow tracing, dead code, cycles, test mapping |
 | Intelligence | `navegador/intelligence/` — semantic search, community detection, NLP, doc generation |
-| Cluster | `navegador/cluster/` — Redis pub/sub, task queue, locking, sessions, messaging |
+| Cluster | `navegador/cluster/` — Redis pub/sub, task queue, locking, sessions, messaging, LRU shard load/unload (`shards.py`) |
 | SDK | `navegador/sdk.py` — Python SDK (`Navegador` class) |
 | LLM | `navegador/llm.py` — provider abstraction (Anthropic, OpenAI, Ollama) |
 | VCS | `navegador/vcs.py` — Git + Fossil abstraction; `diff.py` (diff → graph impact), `churn.py` (behavioural coupling) |

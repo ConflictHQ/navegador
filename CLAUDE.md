@@ -21,14 +21,15 @@ AST + knowledge graph context engine for AI coding agents. Parses codebases into
 ```
 navegador/
   cli/           — Click commands (50+ subcommands)
-  graph/         — GraphStore + schema + queries + migrations + export
+  graph/         — GraphStore + schema + queries + migrations + export + conflict-kg/v1 interchange
   ingestion/     — RepoIngester + 13 language parsers + optimization
   context/       — ContextLoader + ContextBundle (JSON/markdown)
   mcp/           — MCP server with 24 tools + security hardening
   enrichment/    — FrameworkEnricher base + 8 framework enrichers
   analysis/      — impact, flow tracing, dead code, cycles, test mapping
   intelligence/  — semantic search, community detection, NLP, doc generation
-  cluster/       — Redis pub/sub, task queue, locking, sessions, messaging
+  cluster/       — Redis pub/sub, task queue, locking, sessions, messaging, shard load/unload
+  federation.py  — SuperGraphAggregator (repo graphs → central super-graph)
   sdk.py         — Python SDK (Navegador class)
   llm.py         — LLM provider abstraction (Anthropic, OpenAI, Ollama)
   vcs.py         — VCS abstraction (Git, Fossil)
