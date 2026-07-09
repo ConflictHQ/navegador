@@ -59,7 +59,7 @@ languages = [
     "tree-sitter-c-sharp>=0.23.0",
     "tree-sitter-php>=0.23.0",
     "tree-sitter-ruby>=0.23.0",
-    "tree-sitter-swift>=0.23.0",
+    "tree-sitter-swift>=0.7.3",  # Swift grammar versions independently; 0.23.x does not exist on PyPI
     "tree-sitter-c>=0.23.0",
     "tree-sitter-cpp>=0.23.0",
 ]
