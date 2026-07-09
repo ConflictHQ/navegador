@@ -10,7 +10,7 @@ AST + knowledge graph context engine for AI coding agents. Parses codebases into
 
 - **Python 3.12+**, standalone (no Django dependency)
 - **tree-sitter** for multi-language AST parsing (13 languages)
-- **FalkorDB** graph DB with **falkordblite** (SQLite via redislite) for local use
+- **FalkorDB** graph DB with **falkordblite** (embedded via redislite; graph file is a Redis RDB snapshot, not SQLite) for local use
 - **MCP** (`mcp` Python SDK) for AI agent integration (11 tools)
 - **Click + Rich** for CLI
 - **Pydantic** for data models
@@ -42,7 +42,7 @@ navegador/
 ## FalkorDB connection
 
 ```python
-# SQLite (local, zero-infra) — uses falkordblite
+# Embedded (local, zero-infra) — uses falkordblite; graph file is an RDB snapshot, not SQLite
 from redislite import FalkorDB   # falkordblite provides this
 db = FalkorDB("path/to/graph.db")
 graph = db.select_graph("navegador")
