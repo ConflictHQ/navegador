@@ -70,3 +70,6 @@ navegador-graph/
 
 # Ruff cache
 .ruff_cache/
+
+# uv lockfile — this is a lockfile-free library (bounds live in pyproject.toml)
+uv.lock
