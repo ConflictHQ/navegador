@@ -1002,13 +1002,26 @@ def planopticon_ingest(path: str, input_type: str, source: str, as_json: bool, d
 @main.command("export")
 @click.argument("output", type=click.Path())
 @DB_OPTION
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["jsonl", "conflict-kg"]),
+    default="jsonl",
+    help="Export format: jsonl (legacy) or conflict-kg (canonical conflict-kg/v1; "
+    "writes SQLite for .db/.sqlite outputs, JSON otherwise).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output stats as JSON.")
-def export_cmd(output: str, db: str, as_json: bool):
+def export_cmd(output: str, db: str, fmt: str, as_json: bool):
     """Export the graph to a text-based JSONL file (git-friendly)."""
-    from navegador.graph.export import export_graph
-
     store = _get_store(db)
-    stats = export_graph(store, output)
+    if fmt == "conflict-kg":
+        from navegador.graph.interchange import export_conflict_kg
+
+        stats = export_conflict_kg(store, output)
+    else:
+        from navegador.graph.export import export_graph
+
+        stats = export_graph(store, output)
 
     if as_json:
         click.echo(json.dumps(stats, indent=2))
@@ -1024,11 +1037,20 @@ def export_cmd(output: str, db: str, as_json: bool):
 @click.option("--no-clear", is_flag=True, help="Don't wipe graph before importing.")
 @click.option("--json", "as_json", is_flag=True, help="Output stats as JSON.")
 def import_cmd(input_path: str, db: str, no_clear: bool, as_json: bool):
-    """Import a graph from a JSONL export file."""
-    from navegador.graph.export import import_graph
+    """Import a graph from a JSONL or conflict-kg/v1 export file (auto-detected)."""
+    from navegador.graph.interchange import (
+        import_conflict_kg,
+        is_conflict_kg_json,
+        is_sqlite_file,
+    )
 
     store = _get_store(db)
-    stats = import_graph(store, input_path, clear=not no_clear)
+    if is_sqlite_file(input_path) or is_conflict_kg_json(input_path):
+        stats = import_conflict_kg(store, input_path, clear=not no_clear)
+    else:
+        from navegador.graph.export import import_graph
+
+        stats = import_graph(store, input_path, clear=not no_clear)
 
     if as_json:
         click.echo(json.dumps(stats, indent=2))

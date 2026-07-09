@@ -296,9 +296,16 @@ def _make_handler(store: "GraphStore"):
 
             # ── Full graph
             elif path == "/api/graph":
-                nodes = _get_all_nodes(self._store)
-                edges = _get_all_edges(self._store)
-                self._send_json({"nodes": nodes, "edges": edges})
+                fmt = qs.get("format", [""])[0]
+                if fmt == "conflict-kg":
+                    from navegador.graph.interchange import FORMAT, collect_graph
+
+                    kg_nodes, kg_edges = collect_graph(self._store)
+                    self._send_json({"format": FORMAT, "nodes": kg_nodes, "edges": kg_edges})
+                else:
+                    nodes = _get_all_nodes(self._store)
+                    edges = _get_all_edges(self._store)
+                    self._send_json({"nodes": nodes, "edges": edges})
 
             # ── Search
             elif path == "/api/search":

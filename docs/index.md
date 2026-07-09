@@ -146,7 +146,7 @@ print(bundle.to_markdown())
 | **Python SDK** | `from navegador import Navegador` |
 | **Incremental ingestion** | `navegador ingest --incremental`, `--watch` |
 | **Schema migrations** | `navegador migrate` |
-| **Export / import** | `navegador export`, `navegador import` (JSONL) |
+| **Export / import** | `navegador export`, `navegador import` (JSONL, or `--format conflict-kg` for canonical conflict-kg/v1 JSON/SQLite) |
 | **Editor integrations** | `navegador editor setup <editor>` |
 | **Analysis commands** | `navegador diff`, `navegador churn`, `navegador impact`, `navegador trace`, `navegador deadcode`, `navegador cycles`, `navegador testmap` |
 | **Multi-repo** | `navegador repo add/list/ingest-all/search` |
