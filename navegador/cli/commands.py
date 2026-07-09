@@ -660,11 +660,11 @@ def wiki_ingest(repo: str, wiki_dir: str, token: str, api: bool, db: str):
 @wiki.command("sync-local")
 @click.option("--repo", required=True, help="GitHub repo (owner/repo).")
 @click.option("--token", default="", envvar="GITHUB_TOKEN", help="GitHub token.")
+@click.option("--dir", "local_dir", required=True, help="Local directory of markdown files.")
 @click.option(
-    "--dir", "local_dir", required=True, help="Local directory of markdown files."
-)
-@click.option(
-    "--cursor", "cursor_path", default="",
+    "--cursor",
+    "cursor_path",
+    default="",
     help="Sync cursor file (default: .navegador/wiki-local-sync.json).",
 )
 def wiki_sync_local(repo: str, token: str, local_dir: str, cursor_path: str):
@@ -679,6 +679,7 @@ def wiki_sync_local(repo: str, token: str, local_dir: str, cursor_path: str):
 
     if not cursor_path:
         from pathlib import Path
+
         cursor_path = str(Path(".navegador") / "wiki-local-sync.json")
 
     engine = WikiSync(GitHubWikiProvider(repo, token=token), LocalMarkdownProvider(local_dir))
@@ -687,14 +688,13 @@ def wiki_sync_local(repo: str, token: str, local_dir: str, cursor_path: str):
     except subprocess.CalledProcessError as exc:
         raise click.ClickException(f"git operation failed: {exc.stderr or exc}") from exc
 
-    a = stats["pushed_to_b"]   # pushed to local dir
-    b = stats["pushed_to_a"]   # pushed to github
+    a = stats["pushed_to_b"]  # pushed to local dir
+    b = stats["pushed_to_a"]  # pushed to github
     skipped = stats["skipped"]
     conflicts = stats["conflicts"]
 
     console.print(
-        f"[green]GitHub wiki ↔ local sync:[/green] "
-        f"{a} → local, {b} → GitHub, {skipped} skipped"
+        f"[green]GitHub wiki ↔ local sync:[/green] " f"{a} → local, {b} → GitHub, {skipped} skipped"
     )
     if conflicts:
         console.print(
@@ -799,7 +799,9 @@ def fossil_pull_wiki(repo: str, token: str, repo_path: str):
 @click.option("--token", default="", envvar="GITHUB_TOKEN", help="GitHub token.")
 @click.option("--path", "repo_path", default=".", help="Path to Fossil checkout.")
 @click.option(
-    "--cursor", "cursor_path", default="",
+    "--cursor",
+    "cursor_path",
+    default="",
     help="Sync cursor file (default: .navegador/fossil-wiki-sync.json).",
 )
 def fossil_sync_wiki(repo: str, token: str, repo_path: str, cursor_path: str):
@@ -829,9 +831,7 @@ def fossil_sync_wiki(repo: str, token: str, repo_path: str, cursor_path: str):
     skipped = stats["skipped"]
     conflicts = stats["conflicts"]
 
-    console.print(
-        f"[green]Wiki sync:[/green] {gh} → GitHub, {fossil} → Fossil, {skipped} skipped"
-    )
+    console.print(f"[green]Wiki sync:[/green] {gh} → GitHub, {fossil} → Fossil, {skipped} skipped")
     if conflicts:
         console.print(
             f"[yellow]Conflicts ({len(conflicts)}) — both sides changed, skipped:[/yellow]"
@@ -846,11 +846,11 @@ def fossil_sync_wiki(repo: str, token: str, repo_path: str, cursor_path: str):
 
 @fossil.command("sync-local")
 @click.option("--path", "repo_path", default=".", help="Path to Fossil checkout.")
+@click.option("--dir", "local_dir", required=True, help="Local directory of markdown files.")
 @click.option(
-    "--dir", "local_dir", required=True, help="Local directory of markdown files."
-)
-@click.option(
-    "--cursor", "cursor_path", default="",
+    "--cursor",
+    "cursor_path",
+    default="",
     help="Sync cursor file (default: .navegador/fossil-local-sync.json).",
 )
 def fossil_sync_local(repo_path: str, local_dir: str, cursor_path: str):
@@ -864,21 +864,18 @@ def fossil_sync_local(repo_path: str, local_dir: str, cursor_path: str):
 
     adapter = FossilAdapter(repo_path)
     if not cursor_path:
-        cursor_path = str(
-            (adapter.repo_path / ".navegador" / "fossil-local-sync.json").resolve()
-        )
+        cursor_path = str((adapter.repo_path / ".navegador" / "fossil-local-sync.json").resolve())
 
     engine = WikiSync(FossilWikiProvider(adapter), LocalMarkdownProvider(local_dir))
     stats = engine.sync(cursor_path=cursor_path)
 
-    a = stats["pushed_to_b"]   # pushed to local dir
-    b = stats["pushed_to_a"]   # pushed to fossil
+    a = stats["pushed_to_b"]  # pushed to local dir
+    b = stats["pushed_to_a"]  # pushed to fossil
     skipped = stats["skipped"]
     conflicts = stats["conflicts"]
 
     console.print(
-        f"[green]Fossil ↔ local sync:[/green] "
-        f"{a} → local, {b} → Fossil, {skipped} skipped"
+        f"[green]Fossil ↔ local sync:[/green] " f"{a} → local, {b} → Fossil, {skipped} skipped"
     )
     if conflicts:
         console.print(
@@ -1058,6 +1055,45 @@ def import_cmd(input_path: str, db: str, no_clear: bool, as_json: bool):
         console.print(
             f"[green]Imported[/green] {stats['nodes']} nodes, {stats['edges']} edges ← {input_path}"
         )
+
+
+@main.command("aggregate")
+@click.argument("repos", nargs=-1, required=True)
+@DB_OPTION
+@click.option("--clear", is_flag=True, help="Wipe the central graph before aggregating.")
+@click.option("--json", "as_json", is_flag=True, help="Output stats as JSON.")
+def aggregate_cmd(repos: tuple[str, ...], db: str, clear: bool, as_json: bool):
+    """
+    Roll repo-local graphs up into a central super-graph.
+
+    Each REPO is a repo root (containing .navegador/graph.db) or a graph
+    file, optionally prefixed NAME= to set the repo namespace (defaults to
+    the directory basename). The --db graph is the central target.
+    """
+    from navegador.federation import SuperGraphAggregator, repo_name_from_path
+
+    sources: dict[str, str] = {}
+    for arg in repos:
+        name, _, path = arg.rpartition("=")
+        if not name:
+            path = arg
+            name = repo_name_from_path(arg)
+        sources[name] = path
+
+    aggregator = SuperGraphAggregator(_get_store(db))
+    summary = aggregator.aggregate(sources, clear=clear)
+
+    if as_json:
+        click.echo(json.dumps(summary, indent=2))
+    else:
+        for name, stats in summary.items():
+            if "error" in stats:
+                console.print(f"[red]{name}[/red]: {stats['error']}")
+            else:
+                console.print(
+                    f"[green]{name}[/green]: {stats['nodes']} nodes, "
+                    f"{stats['edges']} edges ({stats['deduped']} knowledge nodes unified)"
+                )
 
 
 # ── Schema migrations ────────────────────────────────────────────────────────
