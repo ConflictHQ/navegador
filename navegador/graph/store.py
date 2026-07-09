@@ -34,7 +34,10 @@ class GraphStore:
     @classmethod
     def sqlite(cls, db_path: str | Path = ".navegador/graph.db") -> "GraphStore":
         """
-        Open a SQLite-backed FalkorDB graph via falkordblite (zero-infra).
+        Open an embedded FalkorDB graph via falkordblite (zero-infra).
+
+        The on-disk file is a Redis RDB snapshot, not a SQLite database —
+        the method name is kept for API compatibility.
 
         Requires: pip install FalkorDB falkordblite
         """

@@ -34,7 +34,7 @@ Stack: **Python 3.12+**, standalone (no Django). tree-sitter for AST parsing, Fa
 ## FalkorDB Connection
 
 ```python
-# SQLite (local, zero-infra) — uses falkordblite
+# Embedded (local, zero-infra) — uses falkordblite; graph file is an RDB snapshot, not SQLite
 from redislite import FalkorDB   # falkordblite provides this
 db = FalkorDB("path/to/graph.db")
 graph = db.select_graph("navegador")

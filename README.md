@@ -27,7 +27,7 @@ Navegador parses your source code into a property graph and layers your team's k
 │  Repository · File · Module · Class · Function · Method         │
 │  Variable · Import · Decorator · (call graphs, hierarchies)     │
 └─────────────────────────────────────────────────────────────────┘
-              stored in FalkorDB  (SQLite local · Redis prod)
+              stored in FalkorDB  (embedded local · Redis prod)
 ```
 
 The **code layer** is built automatically by ingesting source trees. The **knowledge layer** is populated by your team — manually, via wiki ingestion, or from [PlanOpticon](https://github.com/ConflictHQ/PlanOpticon) meeting analysis output.
@@ -129,7 +129,7 @@ navegador planopticon ingest ./meeting-output/
 
 | Mode | Backend | When to use |
 |------|---------|-------------|
-| Default | `falkordblite` (SQLite) | Local dev, zero infrastructure |
+| Default | `falkordblite` (embedded FalkorDB) | Local dev, zero infrastructure |
 | Production | Redis + FalkorDB module | Shared deployments, agent swarms |
 
 ```python
@@ -138,6 +138,11 @@ from navegador.graph import GraphStore
 store = GraphStore.sqlite(".navegador/graph.db")   # default
 store = GraphStore.redis("redis://localhost:6379")  # production
 ```
+
+> **Note:** `.navegador/graph.db` is a FalkorDB (Redis) RDB snapshot, **not** a SQLite
+> database — `sqlite3` cannot open it. The `sqlite` name refers to the embedded,
+> single-file mode provided by `falkordblite`. Inspect the graph with `navegador`
+> (e.g. `navegador query`), not with SQLite tooling.
 
 ---
 
