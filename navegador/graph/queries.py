@@ -119,10 +119,12 @@ RETURN DISTINCT
 
 # ── Universal: search ─────────────────────────────────────────────────────────
 
-# Search code symbols by name substring
+# Search code symbols by name substring.
+# $repo scopes to one federated namespace ('' = span all repos).
 SYMBOL_SEARCH = """
 MATCH (n)
 WHERE (n:Function OR n:Class OR n:Method) AND n.name CONTAINS $query
+  AND ($repo = '' OR n.repo = $repo)
 RETURN labels(n)[0] AS type, n.name AS name, n.file_path AS file_path,
        n.line_start AS line, n.docstring AS docstring
 LIMIT $limit
@@ -139,13 +141,18 @@ RETURN labels(n)[0] AS type, n.name AS name, n.file_path AS file_path,
 LIMIT $limit
 """
 
-# Search knowledge layer (concepts, rules, decisions, wiki) by name or description
+# Search knowledge layer (concepts, rules, decisions, wiki) by name or description.
+# $repo scopes to one federated namespace ('' = span all repos): deduped knowledge
+# nodes carry a comma-joined `repos` membership, namespaced nodes carry `repo`.
 KNOWLEDGE_SEARCH = """
 MATCH (n)
 WHERE (n:Concept OR n:Rule OR n:Decision OR n:WikiPage OR n:Document)
   AND (toLower(n.name) CONTAINS toLower($query)
        OR (n.description IS NOT NULL AND toLower(n.description) CONTAINS toLower($query))
        OR (n.content IS NOT NULL AND toLower(n.content) CONTAINS toLower($query)))
+  AND ($repo = ''
+       OR n.repo = $repo
+       OR (',' + coalesce(n.repos, '') + ',') CONTAINS (',' + $repo + ','))
 RETURN labels(n)[0] AS type, n.name AS name, n.description AS description,
        n.domain AS domain, n.status AS status
 LIMIT $limit

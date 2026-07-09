@@ -13,7 +13,7 @@ An agent given this document and a business requirement should be able to genera
 | Graph store | `navegador/graph/` — GraphStore + schema + queries + migrations + export, backed by FalkorDB |
 | Ingestion | `navegador/ingestion/` — RepoIngester + 13 tree-sitter language parsers + optimization |
 | Context | `navegador/context/` — ContextLoader + ContextBundle (JSON/markdown output) |
-| MCP server | `navegador/mcp/` — 11 tools + security hardening, via the `mcp` Python SDK |
+| MCP server | `navegador/mcp/` — 24 tools + security hardening, via the `mcp` Python SDK |
 | CLI | `navegador/cli/` — Click + Rich, 50+ subcommands, entry point `navegador` |
 | Enrichment | `navegador/enrichment/` — FrameworkEnricher base + 8 framework enrichers, auto-discovered via `pkgutil` |
 | Analysis | `navegador/analysis/` — impact, flow tracing, dead code, cycles, test mapping |

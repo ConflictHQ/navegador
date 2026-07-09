@@ -152,9 +152,7 @@ def _get_node_detail(store: "GraphStore", name: str, file_path: str = "") -> dic
         key = f"{nb_name}|{nb_file}|{rel}"
         if key not in seen:
             seen.add(key)
-            neighbors.append(
-                {"label": nb_label, "name": nb_name, "file_path": nb_file, "rel": rel}
-            )
+            neighbors.append({"label": nb_label, "name": nb_name, "file_path": nb_file, "rel": rel})
 
     return {"name": name, "label": label, "props": props, "neighbors": neighbors}
 

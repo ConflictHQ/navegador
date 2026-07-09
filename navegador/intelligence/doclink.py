@@ -69,9 +69,11 @@ def _fuzzy_score(a: str, b: str) -> float:
         return 1.0
     if a in b or b in a:
         return min(len(a), len(b)) / max(len(a), len(b))
+
     # character bigram overlap
     def bigrams(s: str) -> set[str]:
-        return {s[i:i+2] for i in range(len(s) - 1)}
+        return {s[i : i + 2] for i in range(len(s) - 1)}
+
     bg_a, bg_b = bigrams(a), bigrams(b)
     if not bg_a or not bg_b:
         return 0.0
@@ -80,14 +82,14 @@ def _fuzzy_score(a: str, b: str) -> float:
 
 @dataclass
 class LinkCandidate:
-    source_label: str        # Document / WikiPage / Rule / Decision
+    source_label: str  # Document / WikiPage / Rule / Decision
     source_name: str
-    target_label: str        # Function / Class / Concept / Rule …
+    target_label: str  # Function / Class / Concept / Rule …
     target_name: str
     target_file: str = ""
-    edge_type: str = "DOCUMENTS"   # proposed edge type
+    edge_type: str = "DOCUMENTS"  # proposed edge type
     confidence: float = 0.0
-    strategy: str = ""       # EXACT_NAME | ALIAS | FUZZY | SEMANTIC
+    strategy: str = ""  # EXACT_NAME | ALIAS | FUZZY | SEMANTIC
     rationale: str = ""
 
 
@@ -142,16 +144,18 @@ class DocLinker:
                     key = (doc["name"], target["name"])
                     if key in existing:
                         continue
-                    candidates.append(LinkCandidate(
-                        source_label=doc["label"],
-                        source_name=doc["name"],
-                        target_label=target["label"],
-                        target_name=target["name"],
-                        target_file=target.get("file_path", ""),
-                        confidence=self.EXACT_CONFIDENCE,
-                        strategy="EXACT_NAME",
-                        rationale=f"term '{term}' exactly matches {target['label']} name",
-                    ))
+                    candidates.append(
+                        LinkCandidate(
+                            source_label=doc["label"],
+                            source_name=doc["name"],
+                            target_label=target["label"],
+                            target_name=target["name"],
+                            target_file=target.get("file_path", ""),
+                            confidence=self.EXACT_CONFIDENCE,
+                            strategy="EXACT_NAME",
+                            rationale=f"term '{term}' exactly matches {target['label']} name",
+                        )
+                    )
                     continue
 
                 # 2. Fuzzy match
@@ -161,17 +165,19 @@ class DocLinker:
                         continue
                     score = _fuzzy_score(term, target["name"])
                     if score >= self.FUZZY_THRESHOLD:
-                        candidates.append(LinkCandidate(
-                            source_label=doc["label"],
-                            source_name=doc["name"],
-                            target_label=target["label"],
-                            target_name=target["name"],
-                            target_file=target.get("file_path", ""),
-                            confidence=round(score * self.ALIAS_CONFIDENCE, 3),
-                            strategy="FUZZY",
-                            rationale=f"term '{term}' fuzzy-matches '{target['name']}' "
-                                      f"(score={score:.2f})",
-                        ))
+                        candidates.append(
+                            LinkCandidate(
+                                source_label=doc["label"],
+                                source_name=doc["name"],
+                                target_label=target["label"],
+                                target_name=target["name"],
+                                target_file=target.get("file_path", ""),
+                                confidence=round(score * self.ALIAS_CONFIDENCE, 3),
+                                strategy="FUZZY",
+                                rationale=f"term '{term}' fuzzy-matches '{target['name']}' "
+                                f"(score={score:.2f})",
+                            )
+                        )
 
         # 3. Semantic matching (requires provider)
         if self._provider:
@@ -228,15 +234,11 @@ class DocLinker:
         )
         rows = self.store.query(cypher).result_set or []
         return [
-            {"label": r[0], "name": r[1], "file_path": r[2], "text": r[3]}
-            for r in rows if r[1]
+            {"label": r[0], "name": r[1], "file_path": r[2], "text": r[3]} for r in rows if r[1]
         ]
 
     def _existing_links(self) -> set[tuple[str, str]]:
-        cypher = (
-            "MATCH (a)-[:DOCUMENTS|ANNOTATES|GOVERNS]->(b) "
-            "RETURN a.name, b.name LIMIT 5000"
-        )
+        cypher = "MATCH (a)-[:DOCUMENTS|ANNOTATES|GOVERNS]->(b) " "RETURN a.name, b.name LIMIT 5000"
         rows = self.store.query(cypher).result_set or []
         return {(r[0], r[1]) for r in rows if r[0] and r[1]}
 
@@ -281,15 +283,17 @@ class DocLinker:
                     continue
                 score = _cos(doc_vec, code_vec)
                 if score >= self.SEMANTIC_THRESHOLD:
-                    candidates.append(LinkCandidate(
-                        source_label=doc["label"],
-                        source_name=doc["name"],
-                        target_label=target["label"],
-                        target_name=target["name"],
-                        target_file=target.get("file_path", ""),
-                        confidence=round(score, 3),
-                        strategy="SEMANTIC",
-                        rationale=f"semantic similarity={score:.2f}",
-                    ))
+                    candidates.append(
+                        LinkCandidate(
+                            source_label=doc["label"],
+                            source_name=doc["name"],
+                            target_label=target["label"],
+                            target_name=target["name"],
+                            target_file=target.get("file_path", ""),
+                            confidence=round(score, 3),
+                            strategy="SEMANTIC",
+                            rationale=f"semantic similarity={score:.2f}",
+                        )
+                    )
 
         return candidates

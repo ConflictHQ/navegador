@@ -208,7 +208,8 @@ class KotlinParser(LanguageParser):
                         (
                             c
                             for c in node.children
-                            if c.type in (
+                            if c.type
+                            in (
                                 "simple_identifier",
                                 "identifier",
                                 "navigation_expression",

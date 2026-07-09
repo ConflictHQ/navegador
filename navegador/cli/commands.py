@@ -1057,6 +1057,20 @@ def import_cmd(input_path: str, db: str, no_clear: bool, as_json: bool):
         )
 
 
+def _parse_repo_sources(args: tuple[str, ...]) -> dict[str, str]:
+    """Parse [NAME=]PATH source arguments into {repo name: path}."""
+    from navegador.federation import repo_name_from_path
+
+    sources: dict[str, str] = {}
+    for arg in args:
+        name, _, path = arg.rpartition("=")
+        if not name:
+            path = arg
+            name = repo_name_from_path(arg)
+        sources[name] = path
+    return sources
+
+
 @main.command("aggregate")
 @click.argument("repos", nargs=-1, required=True)
 @DB_OPTION
@@ -1070,16 +1084,9 @@ def aggregate_cmd(repos: tuple[str, ...], db: str, clear: bool, as_json: bool):
     file, optionally prefixed NAME= to set the repo namespace (defaults to
     the directory basename). The --db graph is the central target.
     """
-    from navegador.federation import SuperGraphAggregator, repo_name_from_path
+    from navegador.federation import SuperGraphAggregator
 
-    sources: dict[str, str] = {}
-    for arg in repos:
-        name, _, path = arg.rpartition("=")
-        if not name:
-            path = arg
-            name = repo_name_from_path(arg)
-        sources[name] = path
-
+    sources = _parse_repo_sources(repos)
     aggregator = SuperGraphAggregator(_get_store(db))
     summary = aggregator.aggregate(sources, clear=clear)
 
@@ -1670,15 +1677,34 @@ def churn(
         "Start in read-only mode: disables ingest_repo and blocks write operations in query_graph."
     ),
 )
-def mcp(db: str, read_only: bool):
+@click.option(
+    "--federate",
+    "federate",
+    multiple=True,
+    metavar="[NAME=]PATH",
+    help=(
+        "Roll up a repo graph ([NAME=]PATH, repeatable) into the bound graph at "
+        "startup and serve the federated super-graph."
+    ),
+)
+def mcp(db: str, read_only: bool, federate: tuple[str, ...]):
     """Start the MCP server for AI agent integration (stdio)."""
     from mcp.server.stdio import stdio_server  # type: ignore[import]
 
     from navegador.mcp import create_mcp_server
 
-    server = create_mcp_server(lambda: _get_store(db), read_only=read_only)
+    def _store_factory():
+        store = _get_store(db)
+        if federate:
+            from navegador.federation import SuperGraphAggregator
+
+            SuperGraphAggregator(store).aggregate(_parse_repo_sources(federate))
+        return store
+
+    server = create_mcp_server(_store_factory, read_only=read_only)
     mode = "read-only" if read_only else "read-write"
-    console.print(f"[green]Navegador MCP server running[/green] (stdio, {mode})")
+    federated = f", federated over {len(federate)} repos" if federate else ""
+    console.print(f"[green]Navegador MCP server running[/green] (stdio, {mode}{federated})")
 
     async def _run():
         async with stdio_server() as (read_stream, write_stream):

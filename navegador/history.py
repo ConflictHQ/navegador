@@ -56,7 +56,7 @@ class SnapshotEntry:
 
     ref: str
     name: str
-    label: str        # Function | Class | Method
+    label: str  # Function | Class | Method
     file_path: str
     line_start: int | None = None
     line_end: int | None = None
@@ -67,7 +67,7 @@ class HistoryEvent:
     """One event in a symbol's history across snapshot refs."""
 
     ref: str
-    event: str        # "first_seen" | "moved" | "renamed" | "changed" | "removed" | "seen"
+    event: str  # "first_seen" | "moved" | "renamed" | "changed" | "removed" | "seen"
     name: str
     file_path: str
     detail: str = ""
@@ -87,7 +87,7 @@ class LineageStep:
     name: str
     file_path: str
     label: str
-    event: str        # "created" | "moved" | "renamed" | "continued" | "removed"
+    event: str  # "created" | "moved" | "renamed" | "continued" | "removed"
     detail: str = ""
 
 
@@ -135,10 +135,7 @@ class LineageReport:
         for step in self.chain:
             tag = f"**{step.event}**" if step.event != "continued" else step.event
             detail = f" — {step.detail}" if step.detail else ""
-            lines.append(
-                f"- `{step.ref}` {tag} `{step.name}` "
-                f"`{step.file_path}`{detail}"
-            )
+            lines.append(f"- `{step.ref}` {tag} `{step.name}` " f"`{step.file_path}`{detail}")
         return "\n".join(lines)
 
     def to_json(self) -> str:
@@ -149,6 +146,7 @@ class LineageReport:
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
 
 def _bigrams(s: str) -> set[str]:
     s = s.lower()
@@ -230,6 +228,7 @@ _SNAPSHOTS_FOR_SYMBOL = (
 
 # ── Main class ────────────────────────────────────────────────────────────────
 
+
 class HistoryStore:
     """
     Manages graph snapshots for historical symbol lineage queries.
@@ -309,9 +308,12 @@ class HistoryStore:
 
         Events: first_seen, seen, moved, removed.
         """
-        rows = self.store.query(
-            _SNAPSHOTS_FOR_SYMBOL, {"name": name, "file_path": file_path}
-        ).result_set or []
+        rows = (
+            self.store.query(
+                _SNAPSHOTS_FOR_SYMBOL, {"name": name, "file_path": file_path}
+            ).result_set
+            or []
+        )
 
         events: list[HistoryEvent] = []
         prev_file: str | None = None
@@ -330,13 +332,15 @@ class HistoryStore:
                 event = "seen"
                 detail = f"in `{cur_file}`"
 
-            events.append(HistoryEvent(
-                ref=ref,
-                event=event,
-                name=name,
-                file_path=cur_file,
-                detail=detail,
-            ))
+            events.append(
+                HistoryEvent(
+                    ref=ref,
+                    event=event,
+                    name=name,
+                    file_path=cur_file,
+                    detail=detail,
+                )
+            )
             prev_file = cur_file
 
         # Detect removal: symbol in penultimate snapshot but not latest
@@ -345,13 +349,15 @@ class HistoryStore:
             latest_ref = snapshots[-1].ref
             latest_refs = {r[0] for r in rows}
             if latest_ref not in latest_refs:
-                events.append(HistoryEvent(
-                    ref=latest_ref,
-                    event="removed",
-                    name=name,
-                    file_path=prev_file or "",
-                    detail="not present in latest snapshot",
-                ))
+                events.append(
+                    HistoryEvent(
+                        ref=latest_ref,
+                        event="removed",
+                        name=name,
+                        file_path=prev_file or "",
+                        detail="not present in latest snapshot",
+                    )
+                )
 
         return HistoryReport(symbol=name, file_path=file_path, events=events)
 
@@ -381,10 +387,15 @@ class HistoryStore:
             if key in sym_map:
                 s = sym_map[key]
                 event = "created" if not chain else "continued"
-                chain.append(LineageStep(
-                    ref=snap.ref, name=s.name, file_path=s.file_path,
-                    label=s.label, event=event,
-                ))
+                chain.append(
+                    LineageStep(
+                        ref=snap.ref,
+                        name=s.name,
+                        file_path=s.file_path,
+                        label=s.label,
+                        event=event,
+                    )
+                )
                 continue
 
             # 2. Same name, different file (move)
@@ -392,14 +403,17 @@ class HistoryStore:
             if name_matches:
                 s = name_matches[0]
                 event = "created" if not chain else "moved"
-                detail = (
-                    f"moved from `{current_file}` to `{s.file_path}`"
-                    if chain else ""
+                detail = f"moved from `{current_file}` to `{s.file_path}`" if chain else ""
+                chain.append(
+                    LineageStep(
+                        ref=snap.ref,
+                        name=s.name,
+                        file_path=s.file_path,
+                        label=s.label,
+                        event=event,
+                        detail=detail,
+                    )
                 )
-                chain.append(LineageStep(
-                    ref=snap.ref, name=s.name, file_path=s.file_path,
-                    label=s.label, event=event, detail=detail,
-                ))
                 current_file = s.file_path
                 continue
 
@@ -414,31 +428,39 @@ class HistoryStore:
                         best_score = score
                         best = s
                 if best and best_score >= self.RENAME_THRESHOLD:
-                    chain.append(LineageStep(
-                        ref=snap.ref, name=best.name, file_path=best.file_path,
-                        label=best.label, event="renamed",
-                        detail=(
-                            f"`{current_name}` → `{best.name}` "
-                            f"(similarity={best_score:.2f})"
-                        ),
-                    ))
+                    chain.append(
+                        LineageStep(
+                            ref=snap.ref,
+                            name=best.name,
+                            file_path=best.file_path,
+                            label=best.label,
+                            event="renamed",
+                            detail=(
+                                f"`{current_name}` → `{best.name}` "
+                                f"(similarity={best_score:.2f})"
+                            ),
+                        )
+                    )
                     current_name = best.name
                     continue
 
             # 4. Not found — removed
             if chain:
-                chain.append(LineageStep(
-                    ref=snap.ref, name=current_name, file_path=current_file,
-                    label="", event="removed",
-                    detail="not found in this snapshot",
-                ))
+                chain.append(
+                    LineageStep(
+                        ref=snap.ref,
+                        name=current_name,
+                        file_path=current_file,
+                        label="",
+                        event="removed",
+                        detail="not found in this snapshot",
+                    )
+                )
                 break
 
         return LineageReport(symbol=name, chain=chain)
 
-    def diff_snapshots(
-        self, base_ref: str, head_ref: str
-    ) -> dict[str, Any]:
+    def diff_snapshots(self, base_ref: str, head_ref: str) -> dict[str, Any]:
         """
         Compare two snapshots: what symbols were added, removed, or moved?
 

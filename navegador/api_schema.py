@@ -142,8 +142,7 @@ class APISchemaIngester:
         # ── Type definitions ──────────────────────────────────────────────────
         # Matches: type Foo { ... }  /  input Bar { ... }  /  interface X { ... }
         type_pattern = re.compile(
-            r"(?:^|\n)\s*(?:type|input|interface|enum|union)\s+(\w+)"
-            r"(?:[^{]*)?\{([^}]*)\}",
+            r"(?:^|\n)\s*(?:type|input|interface|enum|union)\s+(\w+)" r"(?:[^{]*)?\{([^}]*)\}",
             re.MULTILINE | re.DOTALL,
         )
 

@@ -71,6 +71,13 @@ def create_mcp_server(store_factory, read_only: bool = False):
                             "type": "string",
                             "description": "Relative file path within the ingested repo.",
                         },
+                        "repo": {
+                            "type": "string",
+                            "default": "",
+                            "description": (
+                                "Federated repo namespace; scopes file_path to that repo."
+                            ),
+                        },
                         "format": {
                             "type": "string",
                             "enum": ["json", "markdown"],
@@ -88,6 +95,13 @@ def create_mcp_server(store_factory, read_only: bool = False):
                     "properties": {
                         "name": {"type": "string", "description": "Function name."},
                         "file_path": {"type": "string", "description": "Relative file path."},
+                        "repo": {
+                            "type": "string",
+                            "default": "",
+                            "description": (
+                                "Federated repo namespace; scopes file_path to that repo."
+                            ),
+                        },
                         "depth": {"type": "integer", "default": 2},
                         "format": {
                             "type": "string",
@@ -106,6 +120,13 @@ def create_mcp_server(store_factory, read_only: bool = False):
                     "properties": {
                         "name": {"type": "string", "description": "Class name."},
                         "file_path": {"type": "string", "description": "Relative file path."},
+                        "repo": {
+                            "type": "string",
+                            "default": "",
+                            "description": (
+                                "Federated repo namespace; scopes file_path to that repo."
+                            ),
+                        },
                         "format": {
                             "type": "string",
                             "enum": ["json", "markdown"],
@@ -123,13 +144,25 @@ def create_mcp_server(store_factory, read_only: bool = False):
                     "properties": {
                         "query": {"type": "string", "description": "Partial name to search."},
                         "limit": {"type": "integer", "default": 20},
+                        "repo": {
+                            "type": "string",
+                            "default": "",
+                            "description": (
+                                "Federated repo namespace to scope to (see list_repos). "
+                                "Omit to span all repos in a super-graph."
+                            ),
+                        },
                     },
                     "required": ["query"],
                 },
             ),
             Tool(
                 name="query_graph",
-                description="Execute a raw Cypher query against the navegador graph.",
+                description=(
+                    "Execute a raw Cypher query against the navegador graph. "
+                    "On a federated super-graph the query spans all repos; nodes carry a "
+                    "`repo` property (knowledge nodes a comma-joined `repos`) for filtering."
+                ),
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -141,6 +174,25 @@ def create_mcp_server(store_factory, read_only: bool = False):
             Tool(
                 name="graph_stats",
                 description="Return node and edge counts for the current graph.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repo": {
+                            "type": "string",
+                            "default": "",
+                            "description": (
+                                "Count only nodes/edges of one federated repo namespace."
+                            ),
+                        },
+                    },
+                },
+            ),
+            Tool(
+                name="list_repos",
+                description=(
+                    "List the repo namespaces available in a federated super-graph "
+                    "(falls back to all Repository nodes on a single-repo graph)."
+                ),
                 inputSchema={"type": "object", "properties": {}},
             ),
             Tool(
@@ -183,6 +235,14 @@ def create_mcp_server(store_factory, read_only: bool = False):
                     "properties": {
                         "query": {"type": "string", "description": "Search query."},
                         "limit": {"type": "integer", "default": 20},
+                        "repo": {
+                            "type": "string",
+                            "default": "",
+                            "description": (
+                                "Federated repo namespace to scope to. Matches shared "
+                                "knowledge nodes contributed by that repo. Omit to span all."
+                            ),
+                        },
                     },
                     "required": ["query"],
                 },
@@ -206,6 +266,14 @@ def create_mcp_server(store_factory, read_only: bool = False):
                             "type": "integer",
                             "description": "Maximum traversal depth.",
                             "default": 3,
+                        },
+                        "repo": {
+                            "type": "string",
+                            "default": "",
+                            "description": (
+                                "Federated repo namespace; scopes file_path to that repo. "
+                                "Omit to span the whole workspace."
+                            ),
                         },
                     },
                     "required": ["name"],
@@ -562,6 +630,14 @@ def create_mcp_server(store_factory, read_only: bool = False):
             ),
         ]
 
+    def _scoped_path(arguments: dict) -> str:
+        """file_path, prefixed with the federated repo namespace when given."""
+        file_path = arguments.get("file_path", "")
+        repo = arguments.get("repo", "")
+        if repo and file_path and not file_path.startswith(f"{repo}/"):
+            return f"{repo}/{file_path}"
+        return file_path
+
     @server.call_tool()
     async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         loader = _get_loader()
@@ -581,7 +657,7 @@ def create_mcp_server(store_factory, read_only: bool = False):
             return [TextContent(type="text", text=json.dumps(stats, indent=2))]
 
         elif name == "load_file_context":
-            bundle = loader.load_file(arguments["file_path"])
+            bundle = loader.load_file(_scoped_path(arguments))
             fmt = arguments.get("format", "markdown")
             text = bundle.to_markdown() if fmt == "markdown" else bundle.to_json()
             return [TextContent(type="text", text=text)]
@@ -589,7 +665,7 @@ def create_mcp_server(store_factory, read_only: bool = False):
         elif name == "load_function_context":
             bundle = loader.load_function(
                 arguments["name"],
-                arguments["file_path"],
+                _scoped_path(arguments),
                 depth=arguments.get("depth", 2),
             )
             fmt = arguments.get("format", "markdown")
@@ -597,13 +673,17 @@ def create_mcp_server(store_factory, read_only: bool = False):
             return [TextContent(type="text", text=text)]
 
         elif name == "load_class_context":
-            bundle = loader.load_class(arguments["name"], arguments["file_path"])
+            bundle = loader.load_class(arguments["name"], _scoped_path(arguments))
             fmt = arguments.get("format", "markdown")
             text = bundle.to_markdown() if fmt == "markdown" else bundle.to_json()
             return [TextContent(type="text", text=text)]
 
         elif name == "search_symbols":
-            results = loader.search(arguments["query"], limit=arguments.get("limit", 20))
+            results = loader.search(
+                arguments["query"],
+                limit=arguments.get("limit", 20),
+                repo=arguments.get("repo", ""),
+            )
             lines = [f"- **{r.type}** `{r.name}` — `{r.file_path}`:{r.line_start}" for r in results]
             return [TextContent(type="text", text="\n".join(lines) or "No results.")]
 
@@ -624,11 +704,38 @@ def create_mcp_server(store_factory, read_only: bool = False):
             return [TextContent(type="text", text=text)]
 
         elif name == "graph_stats":
-            stats = {
-                "nodes": loader.store.node_count(),
-                "edges": loader.store.edge_count(),
-            }
+            repo = arguments.get("repo", "")
+            if repo:
+                nodes = loader.store.query(
+                    "MATCH (n {repo: $repo}) RETURN count(n)", {"repo": repo}
+                )
+                edges = loader.store.query(
+                    "MATCH (a {repo: $repo})-[r]->(b {repo: $repo}) RETURN count(r)",
+                    {"repo": repo},
+                )
+                stats = {
+                    "repo": repo,
+                    "nodes": (nodes.result_set or [[0]])[0][0],
+                    "edges": (edges.result_set or [[0]])[0][0],
+                }
+            else:
+                stats = {
+                    "nodes": loader.store.node_count(),
+                    "edges": loader.store.edge_count(),
+                }
             return [TextContent(type="text", text=json.dumps(stats, indent=2))]
+
+        elif name == "list_repos":
+            result = loader.store.query(
+                "MATCH (r:Repository {description: 'federated-repo-anchor'}) "
+                "RETURN r.name ORDER BY r.name"
+            )
+            rows = result.result_set or []
+            if not rows:
+                result = loader.store.query("MATCH (r:Repository) RETURN r.name ORDER BY r.name")
+                rows = result.result_set or []
+            repos = [row[0] for row in rows]
+            return [TextContent(type="text", text=json.dumps(repos, indent=2))]
 
         elif name == "get_rationale":
             bundle = loader.load_decision(arguments["name"])
@@ -646,7 +753,11 @@ def create_mcp_server(store_factory, read_only: bool = False):
             return [TextContent(type="text", text="\n".join(lines))]
 
         elif name == "search_knowledge":
-            results = loader.search_knowledge(arguments["query"], limit=arguments.get("limit", 20))
+            results = loader.search_knowledge(
+                arguments["query"],
+                limit=arguments.get("limit", 20),
+                repo=arguments.get("repo", ""),
+            )
             if not results:
                 return [TextContent(type="text", text="No results.")]
             lines = [f"- **{r.type}** `{r.name}` — {r.description or ''}" for r in results]
@@ -657,8 +768,9 @@ def create_mcp_server(store_factory, read_only: bool = False):
 
             result = ImpactAnalyzer(loader.store).blast_radius(
                 arguments["name"],
-                file_path=arguments.get("file_path", ""),
+                file_path=_scoped_path(arguments),
                 depth=arguments.get("depth", 3),
+                repo=arguments.get("repo", ""),
             )
             return [TextContent(type="text", text=json.dumps(result.to_dict(), indent=2))]
 
@@ -702,17 +814,21 @@ def create_mcp_server(store_factory, read_only: bool = False):
             # return an error instead of an arbitrary match.
             if len(rows) > 1 and not arguments.get("repo", ""):
                 repos = sorted({row[4] for row in rows if row[4]})
-                return [TextContent(
-                    type="text",
-                    text=json.dumps({
-                        "error": "ambiguous",
-                        "message": (
-                            f"Memory name {arguments['name']!r} exists in multiple repos. "
-                            "Pass repo= to disambiguate."
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            {
+                                "error": "ambiguous",
+                                "message": (
+                                    f"Memory name {arguments['name']!r} exists in multiple repos. "
+                                    "Pass repo= to disambiguate."
+                                ),
+                                "repos": repos,
+                            }
                         ),
-                        "repos": repos,
-                    }),
-                )]
+                    )
+                ]
             row = rows[0]
             item = {
                 "label": row[0],

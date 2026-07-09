@@ -127,9 +127,9 @@ class TestListTools:
         self.fx = _ServerFixture()
 
     @pytest.mark.asyncio
-    async def test_returns_twenty_three_tools(self):
+    async def test_returns_twenty_four_tools(self):
         tools = await self.fx.list_tools_fn()
-        assert len(tools) == 23
+        assert len(tools) == 24
 
     @pytest.mark.asyncio
     async def test_tool_names(self):
@@ -143,6 +143,7 @@ class TestListTools:
             "search_symbols",
             "query_graph",
             "graph_stats",
+            "list_repos",
             "get_rationale",
             "find_owners",
             "search_knowledge",
@@ -333,12 +334,12 @@ class TestCallToolSearchSymbols:
     @pytest.mark.asyncio
     async def test_passes_limit(self):
         await self.fx.call_tool_fn("search_symbols", {"query": "foo", "limit": 5})
-        self.fx.loader.search.assert_called_once_with("foo", limit=5)
+        self.fx.loader.search.assert_called_once_with("foo", limit=5, repo="")
 
     @pytest.mark.asyncio
     async def test_limit_defaults_to_twenty(self):
         await self.fx.call_tool_fn("search_symbols", {"query": "foo"})
-        self.fx.loader.search.assert_called_once_with("foo", limit=20)
+        self.fx.loader.search.assert_called_once_with("foo", limit=20, repo="")
 
 
 # ── call_tool — query_graph ───────────────────────────────────────────────────
@@ -457,12 +458,12 @@ class TestCallToolSearchKnowledge:
     @pytest.mark.asyncio
     async def test_passes_limit(self):
         await self.fx.call_tool_fn("search_knowledge", {"query": "auth", "limit": 5})
-        self.fx.loader.search_knowledge.assert_called_once_with("auth", limit=5)
+        self.fx.loader.search_knowledge.assert_called_once_with("auth", limit=5, repo="")
 
     @pytest.mark.asyncio
     async def test_limit_defaults_to_twenty(self):
         await self.fx.call_tool_fn("search_knowledge", {"query": "auth"})
-        self.fx.loader.search_knowledge.assert_called_once_with("auth", limit=20)
+        self.fx.loader.search_knowledge.assert_called_once_with("auth", limit=20, repo="")
 
 
 # ── call_tool — unknown tool ──────────────────────────────────────────────────
@@ -509,7 +510,7 @@ class TestCallToolBlastRadius:
             )
 
         mock_analyzer.blast_radius.assert_called_once_with(
-            "foo", file_path="bar.py", depth=2
+            "foo", file_path="bar.py", depth=2, repo=""
         )
         data = json.loads(result[0]["text"])
         assert data["name"] == "foo"
@@ -527,7 +528,7 @@ class TestCallToolBlastRadius:
         with patch("navegador.analysis.impact.ImpactAnalyzer", return_value=mock_analyzer):
             await self.fx.call_tool_fn("blast_radius", {"name": "x"})
 
-        mock_analyzer.blast_radius.assert_called_once_with("x", file_path="", depth=3)
+        mock_analyzer.blast_radius.assert_called_once_with("x", file_path="", depth=3, repo="")
 
 
 class TestCallToolMemoryList:

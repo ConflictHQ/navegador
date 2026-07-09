@@ -103,7 +103,7 @@ print(bundle.to_markdown())
     }
     ```
 
-    11 tools available. See [MCP Integration](guide/mcp-integration.md) for the full tool list and per-agent config snippets. Use `--read-only` mode to restrict agents to query-only access.
+    24 tools available. See [MCP Integration](guide/mcp-integration.md) for the full tool list and per-agent config snippets. Use `--read-only` mode to restrict agents to query-only access.
 
 === "Bootstrap"
 

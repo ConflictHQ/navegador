@@ -117,9 +117,7 @@ class GraphStore:
         elif props.get("file_path", ""):
             # Code symbol with a known file — disambiguate by (name, file_path)
             props.setdefault("name", "")
-            cypher = (
-                f"MERGE (n:{label} {{name: $name, file_path: $file_path}}) SET {prop_str}"
-            )
+            cypher = f"MERGE (n:{label} {{name: $name, file_path: $file_path}}) SET {prop_str}"
         else:
             # Knowledge node or symbol without a file — key by name only
             props.setdefault("name", "")

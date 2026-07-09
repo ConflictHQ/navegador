@@ -153,17 +153,17 @@ NODE_PROPS = {
         "symbol_count",
     ],
     NodeLabel.Ticket: [
-        "ticket_id",   # Fossil UUID / short hash
+        "ticket_id",  # Fossil UUID / short hash
         "title",
-        "status",      # open|closed|fixed|invalid|…
-        "type",        # bug|feature|task|…
+        "status",  # open|closed|fixed|invalid|…
+        "type",  # bug|feature|task|…
         "priority",
         "severity",
         "assignee",
         "resolution",
-        "content",     # description / latest comment
-        "repo",        # repo name (for multi-repo graphs)
-        "source",      # "fossil" | "github" | …
+        "content",  # description / latest comment
+        "repo",  # repo name (for multi-repo graphs)
+        "source",  # "fossil" | "github" | …
         "updated_at",
     ],
 }

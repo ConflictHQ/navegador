@@ -207,9 +207,7 @@ class LensEngine:
             label, name, file_path, owner = row[0] or "", row[1] or "", row[2] or "", row[3] or ""
             nk = (name, file_path)
             if name and nk not in seen_nodes:
-                seen_nodes[nk] = LensNode(
-                    label=label, name=name, file_path=file_path, owner=owner
-                )
+                seen_nodes[nk] = LensNode(label=label, name=name, file_path=file_path, owner=owner)
             ok = (owner, "")
             if owner and ok not in seen_nodes:
                 seen_nodes[ok] = LensNode(label="Person", name=owner)
@@ -300,10 +298,22 @@ class LensEngine:
 
     # Common framework component suffixes produced by framework enrichers
     _FRAMEWORK_SUFFIXES = (
-        "Controller", "Service", "Repository", "Model",
-        "Middleware", "Serializer", "View", "Handler",
-        "Router", "Provider", "Resolver", "Gateway",
-        "Component", "Module", "Guard", "Interceptor",
+        "Controller",
+        "Service",
+        "Repository",
+        "Model",
+        "Middleware",
+        "Serializer",
+        "View",
+        "Handler",
+        "Router",
+        "Provider",
+        "Resolver",
+        "Gateway",
+        "Component",
+        "Module",
+        "Guard",
+        "Interceptor",
     )
 
     def _lens_framework_components(self, label: str = "", **_kw: Any) -> LensResult:
