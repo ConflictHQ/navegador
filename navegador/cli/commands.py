@@ -242,6 +242,13 @@ def ingest(
         for k, v in stats.items():
             table.add_row(k.capitalize(), str(v))
         console.print(table)
+        if ingester.unavailable_grammars:
+            console.print(
+                f"[yellow]Skipped {stats.get('grammar_skipped', 0)} file(s) — "
+                f"missing grammars: {', '.join(sorted(ingester.unavailable_grammars))}. "
+                "Install with pip install 'navegador\\[languages,iac]' or the "
+                "specific tree-sitter-<language> package.[/yellow]"
+            )
 
 
 # ── CODE: context / function / class ─────────────────────────────────────────

@@ -381,12 +381,19 @@ class ParallelIngester:
             "classes": 0,
             "edges": 0,
             "skipped": 0,
+            "grammar_skipped": 0,
             "errors": 0,
         }
         lock = threading.Lock()
 
         def _process_file(source_file: Path) -> None:
             language = LANGUAGE_MAP[source_file.suffix]
+            with lock:
+                parser = self._ingester._get_parser(language)
+            if parser is None:
+                with lock:
+                    aggregated["grammar_skipped"] += 1
+                return
             rel_path = str(source_file.relative_to(repo_path))
             content_hash = _file_hash(source_file)
 
@@ -400,7 +407,6 @@ class ParallelIngester:
 
             parse_path, effective_root = self._ingester._maybe_redact_to_tmp(source_file, repo_path)
             try:
-                parser = self._ingester._get_parser(language)
                 file_stats = parser.parse_file(parse_path, effective_root, self._store)
                 self._ingester._store_file_hash(rel_path, content_hash)
                 with lock:
