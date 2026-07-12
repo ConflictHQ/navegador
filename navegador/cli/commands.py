@@ -1092,20 +1092,35 @@ def _parse_repo_sources(args: tuple[str, ...]) -> dict[str, str]:
 @main.command("aggregate")
 @click.argument("repos", nargs=-1, required=True)
 @DB_OPTION
+@click.option(
+    "--graph",
+    "graph_name",
+    default="",
+    metavar="NAME",
+    help="Target super-graph name within the connected FalkorDB "
+    "(e.g. navegador_supergraph), so per-repo shards and the rollup "
+    "coexist. Defaults to the main 'navegador' graph.",
+)
 @click.option("--clear", is_flag=True, help="Wipe the central graph before aggregating.")
 @click.option("--json", "as_json", is_flag=True, help="Output stats as JSON.")
-def aggregate_cmd(repos: tuple[str, ...], db: str, clear: bool, as_json: bool):
+def aggregate_cmd(repos: tuple[str, ...], db: str, graph_name: str, clear: bool, as_json: bool):
     """
     Roll repo-local graphs up into a central super-graph.
 
-    Each REPO is a repo root (containing .navegador/graph.db) or a graph
-    file, optionally prefixed NAME= to set the repo namespace (defaults to
-    the directory basename). The --db graph is the central target.
+    Each REPO is a repo root (containing .navegador/graph.db), a graph
+    file, or the name of a graph already resident in the connected
+    FalkorDB (<name> or navegador_<name>, as written by
+    `workspace ingest --mode federated`), optionally prefixed NAME= to set
+    the repo namespace (defaults to the directory basename). The --db (or
+    --graph) graph is the central target.
     """
     from navegador.federation import SuperGraphAggregator
 
     sources = _parse_repo_sources(repos)
-    aggregator = SuperGraphAggregator(_get_store(db))
+    store = _get_store(db)
+    if graph_name:
+        store = store.with_graph(graph_name)
+    aggregator = SuperGraphAggregator(store)
     summary = aggregator.aggregate(sources, clear=clear)
 
     if as_json:

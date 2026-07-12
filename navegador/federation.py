@@ -66,7 +66,10 @@ class SuperGraphAggregator:
 
         Args:
             sources: repo name → open GraphStore, repo root directory
-                (resolves ``<root>/.navegador/graph.db``), or graph file path.
+                (resolves ``<root>/.navegador/graph.db``), a graph file path,
+                or the name of a graph already resident in the central
+                database (``<name>`` or ``navegador_<name>``, as written by
+                ``workspace ingest --mode federated``).
             clear: If True, wipe the central graph first.
 
         Returns:
@@ -82,8 +85,22 @@ class SuperGraphAggregator:
                 if isinstance(source, GraphStore):
                     store = source
                 else:
-                    opened = GraphStore.sqlite(str(resolve_graph_path(source)))
-                    store = opened
+                    try:
+                        opened = GraphStore.sqlite(str(resolve_graph_path(source)))
+                        store = opened
+                    except FileNotFoundError:
+                        # Not a local graph — try graphs resident in the
+                        # central database. Shares the central client, so it
+                        # must not be closed here.
+                        resident = self._resolve_central_graph(str(source))
+                        if resident is None:
+                            raise FileNotFoundError(
+                                f"No graph found at {source} — run `navegador ingest` "
+                                f"first, or pass the name of a graph resident in the "
+                                f"connected database (no '{source}' or "
+                                f"'navegador_{source}' graph found there)"
+                            ) from None
+                        store = resident
                 summary[name] = self.aggregate_repo(name, store)
             except Exception as exc:  # noqa: BLE001
                 logger.error("Aggregation failed for repo %s: %s", name, exc)
@@ -92,6 +109,24 @@ class SuperGraphAggregator:
                 if opened is not None:
                     opened.close()
         return summary
+
+    def _resolve_central_graph(self, name: str) -> GraphStore | None:
+        """
+        Resolve *name* to a graph resident in the central database.
+
+        Tries the exact name first, then the ``navegador_<name>`` convention
+        used by federated workspace ingest. Returns None when neither exists.
+        """
+        resident = set(self.central.list_graphs())
+        for candidate in (name, f"navegador_{name}"):
+            if candidate in resident:
+                if candidate == self.central.graph_name:
+                    raise ValueError(
+                        f"Source graph {candidate!r} is the aggregation target itself — "
+                        f"aggregate into a different graph (e.g. --graph navegador_supergraph)"
+                    )
+                return self.central.with_graph(candidate)
+        return None
 
     def aggregate_repo(self, repo: str, source: GraphStore) -> dict[str, int]:
         """
