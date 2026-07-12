@@ -14,7 +14,7 @@ import json
 import logging
 from pathlib import Path
 
-from navegador.graph.store import GraphStore
+from navegador.graph.store import GraphStore, paged_query
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +94,11 @@ def import_graph(store: GraphStore, input_path: str | Path, clear: bool = True) 
 
 def _export_nodes(store: GraphStore) -> list[dict]:
     """Export all nodes with their labels and properties."""
-    result = store.query("MATCH (n) RETURN labels(n)[0] AS label, properties(n) AS props")
+    rows = paged_query(
+        store, "MATCH (n) RETURN labels(n)[0] AS label, properties(n) AS props ORDER BY id(n)"
+    )
     nodes = []
-    for row in result.result_set or []:
+    for row in rows:
         label = row[0]
         props = row[1] if isinstance(row[1], dict) else {}
         nodes.append({"kind": "node", "label": label, "props": props})
@@ -105,15 +107,17 @@ def _export_nodes(store: GraphStore) -> list[dict]:
 
 def _export_edges(store: GraphStore) -> list[dict]:
     """Export all edges with type and endpoint identifiers."""
-    result = store.query(
+    rows = paged_query(
+        store,
         "MATCH (a)-[r]->(b) "
         "RETURN type(r) AS type, labels(a)[0] AS from_label, "
         "a.name AS from_name, coalesce(a.file_path, a.path, '') AS from_path, "
         "labels(b)[0] AS to_label, b.name AS to_name, "
-        "coalesce(b.file_path, b.path, '') AS to_path"
+        "coalesce(b.file_path, b.path, '') AS to_path "
+        "ORDER BY id(r)",
     )
     edges = []
-    for row in result.result_set or []:
+    for row in rows:
         edges.append(
             {
                 "kind": "edge",

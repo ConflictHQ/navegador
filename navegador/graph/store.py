@@ -20,14 +20,18 @@ class GraphStore:
     """
     Wraps a FalkorDB graph, providing helpers for navegador node/edge operations.
 
-    The underlying graph is named "navegador" within the database.
+    The underlying graph is named "navegador" within the database by default;
+    pass ``graph_name`` (or use :meth:`with_graph`) to target another named
+    graph in the same database — e.g. the per-repo ``navegador_<name>`` graphs
+    written by federated workspace ingest.
     """
 
     GRAPH_NAME = "navegador"
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, graph_name: str | None = None) -> None:
         self._client = client
-        self._graph = client.select_graph(self.GRAPH_NAME)
+        self.graph_name = graph_name or self.GRAPH_NAME
+        self._graph = client.select_graph(self.graph_name)
 
     # ── Constructors ──────────────────────────────────────────────────────────
 
@@ -75,6 +79,24 @@ class GraphStore:
     def query(self, cypher: str, params: dict[str, Any] | None = None) -> Any:
         """Execute a raw Cypher query and return the result."""
         return self._graph.query(cypher, params or {})
+
+    def with_graph(self, graph_name: str) -> "GraphStore":
+        """
+        Return a GraphStore for another named graph in the same database.
+
+        Shares the underlying client — closing either store closes both.
+        """
+        return GraphStore(self._client, graph_name)
+
+    def list_graphs(self) -> list[str]:
+        """Names of all graphs resident in the connected database."""
+        lister = getattr(self._client, "list_graphs", None)
+        if callable(lister):
+            return [str(g) for g in lister()]
+        conn = getattr(self._client, "connection", None)
+        if conn is not None:
+            return [str(g) for g in conn.execute_command("GRAPH.LIST")]
+        return []
 
     def close(self) -> None:
         """Close the underlying client if it exposes a close method."""
@@ -164,3 +186,27 @@ class GraphStore:
     def edge_count(self) -> int:
         result = self.query("MATCH ()-[r]->() RETURN count(r) AS c")
         return result.result_set[0][0] if result.result_set else 0
+
+
+# FalkorDB's default RESULTSET_SIZE silently caps a single query at 10,000
+# rows; readers that need the full graph must page below that ceiling.
+_DEFAULT_PAGE_SIZE = 5000
+
+
+def paged_query(store: GraphStore, cypher: str, page_size: int | None = None) -> list:
+    """
+    Run *cypher* in SKIP/LIMIT pages and return all rows.
+
+    The query must have a deterministic order (ORDER BY) so pages don't
+    overlap or miss rows.
+    """
+    size = page_size or _DEFAULT_PAGE_SIZE
+    rows: list = []
+    offset = 0
+    while True:
+        result = store.query(f"{cypher} SKIP {offset} LIMIT {size}")
+        page = result.result_set or []
+        rows.extend(page)
+        if len(page) < size:
+            return rows
+        offset += size
