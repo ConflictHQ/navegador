@@ -24,7 +24,7 @@ import logging
 import sqlite3
 from pathlib import Path
 
-from navegador.graph.store import GraphStore
+from navegador.graph.store import GraphStore, paged_query
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +47,11 @@ def collect_graph(store: GraphStore) -> tuple[list[dict], list[dict]]:
     Returns:
         (nodes, edges) — deterministically ordered, edges referencing node ids.
     """
-    result = store.query("MATCH (n) RETURN id(n) AS iid, labels(n)[0] AS label, properties(n)")
+    rows = paged_query(
+        store, "MATCH (n) RETURN id(n) AS iid, labels(n)[0] AS label, properties(n) ORDER BY iid"
+    )
     raw_nodes = []
-    for row in result.result_set or []:
+    for row in rows:
         iid, label = row[0], row[1] or "default"
         props = dict(row[2]) if isinstance(row[2], dict) else {}
         name = str(props.pop("name", "") or "")
@@ -70,11 +72,13 @@ def collect_graph(store: GraphStore) -> tuple[list[dict], list[dict]]:
         id_map[iid] = node_id
         nodes.append({"id": node_id, "name": name, "type": label, "props": props})
 
-    result = store.query(
-        "MATCH (a)-[r]->(b) RETURN id(a) AS src, id(b) AS tgt, type(r) AS type, properties(r)"
+    rows = paged_query(
+        store,
+        "MATCH (a)-[r]->(b) RETURN id(a) AS src, id(b) AS tgt, type(r) AS type, properties(r) "
+        "ORDER BY id(r)",
     )
     edges = []
-    for row in result.result_set or []:
+    for row in rows:
         src, tgt = id_map.get(row[0]), id_map.get(row[1])
         if src is None or tgt is None:
             continue

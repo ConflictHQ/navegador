@@ -1014,10 +1014,21 @@ def planopticon_ingest(path: str, input_type: str, source: str, as_json: bool, d
     help="Export format: jsonl (legacy) or conflict-kg (canonical conflict-kg/v1; "
     "writes SQLite for .db/.sqlite outputs, JSON otherwise).",
 )
+@click.option(
+    "--graph",
+    "graph_name",
+    default="",
+    metavar="NAME",
+    help="Named graph within the connected FalkorDB to export "
+    "(e.g. navegador_myrepo from a federated workspace ingest). "
+    "Defaults to the main 'navegador' graph.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output stats as JSON.")
-def export_cmd(output: str, db: str, fmt: str, as_json: bool):
+def export_cmd(output: str, db: str, fmt: str, graph_name: str, as_json: bool):
     """Export the graph to a text-based JSONL file (git-friendly)."""
     store = _get_store(db)
+    if graph_name:
+        store = store.with_graph(graph_name)
     if fmt == "conflict-kg":
         from navegador.graph.interchange import export_conflict_kg
 
