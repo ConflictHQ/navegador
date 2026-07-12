@@ -87,7 +87,9 @@ class RepoIngester:
     def __init__(self, store: GraphStore, redact: bool = False) -> None:
         self.store = store
         self.redact = redact
-        self._parsers: dict[str, "LanguageParser"] = {}
+        self._parsers: dict[str, "LanguageParser | None"] = {}
+        # language → install hint, populated when an optional grammar is missing
+        self.unavailable_grammars: dict[str, str] = {}
         if redact:
             from navegador.security import SensitiveContentDetector
 
@@ -135,11 +137,17 @@ class RepoIngester:
             "classes": 0,
             "edges": 0,
             "skipped": 0,
+            "grammar_skipped": 0,
         }
 
         for source_file in self._iter_source_files(repo_path):
             language = LANGUAGE_MAP.get(source_file.suffix)
             if not language:
+                continue
+
+            parser = self._get_parser(language)
+            if parser is None:
+                stats["grammar_skipped"] += 1
                 continue
 
             rel_path = str(source_file.relative_to(repo_path))
@@ -154,7 +162,6 @@ class RepoIngester:
 
             parse_path, effective_root = self._maybe_redact_to_tmp(source_file, repo_path)
             try:
-                parser = self._get_parser(language)
                 file_stats = parser.parse_file(parse_path, effective_root, self.store)
                 stats["files"] += 1
                 stats["functions"] += file_stats.get("functions", 0)
@@ -177,6 +184,14 @@ class RepoIngester:
         # Fossil mirror pass — if the repo is also a Fossil checkout (e.g. a
         # Git repo mirrored to/from Fossil), ingest wiki pages and tickets.
         self._ingest_fossil_mirror(repo_path, stats)
+
+        if self.unavailable_grammars:
+            logger.warning(
+                "Skipped %d file(s) with missing optional grammars: %s "
+                "(pip install 'navegador[languages,iac]' to parse everything)",
+                stats["grammar_skipped"],
+                ", ".join(sorted(self.unavailable_grammars)),
+            )
 
         logger.info(
             "Ingested %s: %d files, %d functions, %d classes, %d skipped",
@@ -402,75 +417,88 @@ class RepoIngester:
         stats["tickets"] = ticket_stats["tickets"]
         stats["edges"] += wiki_stats["edges"] + ticket_stats["edges"]
 
-    def _get_parser(self, language: str) -> "LanguageParser":
+    def _get_parser(self, language: str) -> "LanguageParser | None":
+        """
+        Return the parser for *language*, or None when its optional
+        tree-sitter grammar is not installed. A missing grammar is recorded
+        in ``unavailable_grammars`` and warned about once — never raised, so
+        one absent grammar cannot abort a whole ingest.
+        """
         if language not in self._parsers:
-            if language == "python":
-                from navegador.ingestion.python import PythonParser
-
-                self._parsers[language] = PythonParser()
-            elif language in ("typescript", "javascript"):
-                from navegador.ingestion.typescript import TypeScriptParser
-
-                self._parsers[language] = TypeScriptParser(language)
-            elif language == "go":
-                from navegador.ingestion.go import GoParser
-
-                self._parsers[language] = GoParser()
-            elif language == "rust":
-                from navegador.ingestion.rust import RustParser
-
-                self._parsers[language] = RustParser()
-            elif language == "java":
-                from navegador.ingestion.java import JavaParser
-
-                self._parsers[language] = JavaParser()
-            elif language == "kotlin":
-                from navegador.ingestion.kotlin import KotlinParser
-
-                self._parsers[language] = KotlinParser()
-            elif language == "csharp":
-                from navegador.ingestion.csharp import CSharpParser
-
-                self._parsers[language] = CSharpParser()
-            elif language == "php":
-                from navegador.ingestion.php import PHPParser
-
-                self._parsers[language] = PHPParser()
-            elif language == "ruby":
-                from navegador.ingestion.ruby import RubyParser
-
-                self._parsers[language] = RubyParser()
-            elif language == "swift":
-                from navegador.ingestion.swift import SwiftParser
-
-                self._parsers[language] = SwiftParser()
-            elif language == "c":
-                from navegador.ingestion.c import CParser
-
-                self._parsers[language] = CParser()
-            elif language == "cpp":
-                from navegador.ingestion.cpp import CppParser
-
-                self._parsers[language] = CppParser()
-            elif language == "hcl":
-                from navegador.ingestion.hcl import HCLParser
-
-                self._parsers[language] = HCLParser()
-            elif language == "puppet":
-                from navegador.ingestion.puppet import PuppetParser
-
-                self._parsers[language] = PuppetParser()
-            elif language == "bash":
-                from navegador.ingestion.bash import BashParser
-
-                self._parsers[language] = BashParser()
-            elif language == "markdown":
-                from navegador.ingestion.markdown import MarkdownParser
-
-                self._parsers[language] = MarkdownParser()
-            else:
-                raise ValueError(f"Unsupported language: {language}")
+            try:
+                self._parsers[language] = self._build_parser(language)
+            except ImportError as e:
+                self._parsers[language] = None
+                self.unavailable_grammars[language] = str(e)
+                logger.warning("Skipping %s files — %s", language, e)
         return self._parsers[language]
+
+    def _build_parser(self, language: str) -> "LanguageParser":
+        if language == "python":
+            from navegador.ingestion.python import PythonParser
+
+            return PythonParser()
+        elif language in ("typescript", "javascript"):
+            from navegador.ingestion.typescript import TypeScriptParser
+
+            return TypeScriptParser(language)
+        elif language == "go":
+            from navegador.ingestion.go import GoParser
+
+            return GoParser()
+        elif language == "rust":
+            from navegador.ingestion.rust import RustParser
+
+            return RustParser()
+        elif language == "java":
+            from navegador.ingestion.java import JavaParser
+
+            return JavaParser()
+        elif language == "kotlin":
+            from navegador.ingestion.kotlin import KotlinParser
+
+            return KotlinParser()
+        elif language == "csharp":
+            from navegador.ingestion.csharp import CSharpParser
+
+            return CSharpParser()
+        elif language == "php":
+            from navegador.ingestion.php import PHPParser
+
+            return PHPParser()
+        elif language == "ruby":
+            from navegador.ingestion.ruby import RubyParser
+
+            return RubyParser()
+        elif language == "swift":
+            from navegador.ingestion.swift import SwiftParser
+
+            return SwiftParser()
+        elif language == "c":
+            from navegador.ingestion.c import CParser
+
+            return CParser()
+        elif language == "cpp":
+            from navegador.ingestion.cpp import CppParser
+
+            return CppParser()
+        elif language == "hcl":
+            from navegador.ingestion.hcl import HCLParser
+
+            return HCLParser()
+        elif language == "puppet":
+            from navegador.ingestion.puppet import PuppetParser
+
+            return PuppetParser()
+        elif language == "bash":
+            from navegador.ingestion.bash import BashParser
+
+            return BashParser()
+        elif language == "markdown":
+            from navegador.ingestion.markdown import MarkdownParser
+
+            return MarkdownParser()
+        raise ValueError(f"Unsupported language: {language}")
 
 
 def _file_hash(path: Path) -> str:
