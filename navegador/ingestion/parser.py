@@ -26,6 +26,7 @@ Infrastructure-as-Code:
 
 import hashlib
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -169,6 +170,10 @@ class RepoIngester:
                 stats["edges"] += file_stats.get("edges", 0)
 
                 self._store_file_hash(rel_path, content_hash)
+                if stats["files"] % 1000 == 0:
+                    logger.info(
+                        "Ingest progress %s: %d files parsed", repo_path.name, stats["files"]
+                    )
             except Exception:
                 logger.exception("Failed to parse %s", source_file)
             finally:
@@ -304,8 +309,9 @@ class RepoIngester:
         tmp_file.write_text(redacted, encoding="utf-8")
         return tmp_file, tmp_root
 
-    def _iter_source_files(self, repo_path: Path):
-        skip_dirs = {
+    # Directories never entered during the repo walk.
+    _SKIP_DIRS = frozenset(
+        {
             ".git",
             ".venv",
             "venv",
@@ -318,10 +324,38 @@ class RepoIngester:
             "vendor",  # Go modules cache
             ".gradle",  # Gradle cache
         }
-        for path in repo_path.rglob("*"):
-            if path.is_file() and path.suffix in LANGUAGE_MAP:
-                if not any(part in skip_dirs for part in path.parts):
+    )
+
+    def _walk_files(self, repo_path: Path):
+        """
+        Walk *repo_path* yielding files, pruning skipped directories BEFORE
+        descending into them (rglob enumerated everything first, which made
+        metarepo roots with huge vendored trees appear to hang — #128).
+
+        A subdirectory containing ``.git`` (directory, or file for worktrees
+        and submodule pointers) is another repository: it is a boundary and
+        is never entered.
+        """
+        for dirpath, dirnames, filenames in os.walk(repo_path):
+            current = Path(dirpath)
+            kept = []
+            for d in dirnames:
+                if d in self._SKIP_DIRS:
+                    continue
+                if (current / d / ".git").exists():
+                    logger.info("Skipping nested git repository: %s", current / d)
+                    continue
+                kept.append(d)
+            dirnames[:] = kept
+            for fname in filenames:
+                path = current / fname
+                if path.is_file():  # excludes broken symlinks, FIFOs, sockets
                     yield path
+
+    def _iter_source_files(self, repo_path: Path):
+        for path in self._walk_files(repo_path):
+            if path.suffix in LANGUAGE_MAP:
+                yield path
 
     def _ingest_ansible(self, repo_path: Path, stats: dict[str, int], incremental: bool) -> None:
         """Detect and parse Ansible YAML files (playbooks, roles, tasks)."""
@@ -331,41 +365,8 @@ class RepoIngester:
 
         ansible_parser: AnsibleParser | None = None
 
-        for path in repo_path.rglob("*.yml"):
-            if not path.is_file():
-                continue
-            if any(part in (".git", ".venv", "venv", "node_modules") for part in path.parts):
-                continue
-            if not is_ansible_file(path, repo_path):
-                continue
-
-            rel_path = str(path.relative_to(repo_path))
-            content_hash = _file_hash(path)
-
-            if incremental and self._file_unchanged(rel_path, content_hash):
-                stats["skipped"] += 1
-                continue
-
-            if incremental:
-                self._clear_file_subgraph(rel_path)
-
-            if ansible_parser is None:
-                ansible_parser = AnsibleParser()
-            try:
-                file_stats = ansible_parser.parse_file(path, repo_path, self.store)
-                stats["files"] += 1
-                stats["functions"] += file_stats.get("functions", 0)
-                stats["classes"] += file_stats.get("classes", 0)
-                stats["edges"] += file_stats.get("edges", 0)
-                self._store_file_hash(rel_path, content_hash)
-            except Exception:
-                logger.exception("Failed to parse Ansible file %s", path)
-
-        # Also check .yaml extension
-        for path in repo_path.rglob("*.yaml"):
-            if not path.is_file():
-                continue
-            if any(part in (".git", ".venv", "venv", "node_modules") for part in path.parts):
+        for path in self._walk_files(repo_path):
+            if path.suffix not in (".yml", ".yaml"):
                 continue
             if not is_ansible_file(path, repo_path):
                 continue
