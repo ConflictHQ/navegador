@@ -44,6 +44,134 @@ logger = logging.getLogger(__name__)
 # schema — they represent requirements and commitments from the PM tool.
 _TICKET_LABEL = NodeLabel.Rule
 
+# Comment threads can run long; keep the stored discussion bounded.
+_DISCUSSION_MAX_CHARS = 8000
+
+_DECISION_PROMPT = """\
+You are extracting architectural/product decisions from a project ticket thread.
+
+Return a JSON array (and nothing else). Each element:
+  {{"name": "short imperative decision title",
+    "description": "what was decided",
+    "rationale": "why, per the thread",
+    "alternatives": "alternatives considered, or empty string",
+    "code_refs": ["function or class names the decision concerns"]}}
+
+Only include genuine decisions (a choice was made or a direction settled).
+Return [] if the thread contains none.
+
+Thread:
+
+{thread}
+"""
+
+
+def _strip_code_fences(text: str) -> str:
+    """Strip a surrounding ```json ... ``` fence if the LLM added one."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3]
+    return text.strip()
+
+
+def _slugify(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:60] or "decision"
+
+
+def retrofit_decisions(
+    store: GraphStore,
+    memory_dir: str | None = None,
+    json_path: str | None = None,
+    domain: str = "",
+) -> dict[str, Any]:
+    """
+    Write Decision nodes back into a brain's memory store.
+
+    Markdown files use the frontmatter format MemoryIngester ingests
+    (``type: project`` maps back to Decision), so the loop
+    issues → graph → brain memory round-trips. JSON output is a plain list
+    suitable for an ``app/decisions.json`` store.
+
+    Args:
+        store: Graph to read Decision nodes from.
+        memory_dir: When set, write one ``project_<slug>.md`` per decision here.
+        json_path: When set, write the full decision list as JSON here.
+        domain: Optional domain filter.
+
+    Returns:
+        dict with keys: decisions, markdown_files, json_path
+    """
+    from pathlib import Path
+
+    cypher = "MATCH (d:Decision)"
+    params: dict[str, Any] = {}
+    if domain:
+        cypher += " WHERE d.domain = $domain"
+        params["domain"] = domain
+    cypher += (
+        " RETURN d.name, d.description, d.rationale, d.alternatives, d.status, d.date, d.domain"
+        " ORDER BY d.name"
+    )
+    result = store.query(cypher, params)
+
+    decisions = [
+        {
+            "name": str(row[0]),
+            "description": str(row[1] or ""),
+            "rationale": str(row[2] or ""),
+            "alternatives": str(row[3] or ""),
+            "status": str(row[4] or ""),
+            "date": str(row[5] or ""),
+            "domain": str(row[6] or ""),
+        }
+        for row in (result.result_set or [])
+        if row[0]
+    ]
+
+    markdown_files = 0
+    if memory_dir:
+        out_dir = Path(memory_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for decision in decisions:
+            first_line = decision["description"].splitlines()[0] if decision["description"] else ""
+            body_parts = [decision["description"]]
+            if decision["rationale"]:
+                body_parts.append(f"**Rationale:** {decision['rationale']}")
+            if decision["alternatives"]:
+                body_parts.append(f"**Alternatives considered:** {decision['alternatives']}")
+            content = (
+                "---\n"
+                f"name: {decision['name']}\n"
+                f"description: {first_line[:200]}\n"
+                "type: project\n"
+                "---\n\n" + "\n\n".join(part for part in body_parts if part) + "\n"
+            )
+            (out_dir / f"project_{_slugify(decision['name'])}.md").write_text(
+                content, encoding="utf-8"
+            )
+            markdown_files += 1
+
+    if json_path:
+        import json as _json
+
+        path = Path(json_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_json.dumps(decisions, indent=2) + "\n", encoding="utf-8")
+
+    logger.info(
+        "retrofit_decisions: %d decisions → markdown=%s json=%s",
+        len(decisions),
+        memory_dir or "-",
+        json_path or "-",
+    )
+    return {
+        "decisions": len(decisions),
+        "markdown_files": markdown_files,
+        "json_path": json_path or "",
+    }
+
 
 class TicketIngester:
     """
@@ -72,6 +200,7 @@ class TicketIngester:
         token: str = "",
         state: str = "open",
         limit: int = 100,
+        include_comments: bool = True,
     ) -> dict[str, Any]:
         """
         Fetch GitHub issues for *repo* and ingest them into the graph.
@@ -87,13 +216,15 @@ class TicketIngester:
             ``"open"``, ``"closed"``, or ``"all"``.
         limit:
             Maximum number of issues to fetch (GitHub paginates at 100/page).
+        include_comments:
+            When True (default), each issue's comment thread is fetched and
+            stored on the Ticket node as a ``discussion`` property — that is
+            where most architectural "why" discussion actually lives.
 
         Returns
         -------
-        dict with keys: tickets, linked
+        dict with keys: tickets, comments, linked
         """
-        import urllib.request
-
         headers: dict[str, str] = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
@@ -106,11 +237,7 @@ class TicketIngester:
         url = f"https://api.github.com/repos/{repo}/issues?state={state}&per_page={per_page}&page=1"
 
         try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                import json
-
-                issues: list[dict] = json.loads(resp.read().decode())
+            issues: list[dict] = self._fetch_json(url, headers)
         except Exception as exc:
             raise RuntimeError(f"Failed to fetch GitHub issues for {repo!r}: {exc}") from exc
 
@@ -119,6 +246,7 @@ class TicketIngester:
 
         domain = repo.split("/")[-1] if "/" in repo else repo
         tickets_created = 0
+        comments_ingested = 0
 
         for issue in issues[:limit]:
             number = issue.get("number", 0)
@@ -127,6 +255,17 @@ class TicketIngester:
             html_url = issue.get("html_url", "")
             labels = [lbl.get("name", "") for lbl in issue.get("labels", [])]
             severity = self._github_severity(labels)
+
+            discussion = ""
+            comments_count = int(issue.get("comments") or 0)
+            if include_comments and comments_count:
+                comments = self._fetch_issue_comments(repo, number, headers)
+                comments_ingested += len(comments)
+                discussion = "\n\n".join(
+                    f"**{c.get('user', {}).get('login', 'unknown')}**: "
+                    f"{(c.get('body') or '').strip()}"
+                    for c in comments
+                )
 
             node_name = f"#{number}: {title}"[:200]
             self.store.create_node(
@@ -138,6 +277,8 @@ class TicketIngester:
                     "severity": severity,
                     "rationale": html_url,
                     "examples": "",
+                    "discussion": discussion[:_DISCUSSION_MAX_CHARS],
+                    "comments_count": comments_count,
                 },
             )
             tickets_created += 1
@@ -160,12 +301,144 @@ class TicketIngester:
 
         linked = self._link_to_code(domain)
         logger.info(
-            "TicketIngester.ingest_github_issues(%s): tickets=%d linked=%d",
+            "TicketIngester.ingest_github_issues(%s): tickets=%d comments=%d linked=%d",
             repo,
             tickets_created,
+            comments_ingested,
             linked,
         )
-        return {"tickets": tickets_created, "linked": linked}
+        return {"tickets": tickets_created, "comments": comments_ingested, "linked": linked}
+
+    @staticmethod
+    def _fetch_json(url: str, headers: dict[str, str]) -> Any:
+        import json
+        import urllib.request
+
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode())
+
+    def _fetch_issue_comments(self, repo: str, number: int, headers: dict[str, str]) -> list[dict]:
+        """Fetch one page (up to 100) of comments for an issue; [] on failure."""
+        url = f"https://api.github.com/repos/{repo}/issues/{number}/comments?per_page=100"
+        try:
+            comments = self._fetch_json(url, headers)
+            return comments if isinstance(comments, list) else []
+        except Exception:
+            logger.warning("Could not fetch comments for %s#%d", repo, number, exc_info=True)
+            return []
+
+    # ── Decision extraction (LLM) ─────────────────────────────────────────────
+
+    def extract_decisions(
+        self,
+        domain: str = "",
+        llm_provider: str = "anthropic",
+        llm_model: str = "",
+    ) -> dict[str, Any]:
+        """
+        Surface architectural decisions from ingested ticket threads.
+
+        Runs each ticket's title + body + discussion through an LLM (reuses
+        the ``[llm]`` provider abstraction) prompting for a strict-JSON list
+        of decisions. Each becomes a Decision node linked DOCUMENTS → the
+        Ticket, and DOCUMENTS → any code symbols the decision references by
+        name.
+
+        Returns
+        -------
+        dict with keys: tickets_scanned, decisions, code_links
+        """
+        import json as _json
+
+        from navegador.llm import get_provider
+
+        provider = get_provider(llm_provider, llm_model)
+
+        result = self.store.query(
+            "MATCH (t:Rule) WHERE t.domain = $domain AND t.rationale STARTS WITH 'http' "
+            "RETURN t.name, t.description, t.discussion",
+            {"domain": domain},
+        )
+        tickets = [
+            (str(row[0]), str(row[1] or ""), str(row[2] or ""))
+            for row in (result.result_set or [])
+            if row[0]
+        ]
+
+        decisions_created = 0
+        code_links = 0
+        for t_name, t_desc, t_discussion in tickets:
+            thread = f"# {t_name}\n\n{t_desc}\n\n## Discussion\n\n{t_discussion}".strip()
+            try:
+                response = provider.complete(_DECISION_PROMPT.format(thread=thread[:12000]))
+                decisions = _json.loads(_strip_code_fences(response))
+            except Exception:
+                logger.warning("Decision extraction failed for %s", t_name, exc_info=True)
+                continue
+            if not isinstance(decisions, list):
+                continue
+
+            for decision in decisions:
+                if not isinstance(decision, dict) or not decision.get("name"):
+                    continue
+                d_name = str(decision["name"]).strip()[:200]
+                self.store.create_node(
+                    NodeLabel.Decision,
+                    {
+                        "name": d_name,
+                        "description": str(decision.get("description") or "")[:2000],
+                        "domain": domain,
+                        "rationale": str(decision.get("rationale") or "")[:2000],
+                        "alternatives": str(decision.get("alternatives") or "")[:2000],
+                        "date": "",
+                        "status": "extracted",
+                    },
+                )
+                self.store.create_edge(
+                    NodeLabel.Decision,
+                    {"name": d_name},
+                    EdgeType.DOCUMENTS,
+                    _TICKET_LABEL,
+                    {"name": t_name},
+                )
+                decisions_created += 1
+                code_refs = decision.get("code_refs") or []
+                if isinstance(code_refs, list):
+                    code_links += self._link_decision_to_code(d_name, code_refs)
+
+        logger.info(
+            "TicketIngester.extract_decisions(%s): tickets=%d decisions=%d code_links=%d",
+            domain,
+            len(tickets),
+            decisions_created,
+            code_links,
+        )
+        return {
+            "tickets_scanned": len(tickets),
+            "decisions": decisions_created,
+            "code_links": code_links,
+        }
+
+    def _link_decision_to_code(self, decision_name: str, code_refs: list) -> int:
+        """DOCUMENTS edges from a Decision to code symbols it references by name."""
+        linked = 0
+        for ref in code_refs:
+            ref = str(ref).strip()
+            if not ref:
+                continue
+            for label in ("Function", "Class", "Method"):
+                cypher = (
+                    "MATCH (d:Decision {name: $dn}), (c:" + label + " {name: $cn}) "
+                    "MERGE (d)-[r:DOCUMENTS]->(c) RETURN count(r)"
+                )
+                try:
+                    result = self.store.query(cypher, {"dn": decision_name, "cn": ref})
+                    if result.result_set and result.result_set[0][0]:
+                        linked += int(result.result_set[0][0])
+                except Exception:
+                    logger.debug("Could not link decision %s → %s", decision_name, ref)
+        return linked
 
     # ── Linear (stub) ─────────────────────────────────────────────────────────
 

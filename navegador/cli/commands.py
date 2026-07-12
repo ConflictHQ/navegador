@@ -2432,9 +2432,33 @@ def pm():
     help="GitHub issue state filter.",
 )
 @click.option("--limit", default=100, show_default=True, help="Maximum number of issues to fetch.")
+@click.option(
+    "--no-comments",
+    is_flag=True,
+    help="Skip fetching issue comment threads (fetched by default).",
+)
+@click.option(
+    "--extract-decisions",
+    is_flag=True,
+    help="After ingesting, surface Decision nodes from issue threads via LLM "
+    "(requires the [llm] extra and provider credentials).",
+)
+@click.option("--llm-provider", default="anthropic", show_default=True)
+@click.option("--llm-model", default="", help="Override the provider's default model.")
 @DB_OPTION
 @click.option("--json", "as_json", is_flag=True)
-def pm_ingest(github_repo: str, token: str, state: str, limit: int, db: str, as_json: bool):
+def pm_ingest(
+    github_repo: str,
+    token: str,
+    state: str,
+    limit: int,
+    no_comments: bool,
+    extract_decisions: bool,
+    llm_provider: str,
+    llm_model: str,
+    db: str,
+    as_json: bool,
+):
     """Ingest tickets from a PM tool into the knowledge graph.
 
     \b
@@ -2442,6 +2466,7 @@ def pm_ingest(github_repo: str, token: str, state: str, limit: int, db: str, as_
       navegador pm ingest --github owner/repo
       navegador pm ingest --github owner/repo --token ghp_...
       navegador pm ingest --github owner/repo --state all --limit 200
+      navegador pm ingest --github owner/repo --extract-decisions
     """
     if not github_repo:
         raise click.UsageError(
@@ -2451,7 +2476,19 @@ def pm_ingest(github_repo: str, token: str, state: str, limit: int, db: str, as_
     from navegador.pm import TicketIngester
 
     ing = TicketIngester(_get_store(db))
-    stats = ing.ingest_github_issues(github_repo, token=token, state=state, limit=limit)
+    stats = ing.ingest_github_issues(
+        github_repo,
+        token=token,
+        state=state,
+        limit=limit,
+        include_comments=not no_comments,
+    )
+
+    if extract_decisions:
+        domain = github_repo.split("/")[-1]
+        stats.update(
+            ing.extract_decisions(domain=domain, llm_provider=llm_provider, llm_model=llm_model)
+        )
 
     if as_json:
         click.echo(json.dumps(stats, indent=2))
@@ -2462,6 +2499,58 @@ def pm_ingest(github_repo: str, token: str, state: str, limit: int, db: str, as_
         for k, v in stats.items():
             table.add_row(k.capitalize(), str(v))
         console.print(table)
+
+
+@pm.command("decisions")
+@click.option(
+    "--to-markdown",
+    "memory_dir",
+    default="",
+    metavar="DIR",
+    help="Write one project_<slug>.md per decision into DIR "
+    "(frontmatter format readable by `navegador memory ingest`).",
+)
+@click.option(
+    "--to-json",
+    "json_path",
+    default="",
+    metavar="FILE",
+    help="Write the decision list as JSON to FILE (e.g. app/decisions.json).",
+)
+@click.option("--domain", default="", help="Only export decisions from this domain.")
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True, help="Output stats as JSON.")
+def pm_decisions(memory_dir: str, json_path: str, domain: str, db: str, as_json: bool):
+    """Retrofit Decision nodes into a brain's memory store.
+
+    \b
+    Examples:
+      navegador pm decisions --to-markdown memory/
+      navegador pm decisions --to-json app/decisions.json --domain myrepo
+    """
+    if not memory_dir and not json_path:
+        raise click.UsageError("Provide --to-markdown DIR and/or --to-json FILE.")
+
+    from navegador.pm import retrofit_decisions
+
+    stats = retrofit_decisions(
+        _get_store(db),
+        memory_dir=memory_dir or None,
+        json_path=json_path or None,
+        domain=domain,
+    )
+
+    if as_json:
+        click.echo(json.dumps(stats, indent=2))
+    else:
+        markdown_note = (
+            f" → {stats['markdown_files']} markdown file(s) in {memory_dir}" if memory_dir else ""
+        )
+        json_note = f" → {json_path}" if json_path else ""
+        console.print(
+            f"[green]Retrofitted[/green] {stats['decisions']} decision(s)"
+            f"{markdown_note}{json_note}"
+        )
 
 
 # ── Dependencies: external package ingestion (#58) ────────────────────────────
