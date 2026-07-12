@@ -9,6 +9,7 @@ Navegador CLI — the single interface to your project's knowledge graph.
 import asyncio
 import json
 import logging
+from pathlib import Path
 
 import click
 from rich.console import Console
@@ -177,6 +178,14 @@ def init(
     is_flag=True,
     help="Detect and ingest as a monorepo workspace (Turborepo, Nx, Yarn, pnpm, Cargo, Go).",
 )
+@click.option(
+    "--exclude",
+    "excludes",
+    multiple=True,
+    metavar="GLOB",
+    help="Exclude paths matching GLOB (repeatable). Matches repo-relative "
+    "paths or single path components; a repo-root .navignore is honored too.",
+)
 def ingest(
     repo_path: str,
     db: str,
@@ -187,6 +196,7 @@ def ingest(
     as_json: bool,
     redact: bool,
     monorepo: bool,
+    excludes: tuple[str, ...],
 ):
     """Ingest a repository's code into the graph (AST + call graph)."""
     if monorepo:
@@ -212,7 +222,7 @@ def ingest(
     from navegador.ingestion import RepoIngester
 
     store = _get_store(db)
-    ingester = RepoIngester(store, redact=redact)
+    ingester = RepoIngester(store, redact=redact, exclude=list(excludes))
 
     if watch:
         console.print(f"[bold]Watching[/bold] {repo_path} (interval={interval}s, Ctrl-C to stop)")
@@ -2606,40 +2616,79 @@ def workspace():
 
 
 @workspace.command("ingest")
-@click.argument("repos", nargs=-1, metavar="NAME=PATH ...")
+@click.argument("repos", nargs=-1, metavar="[NAME=]PATH ...")
 @click.option(
     "--mode",
-    type=click.Choice(["unified", "federated"]),
+    type=click.Choice(["unified", "federated", "authored", "full"]),
     default="unified",
     show_default=True,
-    help="Graph mode: unified (shared graph) or federated (per-repo graphs).",
+    help="unified (shared graph), federated (per-repo graphs), or the "
+    "metarepo modes (imply --recursive + federated): authored skips each "
+    "repo's vendored nested clones, full indexes them too.",
+)
+@click.option(
+    "--recursive",
+    is_flag=True,
+    help="Discover nested git clones under each PATH and ingest each as its own repo.",
+)
+@click.option(
+    "--exclude",
+    "excludes",
+    multiple=True,
+    metavar="GLOB",
+    help="Exclude paths matching GLOB in every repo (repeatable; "
+    "per-repo .navignore files are honored too).",
 )
 @DB_OPTION
 @click.option("--clear", is_flag=True)
 @click.option("--json", "as_json", is_flag=True)
-def workspace_ingest(repos: tuple, mode: str, db: str, clear: bool, as_json: bool):
+def workspace_ingest(
+    repos: tuple,
+    mode: str,
+    recursive: bool,
+    excludes: tuple[str, ...],
+    db: str,
+    clear: bool,
+    as_json: bool,
+):
     """Ingest multiple repositories as a workspace.
 
     \b
-    REPOS is a list of NAME=PATH pairs, e.g.:
+    REPOS is a list of [NAME=]PATH entries (NAME defaults to the directory
+    basename), e.g.:
       navegador workspace ingest backend=/path/to/backend frontend=/path/to/frontend
 
     \b
     Examples:
       navegador workspace ingest backend=. frontend=../frontend --mode unified
       navegador workspace ingest api=./api worker=./worker --mode federated
+      navegador workspace ingest /path/to/metarepo --recursive --mode authored
     """
-    from navegador.multirepo import WorkspaceManager, WorkspaceMode
+    from navegador.multirepo import WorkspaceManager, WorkspaceMode, discover_nested_repos
 
     if not repos:
-        raise click.UsageError("Provide at least one NAME=PATH repo.")
+        raise click.UsageError("Provide at least one [NAME=]PATH repo.")
 
-    wm = WorkspaceManager(_get_store(db), mode=WorkspaceMode(mode))
+    metarepo = mode in ("authored", "full")
+    recursive = recursive or metarepo
+    storage_mode = WorkspaceMode.FEDERATED if metarepo else WorkspaceMode(mode)
+
+    wm = WorkspaceManager(
+        _get_store(db),
+        mode=storage_mode,
+        exclude=list(excludes),
+        include_nested_repos=(mode == "full"),
+    )
     for repo_spec in repos:
-        if "=" not in repo_spec:
-            raise click.UsageError(f"Invalid repo spec {repo_spec!r}. Expected NAME=PATH format.")
-        name, path = repo_spec.split("=", 1)
-        wm.add_repo(name.strip(), path.strip())
+        name, sep, path = repo_spec.partition("=")
+        if not sep:
+            path = repo_spec
+            name = Path(path).resolve().name
+        name, path = name.strip(), path.strip()
+        wm.add_repo(name, path)
+        if recursive:
+            for nested_name, nested_path in discover_nested_repos(path):
+                wm.add_repo(f"{name}-{nested_name}", nested_path)
 
     stats = wm.ingest_all(clear=clear)
 

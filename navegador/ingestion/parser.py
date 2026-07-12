@@ -24,6 +24,7 @@ Infrastructure-as-Code:
   Ansible     .yml .yaml      (detected heuristically, not via extension)
 """
 
+import fnmatch
 import hashlib
 import logging
 import os
@@ -85,9 +86,21 @@ class RepoIngester:
                 with ``[REDACTED]`` before the content is stored in graph nodes.
     """
 
-    def __init__(self, store: GraphStore, redact: bool = False) -> None:
+    def __init__(
+        self,
+        store: GraphStore,
+        redact: bool = False,
+        exclude: list[str] | None = None,
+        include_nested_repos: bool = False,
+    ) -> None:
         self.store = store
         self.redact = redact
+        # Glob patterns excluded from the walk, merged with the repo's
+        # .navignore. Matching directories are pruned before descent.
+        self.exclude = list(exclude or [])
+        # When True, nested git clones are walked instead of boundary-stopped
+        # (metarepo "full" mode — index vendored cores too).
+        self.include_nested_repos = include_nested_repos
         self._parsers: dict[str, "LanguageParser | None"] = {}
         # language → install hint, populated when an optional grammar is missing
         self.unavailable_grammars: dict[str, str] = {}
@@ -334,23 +347,67 @@ class RepoIngester:
 
         A subdirectory containing ``.git`` (directory, or file for worktrees
         and submodule pointers) is another repository: it is a boundary and
-        is never entered.
+        is never entered — unless ``include_nested_repos`` is set. Exclusion
+        patterns (``exclude`` + the repo's ``.navignore``) prune matching
+        directories the same way (#130).
         """
+        patterns = self._exclusion_patterns(repo_path)
         for dirpath, dirnames, filenames in os.walk(repo_path):
             current = Path(dirpath)
             kept = []
             for d in dirnames:
                 if d in self._SKIP_DIRS:
                     continue
-                if (current / d / ".git").exists():
-                    logger.info("Skipping nested git repository: %s", current / d)
+                child = current / d
+                if patterns and self._matches_exclusion(
+                    child.relative_to(repo_path).as_posix(), patterns
+                ):
+                    logger.info("Excluding %s (exclusion pattern)", child)
+                    continue
+                if not self.include_nested_repos and (child / ".git").exists():
+                    logger.info("Skipping nested git repository: %s", child)
                     continue
                 kept.append(d)
             dirnames[:] = kept
             for fname in filenames:
                 path = current / fname
+                if patterns and self._matches_exclusion(
+                    path.relative_to(repo_path).as_posix(), patterns
+                ):
+                    continue
                 if path.is_file():  # excludes broken symlinks, FIFOs, sockets
                     yield path
+
+    def _exclusion_patterns(self, repo_path: Path) -> list[str]:
+        """Explicit exclude patterns plus the repo's .navignore entries."""
+        patterns = list(self.exclude)
+        navignore = repo_path / ".navignore"
+        if navignore.is_file():
+            for line in navignore.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    patterns.append(line)
+        return patterns
+
+    @staticmethod
+    def _matches_exclusion(rel_posix: str, patterns: list[str]) -> bool:
+        """
+        True when the repo-relative POSIX path matches any pattern.
+
+        A pattern matches the whole relative path (``docs/generated/*``) or,
+        gitignore-style, any single path component (``*.gen.py``, ``vscode``).
+        Trailing slashes (directory markers) are ignored.
+        """
+        parts = rel_posix.split("/")
+        for pattern in patterns:
+            pattern = pattern.rstrip("/")
+            if not pattern:
+                continue
+            if fnmatch.fnmatch(rel_posix, pattern) or any(
+                fnmatch.fnmatch(part, pattern) for part in parts
+            ):
+                return True
+        return False
 
     def _iter_source_files(self, repo_path: Path):
         for path in self._walk_files(repo_path):

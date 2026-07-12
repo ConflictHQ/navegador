@@ -30,6 +30,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -79,9 +80,18 @@ class WorkspaceManager:
     fan out across all per-repo graphs and merge the result lists.
     """
 
-    def __init__(self, store: GraphStore, mode: WorkspaceMode = WorkspaceMode.UNIFIED) -> None:
+    def __init__(
+        self,
+        store: GraphStore,
+        mode: WorkspaceMode = WorkspaceMode.UNIFIED,
+        exclude: list[str] | None = None,
+        include_nested_repos: bool = False,
+    ) -> None:
         self.store = store
         self.mode = mode
+        # Passed through to each repo's RepoIngester (#130).
+        self.exclude = list(exclude or [])
+        self.include_nested_repos = include_nested_repos
         # repo name → {"path": str, "graph_name": str}
         self._repos: dict[str, dict[str, str]] = {}
 
@@ -148,7 +158,11 @@ class WorkspaceManager:
                 target_store = self.store
 
             try:
-                ingester = RepoIngester(target_store)
+                ingester = RepoIngester(
+                    target_store,
+                    exclude=self.exclude,
+                    include_nested_repos=self.include_nested_repos,
+                )
                 stats = ingester.ingest(path, clear=False)
                 summary[name] = stats
             except Exception as exc:  # noqa: BLE001
@@ -224,6 +238,37 @@ class WorkspaceManager:
             {"label": row[0] or "", "name": row[1] or "", "file_path": row[2] or "", "repo": ""}
             for row in rows
         ]
+
+
+def discover_nested_repos(root: str | Path) -> list[tuple[str, Path]]:
+    """
+    Find nested git clones under *root* (independent clones, not submodules).
+
+    Walks the tree pruning the standard skip dirs and hidden directories;
+    a directory containing ``.git`` (dir or file) is recorded as a repo and
+    not descended into for further discovery, so a clone's own vendored
+    clones stay inside its boundary. Returns ``(name, path)`` pairs sorted
+    by path, where *name* is the root-relative path with ``/`` → ``-``
+    (e.g. ``core-calliope-vscode``).
+    """
+    from navegador.ingestion.parser import RepoIngester
+
+    root = Path(root).resolve()
+    found: list[tuple[str, Path]] = []
+    for dirpath, dirnames, _filenames in os.walk(root):
+        current = Path(dirpath)
+        kept = []
+        for d in sorted(dirnames):
+            if d in RepoIngester._SKIP_DIRS or d.startswith("."):
+                continue
+            child = current / d
+            if (child / ".git").exists():
+                name = child.relative_to(root).as_posix().replace("/", "-")
+                found.append((name, child))
+            else:
+                kept.append(d)
+        dirnames[:] = kept
+    return sorted(found, key=lambda item: item[1])
 
 
 class MultiRepoManager:
