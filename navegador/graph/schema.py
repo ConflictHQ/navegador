@@ -55,7 +55,7 @@ class EdgeType(StrEnum):
     DECORATES = "DECORATES"  # Decorator -DECORATES-> Function/Class
 
     # ── Knowledge structural ──────────────────────────────────────────────────
-    BELONGS_TO = "BELONGS_TO"  # any node -BELONGS_TO-> Domain
+    BELONGS_TO = "BELONGS_TO"  # any node -> Domain; File/Document -> Repository
     RELATED_TO = "RELATED_TO"  # Concept -RELATED_TO-> Concept (bidirectional intent)
     GOVERNS = "GOVERNS"  # Rule -GOVERNS-> Concept/Function/Class
     DOCUMENTS = "DOCUMENTS"  # WikiPage/Decision -DOCUMENTS-> any node

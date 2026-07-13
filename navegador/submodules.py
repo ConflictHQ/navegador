@@ -136,7 +136,9 @@ class SubmoduleIngester:
 
             logger.info("SubmoduleIngester: ingesting submodule %s → %s", sub_name, sub_path)
             try:
-                sub_stats = ingester.ingest(str(sub_path), clear=False, repo_key=sub["path"])
+                sub_stats = ingester.ingest(
+                    str(sub_path), clear=False, repo_key=sub["path"], rel_root=repo_root
+                )
                 sub_results[sub_name] = sub_stats
                 total_files += sub_stats.get("files", 0)
             except Exception as exc:  # noqa: BLE001

@@ -114,7 +114,7 @@ class TestRepoIngester:
             assert stats["files"] == 1
             assert stats["functions"] == 3
             assert stats["classes"] == 1
-            assert stats["edges"] == 5
+            assert stats["edges"] == 6  # 5 from parser + 1 BELONGS_TO (#144)
 
     def test_ingests_multiple_python_files(self):
         store = _make_store()
@@ -173,7 +173,7 @@ class TestRepoIngester:
             assert stats["files"] == 2
             assert stats["functions"] == 8
             assert stats["classes"] == 3
-            assert stats["edges"] == 15
+            assert stats["edges"] == 17  # 15 from parsers + 2 BELONGS_TO (#144)
 
 
 # ── _iter_source_files() ──────────────────────────────────────────────────────
