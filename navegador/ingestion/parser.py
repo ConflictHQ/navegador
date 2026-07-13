@@ -32,7 +32,7 @@ import time
 from pathlib import Path
 
 from navegador.graph import queries
-from navegador.graph.schema import NodeLabel
+from navegador.graph.schema import EdgeType, NodeLabel
 from navegador.graph.store import GraphStore
 
 logger = logging.getLogger(__name__)
@@ -117,6 +117,7 @@ class RepoIngester:
         clear: bool = False,
         incremental: bool = False,
         repo_key: str | None = None,
+        rel_root: str | Path | None = None,
     ) -> dict[str, int]:
         """
         Ingest a repository into the graph.
@@ -129,6 +130,11 @@ class RepoIngester:
                 (defaults to the repo directory name). Workspace ingesters
                 pass the workspace-relative path here so nested repos with
                 the same basename stay distinct.
+            rel_root: Ancestor directory that node paths are recorded
+                relative to (defaults to repo_path). Workspace ingesters pass
+                the workspace root so a nested repo's nodes carry a
+                repo-prefixed path (``libs/core/main.tf``) — otherwise two
+                repos owning the same relative path collide on id (#144).
 
         Returns:
             Dict with counts: files, functions, classes, edges, skipped.
@@ -136,6 +142,9 @@ class RepoIngester:
         repo_path = Path(repo_path).resolve()
         if not repo_path.exists():
             raise FileNotFoundError(f"Repository not found: {repo_path}")
+
+        rel_root = Path(rel_root).resolve() if rel_root else repo_path
+        repo_path.relative_to(rel_root)  # raises ValueError unless an ancestor
 
         if clear:
             self.store.clear()
@@ -148,15 +157,21 @@ class RepoIngester:
         proxy = _EdgeDeferringStore(original_store)
         self.store = proxy
         try:
-            stats = self._ingest_walk(repo_path, incremental, repo_key)
+            stats = self._ingest_walk(repo_path, incremental, repo_key, rel_root)
         finally:
             self.store = original_store
         stats["edges_resolved"] = self._resolve_deferred_edges(proxy.deferred)
         return stats
 
     def _ingest_walk(
-        self, repo_path: Path, incremental: bool, repo_key: str | None = None
+        self,
+        repo_path: Path,
+        incremental: bool,
+        repo_key: str | None = None,
+        rel_root: Path | None = None,
     ) -> dict[str, int]:
+        rel_root = rel_root or repo_path
+        repo_key = repo_key or repo_path.name
         # Create repository node. Keyed by a portable identity, not the
         # absolute checkout path — exports are committed/shared, and machine
         # paths churned ids across machines and leaked local layout (#145).
@@ -164,7 +179,7 @@ class RepoIngester:
             NodeLabel.Repository,
             {
                 "name": repo_path.name,
-                "path": repo_key or repo_path.name,
+                "path": repo_key,
                 "file_path": "",
             },
         )
@@ -188,7 +203,7 @@ class RepoIngester:
                 stats["grammar_skipped"] += 1
                 continue
 
-            rel_path = str(source_file.relative_to(repo_path))
+            rel_path = str(source_file.relative_to(rel_root))
             content_hash = _file_hash(source_file)
 
             if incremental and self._file_unchanged(rel_path, content_hash):
@@ -198,7 +213,7 @@ class RepoIngester:
             if incremental:
                 self._clear_file_subgraph(rel_path)
 
-            parse_path, effective_root = self._maybe_redact_to_tmp(source_file, repo_path)
+            parse_path, effective_root = self._maybe_redact_to_tmp(source_file, rel_root)
             try:
                 file_stats = parser.parse_file(parse_path, effective_root, self.store)
                 stats["files"] += 1
@@ -207,6 +222,8 @@ class RepoIngester:
                 stats["edges"] += file_stats.get("edges", 0)
 
                 self._store_file_hash(rel_path, content_hash)
+                self._link_file_to_repo(rel_path, repo_key)
+                stats["edges"] += 1
                 if stats["files"] % 1000 == 0:
                     logger.info(
                         "Ingest progress %s: %d files parsed", repo_path.name, stats["files"]
@@ -215,13 +232,13 @@ class RepoIngester:
                 logger.exception("Failed to parse %s", source_file)
             finally:
                 # Remove the temporary redacted directory if one was created
-                if effective_root is not repo_path:
+                if effective_root is not rel_root:
                     import shutil
 
                     shutil.rmtree(effective_root, ignore_errors=True)
 
         # Ansible pass — heuristically detect and parse Ansible YAML files
-        self._ingest_ansible(repo_path, stats, incremental)
+        self._ingest_ansible(repo_path, stats, incremental, rel_root, repo_key)
 
         # Fossil mirror pass — if the repo is also a Fossil checkout (e.g. a
         # Git repo mirrored to/from Fossil), ingest wiki pages and tickets.
@@ -321,6 +338,22 @@ class RepoIngester:
             self.store.query(queries.CLEAR_DOCUMENT_REFERENCES, {"path": rel_path})
         else:
             self.store.query(queries.DELETE_FILE_SUBGRAPH, {"path": rel_path})
+
+    def _link_file_to_repo(self, rel_path: str, repo_key: str) -> None:
+        """
+        BELONGS_TO edge from a parsed File/Document to its Repository (#144),
+        so consumers can answer "which repo is this node from" in one hop
+        instead of guessing by path prefix.
+        """
+        suffix = Path(rel_path).suffix.lower()
+        label = NodeLabel.Document if suffix in self._DOCUMENT_EXTENSIONS else NodeLabel.File
+        self.store.create_edge(
+            label,
+            {"path": rel_path},
+            EdgeType.BELONGS_TO,
+            NodeLabel.Repository,
+            {"path": repo_key},
+        )
 
     def _store_file_hash(self, rel_path: str, content_hash: str) -> None:
         suffix = Path(rel_path).suffix.lower()
@@ -463,10 +496,19 @@ class RepoIngester:
             if path.suffix in LANGUAGE_MAP:
                 yield path
 
-    def _ingest_ansible(self, repo_path: Path, stats: dict[str, int], incremental: bool) -> None:
+    def _ingest_ansible(
+        self,
+        repo_path: Path,
+        stats: dict[str, int],
+        incremental: bool,
+        rel_root: Path | None = None,
+        repo_key: str | None = None,
+    ) -> None:
         """Detect and parse Ansible YAML files (playbooks, roles, tasks)."""
         from navegador.ingestion.ansible import AnsibleParser
 
+        rel_root = rel_root or repo_path
+        repo_key = repo_key or repo_path.name
         is_ansible_file = AnsibleParser.is_ansible_file
 
         ansible_parser: AnsibleParser | None = None
@@ -477,7 +519,7 @@ class RepoIngester:
             if not is_ansible_file(path, repo_path):
                 continue
 
-            rel_path = str(path.relative_to(repo_path))
+            rel_path = str(path.relative_to(rel_root))
             content_hash = _file_hash(path)
 
             if incremental and self._file_unchanged(rel_path, content_hash):
@@ -490,12 +532,14 @@ class RepoIngester:
             if ansible_parser is None:
                 ansible_parser = AnsibleParser()
             try:
-                file_stats = ansible_parser.parse_file(path, repo_path, self.store)
+                file_stats = ansible_parser.parse_file(path, rel_root, self.store)
                 stats["files"] += 1
                 stats["functions"] += file_stats.get("functions", 0)
                 stats["classes"] += file_stats.get("classes", 0)
                 stats["edges"] += file_stats.get("edges", 0)
                 self._store_file_hash(rel_path, content_hash)
+                self._link_file_to_repo(rel_path, repo_key)
+                stats["edges"] += 1
             except Exception:
                 logger.exception("Failed to parse Ansible file %s", path)
 

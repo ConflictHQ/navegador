@@ -477,7 +477,9 @@ class MonorepoIngester:
             # Ingest files in this package
             pkg_ingester = RepoIngester(self.store)
             try:
-                pkg_stats = pkg_ingester.ingest(pkg_path, clear=False, repo_key=pkg_rel)
+                pkg_stats = pkg_ingester.ingest(
+                    pkg_path, clear=False, repo_key=pkg_rel, rel_root=repo_path
+                )
                 for key in ("files", "functions", "classes", "edges", "skipped"):
                     aggregate[key] = aggregate.get(key, 0) + pkg_stats.get(key, 0)
                 ingested_packages.append((pkg_name, pkg_path))
