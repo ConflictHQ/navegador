@@ -116,6 +116,7 @@ class RepoIngester:
         repo_path: str | Path,
         clear: bool = False,
         incremental: bool = False,
+        repo_key: str | None = None,
     ) -> dict[str, int]:
         """
         Ingest a repository into the graph.
@@ -124,6 +125,10 @@ class RepoIngester:
             repo_path: Path to the repository root.
             clear: If True, wipe the graph before ingesting.
             incremental: If True, skip files whose content hash hasn't changed.
+            repo_key: Portable graph identity for the Repository node
+                (defaults to the repo directory name). Workspace ingesters
+                pass the workspace-relative path here so nested repos with
+                the same basename stay distinct.
 
         Returns:
             Dict with counts: files, functions, classes, edges, skipped.
@@ -143,19 +148,23 @@ class RepoIngester:
         proxy = _EdgeDeferringStore(original_store)
         self.store = proxy
         try:
-            stats = self._ingest_walk(repo_path, incremental)
+            stats = self._ingest_walk(repo_path, incremental, repo_key)
         finally:
             self.store = original_store
         stats["edges_resolved"] = self._resolve_deferred_edges(proxy.deferred)
         return stats
 
-    def _ingest_walk(self, repo_path: Path, incremental: bool) -> dict[str, int]:
-        # Create repository node
+    def _ingest_walk(
+        self, repo_path: Path, incremental: bool, repo_key: str | None = None
+    ) -> dict[str, int]:
+        # Create repository node. Keyed by a portable identity, not the
+        # absolute checkout path — exports are committed/shared, and machine
+        # paths churned ids across machines and leaked local layout (#145).
         self.store.create_node(
             NodeLabel.Repository,
             {
                 "name": repo_path.name,
-                "path": str(repo_path),
+                "path": repo_key or repo_path.name,
                 "file_path": "",
             },
         )

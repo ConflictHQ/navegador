@@ -361,12 +361,13 @@ class ParallelIngester:
         if clear:
             self._store.clear()
 
-        # Repository node (same as RepoIngester.ingest).
+        # Repository node (same as RepoIngester.ingest) — keyed by name, not
+        # the machine-local checkout path (#145).
         self._store.create_node(
             NodeLabel.Repository,
             {
                 "name": repo_path.name,
-                "path": str(repo_path),
+                "path": repo_path.name,
             },
         )
 

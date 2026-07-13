@@ -424,12 +424,13 @@ class MonorepoIngester:
         if clear:
             self.store.clear()
 
-        # Root node for the whole monorepo
+        # Root node for the whole monorepo. Keyed by workspace name, not the
+        # machine-local checkout path (#145).
         self.store.create_node(
             NodeLabel.Repository,
             {
                 "name": config.name,
-                "path": str(repo_path),
+                "path": config.name,
                 "file_path": "",
             },
         )
@@ -449,14 +450,17 @@ class MonorepoIngester:
                 continue
 
             pkg_name = pkg_path.name
+            pkg_rel = str(pkg_path.relative_to(repo_path))
             logger.info("Ingesting package: %s (%s)", pkg_name, pkg_path)
 
-            # Package-level Repository node
+            # Package-level Repository node, keyed by its workspace-relative
+            # path — portable, and distinct even when two packages share a
+            # directory basename (#145).
             self.store.create_node(
                 NodeLabel.Repository,
                 {
                     "name": pkg_name,
-                    "path": str(pkg_path),
+                    "path": pkg_rel,
                     "file_path": "",
                 },
             )
@@ -464,16 +468,16 @@ class MonorepoIngester:
             # Link package to monorepo root
             self.store.create_edge(
                 from_label=NodeLabel.Repository,
-                from_key={"name": config.name, "path": str(repo_path)},
+                from_key={"name": config.name, "path": config.name},
                 edge_type=EdgeType.CONTAINS,
                 to_label=NodeLabel.Repository,
-                to_key={"name": pkg_name, "path": str(pkg_path)},
+                to_key={"name": pkg_name, "path": pkg_rel},
             )
 
             # Ingest files in this package
             pkg_ingester = RepoIngester(self.store)
             try:
-                pkg_stats = pkg_ingester.ingest(pkg_path, clear=False)
+                pkg_stats = pkg_ingester.ingest(pkg_path, clear=False, repo_key=pkg_rel)
                 for key in ("files", "functions", "classes", "edges", "skipped"):
                     aggregate[key] = aggregate.get(key, 0) + pkg_stats.get(key, 0)
                 ingested_packages.append((pkg_name, pkg_path))
