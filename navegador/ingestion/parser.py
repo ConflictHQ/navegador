@@ -135,6 +135,21 @@ class RepoIngester:
         if clear:
             self.store.clear()
 
+        # Proxy the store for this pass: create_edge calls whose endpoint
+        # nodes don't exist yet (forward references — callee parsed later)
+        # are queued and replayed once after the walk, when the node set is
+        # final, so a single pass reaches the call-graph fixpoint (#143).
+        original_store = self.store
+        proxy = _EdgeDeferringStore(original_store)
+        self.store = proxy
+        try:
+            stats = self._ingest_walk(repo_path, incremental)
+        finally:
+            self.store = original_store
+        stats["edges_resolved"] = self._resolve_deferred_edges(proxy.deferred)
+        return stats
+
+    def _ingest_walk(self, repo_path: Path, incremental: bool) -> dict[str, int]:
         # Create repository node
         self.store.create_node(
             NodeLabel.Repository,
@@ -220,6 +235,31 @@ class RepoIngester:
             stats["skipped"],
         )
         return stats
+
+    def _resolve_deferred_edges(self, deferred: list[tuple[tuple, dict]]) -> int:
+        """
+        Replay edge creations that missed an endpoint during the walk.
+
+        By now every node from the pass exists, so one replay reaches the
+        fixpoint — edges never create nodes. Entries whose endpoint is
+        genuinely absent from the repo (library calls, builtins) stay
+        unresolved and are dropped, exactly as before.
+        """
+        resolved = 0
+        seen: set[str] = set()
+        for args, kwargs in deferred:
+            key = repr((args, kwargs))
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                if self.store.create_edge(*args, **kwargs):
+                    resolved += 1
+            except Exception:
+                logger.exception("Failed to replay deferred edge: %r", args)
+        if resolved:
+            logger.info("Resolution sweep created %d forward-reference edges", resolved)
+        return resolved
 
     def watch(
         self,
@@ -557,6 +597,31 @@ class RepoIngester:
 
             return MarkdownParser()
         raise ValueError(f"Unsupported language: {language}")
+
+
+class _EdgeDeferringStore:
+    """
+    Proxy over a GraphStore for the duration of one ingest pass.
+
+    ``create_edge`` calls whose endpoints don't both exist yet (forward
+    references — the callee's node is created by a file parsed later) are
+    recorded in ``deferred`` instead of being silently dropped;
+    :meth:`RepoIngester._resolve_deferred_edges` replays them once after the
+    walk (#143). Every other attribute passes through to the real store.
+    """
+
+    def __init__(self, store: GraphStore) -> None:
+        self._store = store
+        self.deferred: list[tuple[tuple, dict]] = []
+
+    def __getattr__(self, name):
+        return getattr(self._store, name)
+
+    def create_edge(self, *args, **kwargs) -> bool:
+        matched = self._store.create_edge(*args, **kwargs)
+        if not matched:
+            self.deferred.append((args, kwargs))
+        return matched
 
 
 def _file_hash(path: Path) -> str:

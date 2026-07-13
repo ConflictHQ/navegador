@@ -155,8 +155,15 @@ class GraphStore:
         to_label: str,
         to_key: dict[str, Any],
         props: dict[str, Any] | None = None,
-    ) -> None:
-        """Create a directed edge between two nodes, merging if it already exists."""
+    ) -> bool:
+        """
+        Create a directed edge between two nodes, merging if it already exists.
+
+        Returns True when both endpoints matched (edge created or already
+        present), False when an endpoint node does not exist — the MERGE
+        silently no-ops in that case, so callers that can retry later (e.g.
+        the ingest resolution sweep, #143) need the distinction.
+        """
         from_match = ", ".join(f"{k}: $from_{k}" for k in from_key)
         to_match = ", ".join(f"{k}: $to_{k}" for k in to_key)
         prop_set = ""
@@ -165,14 +172,17 @@ class GraphStore:
 
         cypher = (
             f"MATCH (a:{from_label} {{{from_match}}}), (b:{to_label} {{{to_match}}}) "
-            f"MERGE (a)-[r:{edge_type}]->(b){prop_set}"
+            f"MERGE (a)-[r:{edge_type}]->(b){prop_set} "
+            f"RETURN count(r) AS matched"
         )
         params = {f"from_{k}": v for k, v in from_key.items()}
         params.update({f"to_{k}": v for k, v in to_key.items()})
         if props:
             params.update({f"p_{k}": v for k, v in props.items()})
 
-        self.query(cypher, params)
+        result = self.query(cypher, params)
+        rows = result.result_set or []
+        return bool(rows and rows[0][0])
 
     def clear(self) -> None:
         """Delete all nodes and edges in the graph."""
