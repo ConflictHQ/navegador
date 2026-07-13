@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.2.1 — 2026-07-12
+
+### Ingestion
+
+- **Pruned ingest walks** — the file walk uses `os.walk` with in-place pruning so skip dirs and nested git clones are never entered (previously `rglob` physically descended into `.git`, `node_modules`, and vendored clones before filtering, hanging metarepo ingests for 90+ minutes); also fixes repos under skip-dir-named parents (e.g. `~/build/myrepo`) being skipped entirely
+- **Missing grammars no longer abort ingest** — files whose optional tree-sitter grammar isn't installed are skipped with a one-time install hint and counted under a new `grammar_skipped` stat instead of raising `ImportError` mid-ingest
+- **Native exclusion + metarepo modes** — `--exclude` glob patterns (merged with a repo-root `.navignore`) prune directories before descent; `workspace ingest --recursive` discovers nested git clones under each root, and `--mode authored`/`--mode full` control whether vendored cores are boundary-stopped or indexed into their wrapper's graph; bare `PATH` specs default the repo name to the directory basename
+
+### Federation & Export
+
+- **Full-graph exports** — both exporters (conflict-kg and legacy JSONL) page past FalkorDB's 10k `RESULTSET_SIZE` ceiling with `ORDER BY id() SKIP/LIMIT` batches, so exports are no longer silently truncated; `navegador export --graph NAME` targets per-repo graphs resident in central Redis
+- **Aggregate from central graphs** — `aggregate` source resolution falls back to graphs resident in the connected FalkorDB (exact name, then `navegador_<name>`), so federated workspace shards with no local files roll up; `--graph NAME` targets a distinct super-graph, with a guard against aggregating a source into itself
+
+### Project Management
+
+- **Issue thread ingestion + decision extraction** — `pm` ingest pulls each issue's comment thread onto the Ticket node (`--no-comments` to opt out); an optional `--extract-decisions` LLM pass surfaces Decision nodes linked to tickets and referenced code symbols; `pm decisions --to-markdown`/`--to-json` export decisions in brain-memory-ingestable form
+
 ## 1.2.0 — 2026-07-08
 
 ### Federation
