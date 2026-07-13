@@ -269,7 +269,7 @@ class RepoIngester:
     def _clear_file_subgraph(self, rel_path: str) -> None:
         suffix = Path(rel_path).suffix.lower()
         if suffix in self._DOCUMENT_EXTENSIONS:
-            self.store.query(queries.DELETE_DOCUMENT, {"path": rel_path})
+            self.store.query(queries.CLEAR_DOCUMENT_REFERENCES, {"path": rel_path})
         else:
             self.store.query(queries.DELETE_FILE_SUBGRAPH, {"path": rel_path})
 
