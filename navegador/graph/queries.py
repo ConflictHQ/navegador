@@ -270,9 +270,13 @@ MATCH (d:Document {path: $path})
 RETURN d.content_hash AS hash
 """
 
-DELETE_DOCUMENT = """
-MATCH (d:Document {path: $path})
-DETACH DELETE d
+# Clear a document's outgoing REFERENCES before re-parse. The node itself is
+# kept (re-parse MERGEs it by path) so incoming REFERENCES from documents that
+# are not being re-parsed survive — detach-deleting the node destroyed them
+# and nothing rebuilt them (#142).
+CLEAR_DOCUMENT_REFERENCES = """
+MATCH (d:Document {path: $path})-[r:REFERENCES]->()
+DELETE r
 """
 
 # ── Memory-backed knowledge nodes ─────────────────────────────────────────────

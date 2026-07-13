@@ -26,7 +26,7 @@ def _make_store(file_hash_result=None):
                 r.result_set = [[file_hash_result]]
             else:
                 r.result_set = []
-        elif cypher in (queries.DELETE_FILE_SUBGRAPH, queries.DELETE_DOCUMENT):
+        elif cypher in (queries.DELETE_FILE_SUBGRAPH, queries.CLEAR_DOCUMENT_REFERENCES):
             r.result_set = []
         else:
             r.result_set = []
@@ -150,8 +150,8 @@ class TestFileUnchanged:
 
 
 class TestClearFileSubgraph:
-    def test_md_file_uses_delete_document_query(self):
-        """For .md files, _clear_file_subgraph should use DELETE_DOCUMENT."""
+    def test_md_file_uses_clear_document_references_query(self):
+        """For .md files, _clear_file_subgraph should use CLEAR_DOCUMENT_REFERENCES."""
         store = MagicMock()
         call_log = []
 
@@ -165,7 +165,7 @@ class TestClearFileSubgraph:
         ingester = RepoIngester(store)
         ingester._clear_file_subgraph("docs/guide.md")
 
-        assert any(queries.DELETE_DOCUMENT in q for q in call_log)
+        assert any(queries.CLEAR_DOCUMENT_REFERENCES in q for q in call_log)
 
     def test_py_file_uses_delete_file_subgraph_query(self):
         """For .py files, _clear_file_subgraph should use DELETE_FILE_SUBGRAPH."""
