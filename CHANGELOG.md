@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0 — 2026-07-12
+
+### Ingestion
+
+- **Incremental ingest keeps cross-document REFERENCES edges** — re-parsing a changed markdown document no longer detach-deletes its Document node (which destroyed incoming REFERENCES edges nothing rebuilt); only its outgoing REFERENCES are cleared and rebuilt from current content, so incremental ingest now converges to the same edge set as a full ingest (#142)
+- **Call-graph fixpoint in a single pass** — `create_edge` reports whether both endpoints matched, and ingest queues forward references (a caller parsed before its callee's node exists) and replays them once after the walk; repeat ingest passes no longer keep adding CALLS/DEPENDS_ON edges, so clean `--clear` rebuilds equal maintained graphs; sweep count surfaced as `edges_resolved` (#143)
+
+### Repo Identity & Attribution
+
+- **Portable Repository ids** — Repository nodes are keyed by repo name (plain ingest), parent-relative path (submodules), or workspace-relative path (monorepo packages) instead of the machine-local absolute checkout path; conflict-kg exports no longer leak filesystem layout and are byte-identical across checkout locations; new `repo_key` parameter on `RepoIngester.ingest` (#145)
+- **Repo attribution for every node** — every parsed File/Document gets a `BELONGS_TO` edge to its Repository node, and `submodules ingest`/monorepo record node paths relative to the workspace root (`libs/core/main.tf`), so same-named files in different repos no longer collide on id and repo membership is a one-hop query; new `rel_root` parameter on `RepoIngester.ingest` (#144)
+
 ## 1.3.0 — 2026-07-12
 
 ### Ingestion
