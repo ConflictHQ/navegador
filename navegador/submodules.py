@@ -105,12 +105,13 @@ class SubmoduleIngester:
         logger.info("SubmoduleIngester: ingesting parent %s", repo_root)
         parent_stats = ingester.ingest(str(repo_root), clear=clear)
 
-        # Ensure parent Repository node exists
+        # Ensure parent Repository node exists. Keyed by name, not the
+        # machine-local checkout path (#145).
         self.store.create_node(
             NodeLabel.Repository,
             {
                 "name": parent_name,
-                "path": str(repo_root),
+                "path": parent_name,
                 "language": "",
                 "description": "parent repository",
             },
@@ -135,7 +136,7 @@ class SubmoduleIngester:
 
             logger.info("SubmoduleIngester: ingesting submodule %s → %s", sub_name, sub_path)
             try:
-                sub_stats = ingester.ingest(str(sub_path), clear=False)
+                sub_stats = ingester.ingest(str(sub_path), clear=False, repo_key=sub["path"])
                 sub_results[sub_name] = sub_stats
                 total_files += sub_stats.get("files", 0)
             except Exception as exc:  # noqa: BLE001
@@ -143,12 +144,14 @@ class SubmoduleIngester:
                 sub_results[sub_name] = {"error": str(exc)}
                 continue
 
-            # Create submodule Repository node
+            # Create submodule Repository node, keyed by its parent-relative
+            # path — portable across machines, and distinct even when two
+            # submodules share a directory basename (#145).
             self.store.create_node(
                 NodeLabel.Repository,
                 {
                     "name": sub_name,
-                    "path": str(sub_path),
+                    "path": sub["path"],
                     "language": "",
                     "description": sub.get("url", ""),
                 },
