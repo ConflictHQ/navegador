@@ -276,7 +276,10 @@ No Python required — download prebuilt binaries from [GitHub Releases](https:/
 | macOS (Apple Silicon) | `navegador-macos-arm64` |
 | macOS (Intel) | `navegador-macos-x86_64` |
 | Linux | `navegador-linux-x86_64` |
-| Windows | `navegador-windows-x86_64.exe` |
+
+Navegador is POSIX-only — its embedded graph backend (`falkordblite`) has no native
+Windows build. On Windows, run navegador inside [WSL2](https://learn.microsoft.com/windows/wsl/install)
+and use the Linux binary.
 
 ### From source
 
