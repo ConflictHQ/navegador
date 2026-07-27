@@ -16,7 +16,10 @@ keywords = ["ast", "knowledge-graph", "code-analysis", "ai-agents", "mcp", "cont
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "Operating System :: OS Independent",
+    # Not OS Independent: falkordblite has no Windows build. See issue #151.
+    "Operating System :: POSIX",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",

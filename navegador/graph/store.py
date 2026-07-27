@@ -10,6 +10,7 @@ Usage:
 """
 
 import logging
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -44,10 +45,21 @@ class GraphStore:
         the method name is kept for API compatibility.
 
         Requires: pip install FalkorDB falkordblite
+
+        POSIX only (Linux/macOS/WSL2) — falkordblite has no native Windows build.
         """
         try:
             from redislite import FalkorDB  # type: ignore[import]  # provided by falkordblite
         except ImportError as e:
+            if sys.platform == "win32":
+                # falkordblite ships no Windows wheel and its sdist refuses to
+                # build on win32, so telling the user to pip install it would
+                # send them in a loop. Point at the two paths that do work.
+                raise ImportError(
+                    "The embedded graph backend is not available on native Windows: "
+                    "falkordblite has no Windows build. Run navegador under WSL2, "
+                    "or use a Redis-backed FalkorDB via GraphStore.redis(url)."
+                ) from e
             raise ImportError(
                 "Install graph dependencies: pip install FalkorDB falkordblite"
             ) from e

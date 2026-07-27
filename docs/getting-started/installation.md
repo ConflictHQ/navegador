@@ -4,6 +4,29 @@
 
 - Python **3.12 or later** — required by `falkordblite`, the embedded SQLite backend
 - pip 23+
+- A **POSIX** platform — Linux, macOS, or WSL2
+
+## Platform support
+
+| Platform | Supported |
+|----------|-----------|
+| Linux | Yes |
+| macOS (Apple Silicon and Intel) | Yes |
+| Windows via [WSL2](https://learn.microsoft.com/windows/wsl/install) | Yes |
+| Windows (native) | No |
+
+Native Windows is not supported. `falkordblite` — the embedded graph backend, and a
+required dependency — publishes no Windows wheel, and its source distribution declines
+to build on `win32`. `pip install navegador` therefore fails on native Windows:
+
+```
+The redislite module is not supported on the 'win32' platform
+ERROR: Failed to build 'falkordblite'
+```
+
+Install and run navegador inside WSL2 instead. It behaves exactly as it does on Linux,
+including for pre-commit hooks and editor MCP integrations — point them at the WSL2
+interpreter rather than a Windows one.
 
 ## Install
 

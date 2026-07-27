@@ -15,22 +15,19 @@ permissions:
 
 jobs:
   build:
+    # No Windows target: falkordblite (a hard dependency) publishes no Windows
+    # wheel and its sdist refuses to build on win32, so `pip install -e .` cannot
+    # succeed there. Windows users run navegador under WSL2. See issue #151.
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             target: linux-x86_64
-            ext: ""
           - os: macos-latest
             target: macos-arm64
-            ext: ""
           - os: macos-15-intel
             target: macos-x86_64
-            ext: ""
-          - os: windows-latest
-            target: windows-x86_64
-            ext: ".exe"
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -43,6 +40,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
+        # Explicit bash so a failing `pip install` aborts the step. Without it a
+        # non-bash default shell lets an intermediate failure pass silently and
+        # PyInstaller happily builds a binary with nothing bundled in it.
+        shell: bash
         run: |
           pip install -e .
           pip install pyinstaller
@@ -74,8 +75,14 @@ jobs:
             --collect-all navegador \
             navegador/cli/commands.py
 
+      - name: Smoke-test binary
+        # Never upload an artifact nobody has run. A binary built without its
+        # dependencies bundled still lands in dist/ and only fails at launch.
+        shell: bash
+        run: ./dist/navegador-${{ matrix.target }} --help > /dev/null
+
       - name: Upload binary to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          files: dist/navegador-${{ matrix.target }}${{ matrix.ext }}
+          files: dist/navegador-${{ matrix.target }}

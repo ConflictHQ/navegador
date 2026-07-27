@@ -57,6 +57,19 @@ class TestSqliteConstructor:
             with pytest.raises(ImportError, match="falkordblite"):
                 GraphStore.sqlite("/tmp/test.db")
 
+    def test_windows_error_does_not_suggest_an_impossible_pip_install(self):
+        # falkordblite has no Windows build, so "pip install falkordblite" can
+        # never succeed there — the message must point at WSL2/Redis instead.
+        with patch.dict("sys.modules", {"redislite": None}):
+            with patch("navegador.graph.store.sys.platform", "win32"):
+                with pytest.raises(ImportError) as exc:
+                    GraphStore.sqlite("/tmp/test.db")
+
+        message = str(exc.value)
+        assert "WSL2" in message
+        assert "GraphStore.redis" in message
+        assert "pip install" not in message
+
 
 # ── redis() classmethod ───────────────────────────────────────────────────────
 
