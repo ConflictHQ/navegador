@@ -49,10 +49,10 @@ jobs:
 
       - name: Install on ext4
         run: |
-          # GITHUB_WORKSPACE is a Windows path; translate it if it isn't
-          # already reachable as-is from inside the distro.
-          WS="$GITHUB_WORKSPACE"
-          [ -d "$WS" ] || WS="$(wslpath "$GITHUB_WORKSPACE")"
+          # GITHUB_WORKSPACE is not exported into the distro, and wsl-bash runs
+          # with `set -u`. Interpolate the Windows path at the Actions layer and
+          # translate it here instead of reading the environment.
+          WS="$(wslpath '${{ github.workspace }}')"
           echo "workspace resolved to: $WS"
           cp -r "$WS" ~/nav-ext4
           cd ~/nav-ext4
@@ -84,7 +84,16 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          WINDIR=/mnt/c/navegador-drvfs-probe
+          # The runner checkout already lives on the Windows drive, so a
+          # sibling directory there is the real-world case: repo on the
+          # Windows filesystem, reached from WSL2 over DrvFs.
+          WS="$(wslpath '${{ github.workspace }}')"
+          if [ -d /mnt/c ]; then
+            WINDIR=/mnt/c/navegador-drvfs-probe
+          else
+            WINDIR="$(dirname "$WS")/navegador-drvfs-probe"
+          fi
+          echo "probing DrvFs at: $WINDIR"
           mkdir -p "$WINDIR"
           cp -r ~/nav-ext4/navegador ~/nav-ext4/pyproject.toml "$WINDIR"/
           cd "$WINDIR"
