@@ -279,7 +279,9 @@ No Python required — download prebuilt binaries from [GitHub Releases](https:/
 
 Navegador is POSIX-only — its embedded graph backend (`falkordblite`) has no native
 Windows build. On Windows, run navegador inside [WSL2](https://learn.microsoft.com/windows/wsl/install)
-and use the Linux binary.
+and use the Linux binary; CI runs the full test suite under WSL2 on every change to
+packaging. Use Ubuntu 24.04 or newer, since navegador needs Python 3.12+. See
+[Installation](https://navegador.dev/getting-started/installation/) for details.
 
 ### From source
 

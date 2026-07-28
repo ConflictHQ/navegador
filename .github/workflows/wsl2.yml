@@ -1,0 +1,150 @@
+name: WSL2
+
+# WSL2 is the supported path for Windows users (see issue #151), but nothing
+# verified it. This job runs the real suite under WSL2 on a Windows runner and
+# probes the one thing that only Windows can answer: whether the embedded graph
+# backend survives on the Windows filesystem, reached over the DrvFs/9p bridge.
+#
+# Not part of the CI matrix — booting WSL2 and installing a distro is slow, so
+# this runs on demand, weekly, and when packaging or install docs change.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - ".github/workflows/wsl2.yml"
+      - "docs/getting-started/installation.md"
+
+jobs:
+  wsl2:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: wsl-bash {0}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: Vampire/setup-wsl@v7
+        with:
+          distribution: Ubuntu-24.04
+          wsl-version: "2"
+          additional-packages: python3 python3-pip python3-venv git build-essential
+
+      - name: Report environment
+        run: |
+          echo "kernel:  $(uname -r)"
+          echo "distro:  $(. /etc/os-release && echo "$PRETTY_NAME")"
+          echo "glibc:   $(ldd --version | head -1)"
+          echo "python:  $(python3 -V)"
+          echo "wsl interop: ${WSL_DISTRO_NAME:-<unset>}"
+
+      # ── ext4: the configuration we tell people to use ─────────────────────
+      #
+      # The runner checkout lives on the Windows drive, so copy it onto the
+      # WSL2 ext4 filesystem to test the recommended setup.
+
+      - name: Install on ext4
+        run: |
+          # GITHUB_WORKSPACE is not exported into the distro, and wsl-bash runs
+          # with `set -u`. Interpolate the Windows path at the Actions layer and
+          # translate it here instead of reading the environment.
+          WS="$(wslpath '${{ github.workspace }}')"
+          echo "workspace resolved to: $WS"
+          cp -r "$WS" ~/nav-ext4
+          cd ~/nav-ext4
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet --upgrade pip
+          .venv/bin/pip install --quiet -e ".[dev]"
+          .venv/bin/python -c "from redislite import FalkorDB; print('embedded backend imports OK')"
+
+      - name: Full test suite on ext4
+        run: |
+          cd ~/nav-ext4
+          .venv/bin/pytest tests/ -q -o addopts="" -p no:cacheprovider
+
+      - name: Ingest on ext4
+        run: |
+          cd ~/nav-ext4
+          start=$(date +%s)
+          .venv/bin/navegador ingest . --db /tmp/ext4-graph.db
+          echo "ext4 ingest took $(( $(date +%s) - start ))s"
+
+      # ── /mnt/c: the configuration people fall into by habit ───────────────
+      #
+      # Established by the first run of this job: /mnt/c is a 9p (v9fs) mount
+      # where binding a unix socket fails with EOPNOTSUPP, but flock works and
+      # the embedded backend runs fine regardless. The socket and flock probes
+      # stay informational — if Microsoft ever fixes 9p sockets we want to see
+      # it, not go red — while the backend working is now a real assertion.
+
+      - name: Verify /mnt/c (DrvFs) behaviour
+        run: |
+          set +e
+          # The runner checkout already lives on the Windows drive, so a
+          # sibling directory there is the real-world case: repo on the
+          # Windows filesystem, reached from WSL2 over DrvFs.
+          WS="$(wslpath '${{ github.workspace }}')"
+          if [ -d /mnt/c ]; then
+            WINDIR=/mnt/c/navegador-drvfs-probe
+          else
+            WINDIR="$(dirname "$WS")/navegador-drvfs-probe"
+          fi
+          echo "probing DrvFs at: $WINDIR"
+          mkdir -p "$WINDIR"
+          cp -r ~/nav-ext4/navegador ~/nav-ext4/pyproject.toml "$WINDIR"/
+          cd "$WINDIR"
+
+          echo "--- filesystem type:"
+          stat -f -c %T . || true
+          df -hT . 2>/dev/null | tail -1 || true
+
+          echo "--- can we create a unix socket here?"
+          python3 - <<'PY'
+          import socket, os
+          p = "test.sock"
+          try:
+              s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+              s.bind(p); s.close(); os.unlink(p)
+              print("unix socket on DrvFs: OK")
+          except Exception as e:
+              print(f"unix socket on DrvFs: FAILED -- {type(e).__name__}: {e}")
+          PY
+
+          echo "--- can we flock here?"
+          python3 - <<'PY'
+          import fcntl
+          try:
+              with open("lockprobe", "w") as f:
+                  fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+              print("flock on DrvFs: OK")
+          except Exception as e:
+              print(f"flock on DrvFs: FAILED -- {type(e).__name__}: {e}")
+          PY
+
+          echo "--- open the embedded backend with its db on DrvFs:"
+          set -e
+          ~/nav-ext4/.venv/bin/python - <<'PY'
+          from navegador.graph.store import GraphStore
+          store = GraphStore.sqlite("graph.db")
+          store.query("CREATE (:Probe {name: 'drvfs'})")
+          rows = store.query("MATCH (p:Probe) RETURN p.name").result_set
+          assert rows == [["drvfs"]], f"round-trip on DrvFs returned {rows}"
+          print("embedded backend on DrvFs: OK -- round-tripped a node")
+          PY
+
+      # Matched against the ext4 ingest above: same repo, same command, only
+      # the filesystem differs. This is what any claim about DrvFs being
+      # slower has to rest on.
+      - name: Ingest on /mnt/c (DrvFs) — matched comparison
+        run: |
+          WINDIR=/mnt/c/navegador-drvfs-ingest
+          rm -rf "$WINDIR"
+          cp -r ~/nav-ext4 "$WINDIR"
+          cd "$WINDIR"
+          start=$(date +%s)
+          ~/nav-ext4/.venv/bin/navegador ingest . --db "$WINDIR/drvfs-graph.db"
+          echo "drvfs ingest took $(( $(date +%s) - start ))s"
