@@ -1,0 +1,131 @@
+name: WSL2
+
+# WSL2 is the supported path for Windows users (see issue #151), but nothing
+# verified it. This job runs the real suite under WSL2 on a Windows runner and
+# probes the one thing that only Windows can answer: whether the embedded graph
+# backend survives on the Windows filesystem, reached over the DrvFs/9p bridge.
+#
+# Not part of the CI matrix — booting WSL2 and installing a distro is slow, so
+# this runs on demand, weekly, and when packaging or install docs change.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - ".github/workflows/wsl2.yml"
+      - "docs/getting-started/installation.md"
+
+jobs:
+  wsl2:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: wsl-bash {0}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: Vampire/setup-wsl@v7
+        with:
+          distribution: Ubuntu-24.04
+          wsl-version: "2"
+          additional-packages: python3 python3-pip python3-venv git build-essential
+
+      - name: Report environment
+        run: |
+          echo "kernel:  $(uname -r)"
+          echo "distro:  $(. /etc/os-release && echo "$PRETTY_NAME")"
+          echo "glibc:   $(ldd --version | head -1)"
+          echo "python:  $(python3 -V)"
+          echo "wsl interop: ${WSL_DISTRO_NAME:-<unset>}"
+
+      # ── ext4: the configuration we tell people to use ─────────────────────
+      #
+      # The runner checkout lives on the Windows drive, so copy it onto the
+      # WSL2 ext4 filesystem to test the recommended setup.
+
+      - name: Install on ext4
+        run: |
+          # GITHUB_WORKSPACE is a Windows path; translate it if it isn't
+          # already reachable as-is from inside the distro.
+          WS="$GITHUB_WORKSPACE"
+          [ -d "$WS" ] || WS="$(wslpath "$GITHUB_WORKSPACE")"
+          echo "workspace resolved to: $WS"
+          cp -r "$WS" ~/nav-ext4
+          cd ~/nav-ext4
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet --upgrade pip
+          .venv/bin/pip install --quiet -e ".[dev]"
+          .venv/bin/python -c "from redislite import FalkorDB; print('embedded backend imports OK')"
+
+      - name: Full test suite on ext4
+        run: |
+          cd ~/nav-ext4
+          .venv/bin/pytest tests/ -q -o addopts="" -p no:cacheprovider
+
+      - name: Ingest on ext4
+        run: |
+          cd ~/nav-ext4
+          start=$(date +%s)
+          .venv/bin/navegador ingest . --db /tmp/ext4-graph.db
+          echo "ext4 ingest took $(( $(date +%s) - start ))s"
+
+      # ── /mnt/c: the configuration people fall into by habit ───────────────
+      #
+      # Diagnostic, not an assertion. Whether redislite can hold its RDB
+      # snapshot and unix socket on DrvFs is exactly what this job exists to
+      # find out, so a failure here reports rather than reds the build. Once
+      # the behaviour is known this becomes a real assertion.
+
+      - name: Probe /mnt/c (DrvFs) — diagnostic
+        continue-on-error: true
+        run: |
+          set +e
+          WINDIR=/mnt/c/navegador-drvfs-probe
+          mkdir -p "$WINDIR"
+          cp -r ~/nav-ext4/navegador ~/nav-ext4/pyproject.toml "$WINDIR"/
+          cd "$WINDIR"
+
+          echo "--- filesystem type:"
+          stat -f -c %T . || true
+          df -hT . 2>/dev/null | tail -1 || true
+
+          echo "--- can we create a unix socket here?"
+          python3 - <<'PY'
+          import socket, os
+          p = "test.sock"
+          try:
+              s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+              s.bind(p); s.close(); os.unlink(p)
+              print("unix socket on DrvFs: OK")
+          except Exception as e:
+              print(f"unix socket on DrvFs: FAILED -- {type(e).__name__}: {e}")
+          PY
+
+          echo "--- can we flock here?"
+          python3 - <<'PY'
+          import fcntl
+          try:
+              with open("lockprobe", "w") as f:
+                  fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+              print("flock on DrvFs: OK")
+          except Exception as e:
+              print(f"flock on DrvFs: FAILED -- {type(e).__name__}: {e}")
+          PY
+
+          echo "--- open the embedded backend with its db on DrvFs:"
+          start=$(date +%s)
+          ~/nav-ext4/.venv/bin/python - <<'PY'
+          from navegador.graph.store import GraphStore
+          try:
+              store = GraphStore.sqlite("graph.db")
+              store.query("CREATE (:Probe {name: 'drvfs'})")
+              rows = store.query("MATCH (p:Probe) RETURN p.name")
+              print(f"embedded backend on DrvFs: OK -- {rows}")
+          except Exception as e:
+              print(f"embedded backend on DrvFs: FAILED -- {type(e).__name__}: {e}")
+          PY
+          echo "DrvFs backend probe took $(( $(date +%s) - start ))s"
