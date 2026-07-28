@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.4.1 — 2026-07-27
+
+Distribution fixes. No functional changes to the library, CLI or graph engine.
+
+### Standalone binaries
+
+- **Binaries now actually run** — every published binary was inert: it started, did nothing and exited 0. `navegador/cli/commands.py` had no `if __name__ == "__main__"` guard and PyInstaller targets that file, so the binary defined the command group and all 50+ subcommands, reached the end of the module and exited without dispatching. Affected `linux-x86_64`, `macos-arm64` and `macos-x86_64` in every release from 1.0.1 onward (#154)
+- **Release smoke test asserts behaviour, not exit status** — an inert binary exits 0, so an exit-code-only check passed it. The release job now verifies `--help` contains usage text, subcommands resolve, `--version` is non-empty, and an unknown flag exits non-zero (#154)
+
+### Platform support
+
+- **Windows binary withdrawn** — `falkordblite` publishes no Windows wheel and its sdist refuses to build on `win32`, so `pip install` cannot succeed there. The `windows-x86_64` target shipped anyway because the release job's install step ran under a shell that does not abort on an intermediate command's failure, producing a binary with no dependencies bundled. Target removed and the install step pinned to bash (#151)
+- **Honest platform metadata** — the `Operating System :: OS Independent` classifier is replaced with `POSIX`, `POSIX :: Linux` and `MacOS :: MacOS X`. Windows users run navegador under WSL2 (#151)
+- **Actionable error on Windows** — `GraphStore.sqlite()` told a failing user to `pip install falkordblite`, which can never succeed on Windows. It now points at WSL2 or a Redis-backed FalkorDB (#151)
+
 ## 1.4.0 — 2026-07-12
 
 ### Ingestion
