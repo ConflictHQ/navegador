@@ -8,12 +8,12 @@
 
 ## Platform support
 
-| Platform | Supported |
-|----------|-----------|
-| Linux | Yes |
-| macOS (Apple Silicon and Intel) | Yes |
-| Windows via [WSL2](https://learn.microsoft.com/windows/wsl/install) | Yes |
-| Windows (native) | No |
+| Platform | Supported | Verified by |
+|----------|-----------|-------------|
+| Linux | Yes | CI, `ubuntu-latest` |
+| macOS (Apple Silicon and Intel) | Yes | CI, `macos-latest` |
+| Windows via [WSL2](https://learn.microsoft.com/windows/wsl/install) | Yes | CI, `windows-latest` + WSL2 |
+| Windows (native) | No | — |
 
 Native Windows is not supported. `falkordblite` — the embedded graph backend, and a
 required dependency — publishes no Windows wheel, and its source distribution declines
@@ -24,9 +24,34 @@ The redislite module is not supported on the 'win32' platform
 ERROR: Failed to build 'falkordblite'
 ```
 
-Install and run navegador inside WSL2 instead. It behaves exactly as it does on Linux,
-including for pre-commit hooks and editor MCP integrations — point them at the WSL2
-interpreter rather than a Windows one.
+This is not a path-handling or line-ending problem that could be patched here. The
+dependency chain ends at Redis C sources that require `fork()` and POSIX sockets.
+
+### Windows via WSL2
+
+Install and run navegador inside WSL2. It behaves exactly as it does on Linux — the
+full test suite runs green under WSL2 on every release, in the same CI job that builds
+the Linux binary.
+
+Two practical notes:
+
+**Ubuntu 22.04 needs a newer Python.** navegador requires Python 3.12+, and Ubuntu
+22.04 ships 3.10, so `pip install navegador` fails there on `requires-python`. Use
+Ubuntu 24.04 (which ships 3.12), or install a newer interpreter via `deadsnakes`,
+`pyenv` or `uv`. Separately, `falkordblite` publishes only `manylinux_2_39` wheels, so
+on glibc older than 2.39 pip falls back to its source distribution and compiles
+FalkorDB — that works, but it is slow and needs `build-essential` present.
+
+**The pre-commit hook must run under WSL.** If a repository's hook shells out to
+`navegador`, committing from a Windows-side Git client or IDE runs that hook in an
+environment where navegador does not exist, and the commit is rejected. Commit from
+inside WSL, or point the tool at the WSL interpreter.
+
+**Working from `/mnt/c` is fine.** The Windows drive is a 9p mount where binding a unix
+socket fails with `EOPNOTSUPP`, but `flock` works and the embedded backend runs there
+correctly — CI asserts a full graph round-trip with its database on `/mnt/c`, and
+measures a full ingest on both filesystems: 30s on `/mnt/c` against 29s on the Linux
+filesystem. Keep your repository wherever suits your workflow.
 
 ## Install
 
