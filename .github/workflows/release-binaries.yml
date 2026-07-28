@@ -76,10 +76,23 @@ jobs:
             navegador/cli/commands.py
 
       - name: Smoke-test binary
-        # Never upload an artifact nobody has run. A binary built without its
-        # dependencies bundled still lands in dist/ and only fails at launch.
+        # Never upload an artifact nobody has run. Assert on output, not just
+        # exit status: a binary that defines the command group and falls off the
+        # end without invoking it also exits 0, so an exit-code-only check
+        # passes a completely inert binary.
         shell: bash
-        run: ./dist/navegador-${{ matrix.target }} --help > /dev/null
+        run: |
+          BIN=./dist/navegador-${{ matrix.target }}
+          "$BIN" --help | grep -q "Usage:" \
+            || { echo "::error::--help produced no usage output"; exit 1; }
+          "$BIN" ingest --help | grep -q "ingest" \
+            || { echo "::error::subcommands are not registered"; exit 1; }
+          "$BIN" --version | grep -q "version" \
+            || { echo "::error::--version is empty; package metadata not bundled"; exit 1; }
+          if "$BIN" --definitely-not-a-flag >/dev/null 2>&1; then
+            echo "::error::binary accepts unknown flags; CLI is not dispatching"
+            exit 1
+          fi
 
       - name: Upload binary to release
         uses: softprops/action-gh-release@v2

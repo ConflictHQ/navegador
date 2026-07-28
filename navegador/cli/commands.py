@@ -3474,3 +3474,11 @@ def lens_apply(
         click.echo(result.to_json())
     else:
         console.print(result.to_markdown())
+
+
+if __name__ == "__main__":
+    # PyInstaller builds the standalone binaries by targeting this file, which
+    # runs it as __main__ rather than going through the `navegador` console
+    # script. Without this guard the module only defines the command group and
+    # exits 0 without doing anything.
+    main()
