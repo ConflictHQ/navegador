@@ -88,9 +88,25 @@ class GraphStore:
 
     # ── Core operations ───────────────────────────────────────────────────────
 
-    def query(self, cypher: str, params: dict[str, Any] | None = None) -> Any:
-        """Execute a raw Cypher query and return the result."""
-        return self._graph.query(cypher, params or {})
+    def query(
+        self, cypher: str, params: dict[str, Any] | None = None, timeout: int | None = None
+    ) -> Any:
+        """
+        Execute a raw Cypher query and return the result.
+
+        Args:
+            timeout: Per-query limit in milliseconds. Servers are commonly
+                configured with a short default (FalkorDB's official image ships
+                TIMEOUT 1000), which is right for interactive queries but far too
+                short for bulk reads over a large graph. Backends that do not
+                accept a timeout ignore it.
+        """
+        if timeout is None:
+            return self._graph.query(cypher, params or {})
+        try:
+            return self._graph.query(cypher, params or {}, timeout=timeout)
+        except TypeError:
+            return self._graph.query(cypher, params or {})
 
     def with_graph(self, graph_name: str) -> "GraphStore":
         """

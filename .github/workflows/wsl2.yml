@@ -16,7 +16,7 @@ on:
     paths:
       - "pyproject.toml"
       - ".github/workflows/wsl2.yml"
-      - "docs/getting-started/installation.md"
+      - "navegador/docs/getting-started/installation.md"
 
 jobs:
   wsl2:

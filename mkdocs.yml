@@ -5,6 +5,10 @@ site_author: CONFLICT LLC
 repo_url: https://github.com/ConflictHQ/navegador
 repo_name: ConflictHQ/navegador
 
+# Docs live inside the package so they ship in the wheel and are
+# readable offline via `navegador manual`.
+docs_dir: navegador/docs
+
 theme:
   name: material
   logo: assets/images/conflict-logo.svg

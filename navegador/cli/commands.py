@@ -13,9 +13,14 @@ from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.table import Table
 
 console = Console()
+# Progress narration goes to stderr so that --json output on stdout stays
+# parseable. A caller piping JSON into a parser must not have to strip
+# human-facing lines out of it first.
+progress = Console(stderr=True)
 
 DB_OPTION = click.option(
     "--db", default=".navegador/graph.db", show_default=True, help="Graph DB path."
@@ -30,10 +35,32 @@ FMT_OPTION = click.option(
 )
 
 
-def _get_store(db: str):
-    from navegador.config import DEFAULT_DB_PATH, get_store
+def _get_store(db: str, target: str | None = None):
+    """
+    Open the graph store for a command.
 
-    return get_store(db if db != DEFAULT_DB_PATH else None)
+    *target* is the path the command operates on (a repo root or graph file).
+    Passing it lets project configuration be discovered from that repo rather
+    than from the caller's working directory, so naming a repo elsewhere on
+    disk uses that repo's configured backend.
+    """
+    return _open_store(db, target)[0]
+
+
+def _open_store(db: str, target: str | None = None):
+    """Open the store and also return the :class:`StorageConfig` that chose it."""
+    from navegador.config import (
+        DEFAULT_DB_PATH,
+        StorageResolutionError,
+        open_store,
+        resolve_storage,
+    )
+
+    config = resolve_storage(db if db != DEFAULT_DB_PATH else None, target=target)
+    try:
+        return open_store(config), config
+    except StorageResolutionError as e:
+        raise click.ClickException(str(e)) from e
 
 
 def _emit(text: str, fmt: str) -> None:
@@ -74,6 +101,14 @@ def main():
     help="LLM provider (e.g. anthropic, openai, ollama).",
 )
 @click.option("--llm-model", default="", help="LLM model name.")
+@click.option(
+    "--graph",
+    "graph_name",
+    default="",
+    metavar="NAME",
+    help="Named graph on the shared server. Defaults to navegador_<directory>, "
+    "which keeps this project separate from others using the same server.",
+)
 @click.option("--cluster", is_flag=True, help="Enable cluster/swarm mode.")
 @click.option(
     "--commit-graph",
@@ -90,6 +125,7 @@ def init(
     redis_url: str,
     llm_provider: str,
     llm_model: str,
+    graph_name: str,
     cluster: bool,
     commit_graph: bool,
 ):
@@ -117,11 +153,12 @@ def init(
     """
     from navegador.config import init_project
 
-    storage = "redis" if redis_url else "sqlite"
+    storage = "redis" if (redis_url or graph_name) else "sqlite"
     nav_dir = init_project(
         path,
         storage=storage,
         redis_url=redis_url,
+        graph_name=graph_name,
         llm_provider=llm_provider,
         llm_model=llm_model,
         cluster=cluster,
@@ -202,7 +239,7 @@ def ingest(
     if monorepo:
         from navegador.monorepo import MonorepoIngester
 
-        store = _get_store(db)
+        store = _get_store(db, target=repo_path)
         mono_ingester = MonorepoIngester(store)
 
         if as_json:
@@ -221,7 +258,7 @@ def ingest(
 
     from navegador.ingestion import RepoIngester
 
-    store = _get_store(db)
+    store = _get_store(db, target=repo_path)
     ingester = RepoIngester(store, redact=redact, exclude=list(excludes))
 
     if watch:
@@ -711,7 +748,7 @@ def wiki_sync_local(repo: str, token: str, local_dir: str, cursor_path: str):
     conflicts = stats["conflicts"]
 
     console.print(
-        f"[green]GitHub wiki ↔ local sync:[/green] " f"{a} → local, {b} → GitHub, {skipped} skipped"
+        f"[green]GitHub wiki ↔ local sync:[/green] {a} → local, {b} → GitHub, {skipped} skipped"
     )
     if conflicts:
         console.print(
@@ -892,7 +929,7 @@ def fossil_sync_local(repo_path: str, local_dir: str, cursor_path: str):
     conflicts = stats["conflicts"]
 
     console.print(
-        f"[green]Fossil ↔ local sync:[/green] " f"{a} → local, {b} → Fossil, {skipped} skipped"
+        f"[green]Fossil ↔ local sync:[/green] {a} → local, {b} → Fossil, {skipped} skipped"
     )
     if conflicts:
         console.print(
@@ -2558,8 +2595,7 @@ def pm_decisions(memory_dir: str, json_path: str, domain: str, db: str, as_json:
         )
         json_note = f" → {json_path}" if json_path else ""
         console.print(
-            f"[green]Retrofitted[/green] {stats['decisions']} decision(s)"
-            f"{markdown_note}{json_note}"
+            f"[green]Retrofitted[/green] {stats['decisions']} decision(s){markdown_note}{json_note}"
         )
 
 
@@ -2657,11 +2693,12 @@ def submodules_ingest(repo_path: str, db: str, clear: bool, as_json: bool):
     """
     from navegador.submodules import SubmoduleIngester
 
-    ing = SubmoduleIngester(_get_store(db))
+    store, storage = _open_store(db, target=repo_path)
+    ing = SubmoduleIngester(store)
     stats = ing.ingest_with_submodules(repo_path, clear=clear)
 
     if as_json:
-        click.echo(json.dumps(stats, indent=2))
+        click.echo(json.dumps({**stats, "storage": storage.describe()}, indent=2))
     else:
         sub_names = list(stats.get("submodules", {}).keys())
         console.print(
@@ -2671,6 +2708,7 @@ def submodules_ingest(repo_path: str, db: str, clear: bool, as_json: bool):
         )
         if sub_names:
             console.print("  Submodules: " + ", ".join(sub_names))
+        console.print(f"  Wrote to: {storage.describe()}")
 
 
 @submodules.command("list")
@@ -2762,8 +2800,15 @@ def workspace_ingest(
     recursive = recursive or metarepo
     storage_mode = WorkspaceMode.FEDERATED if metarepo else WorkspaceMode(mode)
 
+    # Resolve storage against the first named repo: a workspace is usually
+    # driven from a directory that has no config of its own, and the repos it
+    # names do (#170).
+    first_spec = repos[0]
+    _, sep, first_path = first_spec.partition("=")
+    target = (first_path if sep else first_spec).strip()
+
     wm = WorkspaceManager(
-        _get_store(db),
+        _get_store(db, target=target),
         mode=storage_mode,
         exclude=list(excludes),
         include_nested_repos=(mode == "full"),
@@ -3474,6 +3519,883 @@ def lens_apply(
         click.echo(result.to_json())
     else:
         console.print(result.to_markdown())
+
+
+# ── Central server: native FalkorDB lifecycle (#172) ─────────────────────────
+
+
+@main.group()
+def server():
+    """Manage a native (non-Docker) FalkorDB server shared by every project."""
+
+
+@server.command("install")
+@click.option("--version", default="", help="FalkorDB module version. Defaults to the pinned one.")
+@click.option("--port", default=6379, show_default=True, help="Port to serve on.")
+@click.option("--bind", default="127.0.0.1", show_default=True, help="Address to bind.")
+@click.option(
+    "--maxmemory-mb",
+    default=0,
+    show_default=True,
+    help="Redis keyspace memory cap in MB. 0 = unlimited (recommended: FalkorDB "
+    "holds graph data in module memory a cap does not govern).",
+)
+@click.option("--sha256", "expected_sha256", default="", help="Expected module checksum.")
+@click.option("--force", is_flag=True, help="Re-download the module even if present.")
+@click.option("--start/--no-start", default=True, show_default=True, help="Start after installing.")
+@click.option(
+    "--set-default/--no-set-default",
+    default=True,
+    show_default=True,
+    help="Write ~/.config/navegador/config.toml so every project uses this server "
+    "unless it configures otherwise.",
+)
+@click.option("--json", "as_json", is_flag=True)
+def server_install(
+    version: str,
+    port: int,
+    bind: str,
+    maxmemory_mb: int,
+    expected_sha256: str,
+    force: bool,
+    start: bool,
+    set_default: bool,
+    as_json: bool,
+):
+    """Install and start a native FalkorDB server.
+
+    \b
+    Downloads the official prebuilt FalkorDB module for this platform, writes a
+    tuned redis.conf, and registers a start-at-login service. No Docker, and
+    nothing is compiled locally.
+
+    \b
+    Examples:
+      navegador server install
+      navegador server install --port 6390 --no-set-default
+    """
+    from navegador import server as srv
+
+    if port_conflict := (start and srv.port_in_use(port)):
+        existing = srv.probe(f"redis://{bind}:{port}")
+        detail = (
+            f"FalkorDB {existing.get('module_version', '?')} on Redis "
+            f"{existing.get('redis_version', '?')}"
+            if existing.get("graph_module")
+            else "a server without the FalkorDB graph module"
+        )
+        raise click.ClickException(
+            f"Port {port} is already serving {detail}.\n"
+            f"  Stop it first, or install on another port with --port.\n"
+            f"  If that is a Docker FalkorDB you are replacing, migrate it first:\n"
+            f"    navegador storage migrate --from redis://{bind}:{port} --to redis://{bind}:<new-port>"
+        )
+
+    try:
+        manifest = srv.install(
+            version=version or srv.DEFAULT_FALKORDB_VERSION,
+            port=port,
+            bind=bind,
+            maxmemory_mb=maxmemory_mb,
+            force=force,
+            expected_sha256=expected_sha256,
+        )
+    except srv.ServerError as e:
+        raise click.ClickException(str(e)) from e
+
+    url = f"redis://{bind}:{port}"
+    if set_default:
+        _write_user_default(url)
+        manifest["user_config"] = str(_user_config_file())
+
+    if start:
+        try:
+            manifest["service"] = srv.start_service()
+        except srv.ServerError as e:
+            raise click.ClickException(str(e)) from e
+        manifest["probe"] = srv.wait_until_ready(url)
+
+    manifest["url"] = url
+
+    if as_json:
+        click.echo(json.dumps(manifest, indent=2, default=str))
+        return
+
+    console.print("[green]FalkorDB installed[/green]")
+    table = Table(show_header=False, box=None)
+    table.add_column(style="cyan")
+    table.add_column()
+    table.add_row("Version", str(manifest.get("falkordb_version", "")))
+    table.add_row("Module", str(manifest.get("module_asset", "")))
+    table.add_row("redis-server", str(manifest.get("redis_server", "")))
+    table.add_row("Config", str(manifest.get("config", "")))
+    table.add_row("Data", str(manifest.get("data_dir", "")))
+    table.add_row("URL", url)
+    if set_default:
+        table.add_row("Default for", "all projects (user config written)")
+    console.print(table)
+
+    probe = manifest.get("probe") or {}
+    if start and not probe.get("graph_module"):
+        # Do not soften this into "not reported in yet": the service manager
+        # returning cleanly is not evidence that the server came up.
+        console.print(
+            f"[red]The server did not come up[/red] — "
+            f"{probe.get('error', 'no graph module loaded')}\n"
+            f"  Log: {srv.paths().logs / 'falkordb.log'}\n"
+            f"  Retry with: [cyan]navegador server start[/cyan]"
+        )
+        raise SystemExit(1)
+    elif start:
+        console.print(f"[green]Running[/green] — FalkorDB {probe.get('module_version', '?')}")
+    if not port_conflict and not start:
+        console.print("Start it with: [cyan]navegador server start[/cyan]")
+
+
+@server.command("start")
+def server_start():
+    """Start the installed FalkorDB service."""
+    from navegador import server as srv
+
+    try:
+        console.print(f"[green]{srv.start_service()}[/green]")
+    except srv.ServerError as e:
+        raise click.ClickException(str(e)) from e
+
+
+@server.command("stop")
+def server_stop():
+    """Stop the FalkorDB service."""
+    from navegador import server as srv
+
+    console.print(f"[yellow]{srv.stop_service()}[/yellow]")
+
+
+@server.command("restart")
+def server_restart():
+    """Restart the FalkorDB service."""
+    from navegador import server as srv
+
+    srv.stop_service()
+    try:
+        srv.start_service()
+    except srv.ServerError as e:
+        raise click.ClickException(str(e)) from e
+
+    manifest = srv.read_manifest(srv.paths())
+    url = f"redis://{manifest.get('bind', '127.0.0.1')}:{manifest.get('port', 6379)}"
+    # A large graph takes seconds to reload from AOF, during which the port is
+    # not yet accepting connections. Reporting success before then would send
+    # the user to a status check that contradicts it.
+    info = srv.wait_until_ready(url, timeout=120)
+    if not info.get("graph_module"):
+        raise click.ClickException(
+            f"Restarted, but {url} is not serving graphs — {info.get('error', 'no graph module')}\n"
+            f"  Log: {srv.paths().logs / 'falkordb.log'}"
+        )
+    console.print(f"[green]restarted[/green] — {len(info.get('graphs', []))} graph(s) resident")
+
+
+@server.command("status")
+@click.option("--url", default="", help="Server URL to probe. Defaults to the installed one.")
+@click.option("--json", "as_json", is_flag=True)
+def server_status(url: str, as_json: bool):
+    """Report whether the shared graph server is running and usable."""
+    from navegador import server as srv
+
+    paths = srv.paths()
+    manifest = srv.read_manifest(paths)
+    target = url or f"redis://{manifest.get('bind', '127.0.0.1')}:{manifest.get('port', 6379)}"
+    info = srv.probe(target)
+    info["installed"] = bool(manifest)
+    info["home"] = str(paths.home)
+
+    if as_json:
+        click.echo(json.dumps(info, indent=2, default=str))
+        return
+
+    if not manifest:
+        console.print("[yellow]No managed server installed.[/yellow]")
+        console.print("Install one with: [cyan]navegador server install[/cyan]")
+
+    if not info.get("reachable"):
+        console.print(f"[red]Not reachable[/red] at {target}")
+        if err := info.get("error"):
+            console.print(f"  {err}")
+        console.print("Start it with: [cyan]navegador server start[/cyan]")
+        raise SystemExit(1)
+
+    if not info.get("graph_module"):
+        # A plain Redis answers PING and then fails every graph query, which is
+        # the most confusing possible state to be in.
+        console.print(f"[red]Reachable, but this is not a FalkorDB[/red] — {target}")
+        console.print("  The graph module is not loaded; every query will fail.")
+        console.print("  Install a proper one with: [cyan]navegador server install[/cyan]")
+        raise SystemExit(1)
+
+    console.print(f"[green]Running[/green] — {target}")
+    table = Table(show_header=False, box=None)
+    table.add_column(style="cyan")
+    table.add_column()
+    table.add_row("FalkorDB", str(info.get("module_version", "")))
+    table.add_row("Redis", str(info.get("redis_version", "")))
+    table.add_row("Memory", str(info.get("used_memory_human", "")))
+    table.add_row("Uptime", f"{info.get('uptime_days', 0)} days")
+    table.add_row("Graphs", str(len(info.get("graphs", []))))
+    console.print(table)
+    for name in info.get("graphs", []):
+        console.print(f"  • {name}")
+
+
+@server.command("uninstall")
+@click.option("--remove-data", is_flag=True, help="Also delete the graph data directory.")
+@click.confirmation_option(prompt="Stop and remove the managed FalkorDB service?")
+def server_uninstall(remove_data: bool):
+    """Stop the service and remove its definition (data is kept by default)."""
+    from navegador import server as srv
+
+    result = srv.uninstall(remove_data=remove_data)
+    for path in result["removed"]:
+        console.print(f"  removed {path}")
+    if not remove_data:
+        console.print(f"[green]Data kept[/green] at {srv.paths().data}")
+
+
+def _user_config_file():
+    from navegador.config import user_config_path
+
+    return user_config_path()
+
+
+def _write_user_default(redis_url: str) -> None:
+    """Point every project at *redis_url* unless it configures otherwise."""
+    path = _user_config_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# Navegador user configuration\n"
+        "# Written by: navegador server install\n"
+        "# Applies to every project that has no [storage] of its own.\n"
+        "\n"
+        "[storage]\n"
+        'backend = "redis"\n'
+        f'redis_url = "{redis_url}"\n',
+        encoding="utf-8",
+    )
+
+
+# ── Diagnostics: doctor + scan (#172) ────────────────────────────────────────
+
+
+@main.command("doctor")
+@click.option("--target", default=".", help="Project to diagnose.", type=click.Path())
+@click.option("--json", "as_json", is_flag=True)
+def doctor(target: str, as_json: bool):
+    """Explain which graph backend this project resolves to, and whether it works.
+
+    \b
+    Reports the resolved backend, the config file that decided it, whether the
+    store is reachable, and how much is actually in it — so a repo that reads
+    as empty can be told apart from one that was never ingested.
+    """
+    from navegador import server as srv
+    from navegador.config import open_store, resolve_storage
+    from navegador.inventory import inspect_project
+
+    config = resolve_storage(target=target)
+    report: dict = {"target": str(Path(target).resolve()), "storage": config.describe()}
+
+    record = inspect_project(target)
+    report["declared_backend"] = record.declared_backend
+    report["local_graph_bytes"] = record.db_bytes
+    report["stranded"] = record.is_stranded
+
+    if config.is_redis:
+        info = srv.probe(config.redis_url)
+        report["server"] = info
+
+    problems: list[str] = []
+    notes: list[str] = []
+    served_nodes: int | None = None
+
+    if config.is_redis:
+        info = report["server"]
+        if not info.get("reachable"):
+            problems.append(
+                f"The configured server {config.redis_url} is not reachable — "
+                f"every query will fail. Run: navegador server status"
+            )
+        elif not info.get("graph_module"):
+            problems.append(
+                f"{config.redis_url} answers, but has no FalkorDB graph module. "
+                f"This is a plain Redis; graph queries cannot work against it."
+            )
+        else:
+            # What the project would actually read. A namespace that resolves
+            # but holds nothing answers every question with a valid-looking
+            # negative, which is worse than failing.
+            try:
+                store = open_store(config)
+                served_nodes = store.node_count()
+            except Exception:  # noqa: BLE001 — diagnosis must not itself fail
+                served_nodes = None
+            report["served_nodes"] = served_nodes
+            if served_nodes == 0:
+                problems.append(
+                    f"The graph this project reads ({config.graph_name or 'navegador'}) "
+                    f"is empty. Queries will return nothing, which is not the same as "
+                    f"'not found'. Ingest it, or migrate an existing local graph: "
+                    f"navegador storage migrate"
+                )
+
+    if record.is_stranded:
+        # A local file alongside a populated server graph is leftover from a
+        # completed migration, not an ingest writing where nothing reads.
+        if served_nodes:
+            notes.append(
+                f"A local graph file is still present ({record.db_bytes / 1024 / 1024:.1f} MB) "
+                f"but the server graph is populated, so nothing reads it. Remove it, or "
+                f"re-run the migration with --prune."
+            )
+        else:
+            problems.append(
+                f"This project declares a Redis backend but holds "
+                f"{record.db_bytes / 1024 / 1024:.1f} MB of local graph data — those "
+                f"ingests are not visible to anything reading the server. "
+                f"Migrate it: navegador storage migrate"
+            )
+
+    report["problems"] = problems
+    report["notes"] = notes
+
+    if as_json:
+        click.echo(json.dumps(report, indent=2, default=str))
+        raise SystemExit(1 if problems else 0)
+
+    console.print(f"[bold]Storage[/bold]: {config.describe()}")
+    if config.is_redis:
+        info = report["server"]
+        if info.get("reachable") and info.get("graph_module"):
+            console.print(
+                f"[green]Server OK[/green] — FalkorDB {info.get('module_version')}, "
+                f"{len(info.get('graphs', []))} graph(s), {info.get('used_memory_human')}"
+            )
+        else:
+            console.print(f"[red]Server unusable[/red] — {info.get('error', 'no graph module')}")
+    if record.db_bytes:
+        console.print(
+            f"Local graph file: {record.db_bytes / 1024 / 1024:.1f} MB at {record.db_path}"
+        )
+
+    for note in notes:
+        console.print(f"[dim]·[/dim] {note}")
+
+    if problems:
+        console.print()
+        for problem in problems:
+            console.print(f"[yellow]![/yellow] {problem}")
+        raise SystemExit(1)
+    console.print("[green]No problems found.[/green]")
+
+
+@main.command("scan")
+@click.argument("root", type=click.Path(exists=True), default=".")
+@click.option("--depth", default=6, show_default=True, help="Maximum directory depth to search.")
+@click.option("--json", "as_json", is_flag=True)
+def scan_cmd(root: str, depth: int, as_json: bool):
+    """Inventory every navegador project under ROOT and where its graph lives.
+
+    \b
+    Flags projects that declare a shared backend while holding a populated local
+    graph — ingests that reported success but are invisible to the server.
+
+    \b
+    Examples:
+      navegador scan ~/repos
+      navegador scan ~/repos --json
+    """
+    from navegador.inventory import recommend_central_server, scan
+
+    records = scan(root, max_depth=depth)
+    recommended, reasons = recommend_central_server(records)
+
+    if as_json:
+        click.echo(
+            json.dumps(
+                {
+                    "root": str(Path(root).resolve()),
+                    "projects": [r.to_dict() for r in records],
+                    "central_server_recommended": recommended,
+                    "reasons": reasons,
+                },
+                indent=2,
+                default=str,
+            )
+        )
+        return
+
+    if not records:
+        console.print(f"No navegador projects found under {root}.")
+        return
+
+    table = Table(title=f"{len(records)} navegador project(s) under {root}")
+    table.add_column("Project", style="cyan", overflow="fold")
+    table.add_column("Declared")
+    table.add_column("Local graph", justify="right")
+    table.add_column("State")
+    for record in sorted(records, key=lambda r: -r.db_bytes):
+        size = f"{record.db_bytes / 1024 / 1024:.1f} MB" if record.db_bytes else "—"
+        state = "[yellow]stranded[/yellow]" if record.is_stranded else ""
+        table.add_row(str(record.root), record.declared_backend, size, state)
+    console.print(table)
+
+    stranded = [r for r in records if r.is_stranded]
+    if stranded:
+        console.print(
+            f"\n[yellow]{len(stranded)} project(s) stranded[/yellow] — declared Redis, "
+            f"data on disk. Migrate with: [cyan]navegador storage migrate --all --root "
+            f"{root}[/cyan]"
+        )
+
+    if recommended:
+        console.print("\n[bold]A shared graph server would help here:[/bold]")
+        for reason in reasons:
+            console.print(f"  • {reason}")
+        console.print("\nSet one up with: [cyan]navegador server install[/cyan]")
+
+
+# ── Migration: embedded → shared server (#172) ───────────────────────────────
+
+
+@main.group()
+def storage():
+    """Inspect and move the graph data behind the [storage] configuration."""
+
+
+@storage.command("migrate")
+@click.option("--target", default=".", type=click.Path(), help="Project to migrate.")
+@click.option("--to", "dest_url", default="", help="Destination server URL.")
+@click.option(
+    "--from", "source_url", default="", help="Migrate from this server instead of a file."
+)
+@click.option("--all", "migrate_all", is_flag=True, help="Migrate every project under --root.")
+@click.option("--root", default=".", type=click.Path(), help="Tree to search with --all.")
+@click.option(
+    "--graph", "graph_name", default="", help="Destination graph name. Default: per-repo."
+)
+@click.option(
+    "--default-as",
+    "default_as",
+    default="",
+    metavar="NAME",
+    help="With --from: destination name for the source server's unnamespaced "
+    "'navegador' graph, so it does not collide with the destination's own.",
+)
+@click.option(
+    "--overwrite", is_flag=True, help="Replace destination graphs that already hold data."
+)
+@click.option(
+    "--write-config",
+    is_flag=True,
+    help="Point each migrated project's .navegador/config.toml at the shared "
+    "server and the graph it was copied into. Configs tracked by git are left "
+    "alone — a committed [storage] is a decision the repo makes for everyone.",
+)
+@click.option("--dry-run", is_flag=True, help="Report what would move without writing.")
+@click.option("--prune", is_flag=True, help="Delete the local graph file after a verified copy.")
+@click.option("--json", "as_json", is_flag=True)
+def storage_migrate(
+    target: str,
+    dest_url: str,
+    source_url: str,
+    migrate_all: bool,
+    root: str,
+    graph_name: str,
+    default_as: str,
+    overwrite: bool,
+    write_config: bool,
+    dry_run: bool,
+    prune: bool,
+    as_json: bool,
+):
+    """Copy local graphs into a shared FalkorDB server.
+
+    \b
+    The copy is verified: node and edge counts must match on both sides or the
+    command fails rather than reporting success. The source is never modified
+    unless --prune is passed, and never when verification fails.
+
+    \b
+    Examples:
+      navegador storage migrate                       # this project → its server
+      navegador storage migrate --all --root ~/repos  # every project under a tree
+      navegador storage migrate --from redis://localhost:6380 --to redis://localhost:6379
+      navegador storage migrate --all --root ~/repos --dry-run
+    """
+    from navegador.config import DEFAULT_REDIS_URL, resolve_storage
+
+    if source_url:
+        results = [
+            _migrate_server(
+                source_url,
+                dest_url or DEFAULT_REDIS_URL,
+                dry_run,
+                default_as=default_as,
+                overwrite=overwrite,
+            )
+        ]
+    elif migrate_all:
+        from navegador.inventory import scan
+
+        # Select on the graph file existing, not on its size: the size threshold
+        # is a heuristic for spotting stranded ingests, and a small repo's
+        # legitimate graph must not be silently left behind. Genuinely empty
+        # sources are reported as skipped once opened.
+        records = [r for r in scan(root) if r.db_path]
+        if not records:
+            console.print(f"No projects with a local graph found under {root}.")
+            return
+        results = [
+            _migrate_project(
+                r.root,
+                dest_url,
+                graph_name,
+                dry_run=dry_run,
+                prune=prune,
+                overwrite=overwrite,
+                write_config=write_config,
+            )
+            for r in records
+        ]
+    else:
+        resolved = resolve_storage(target=target)
+        if not dest_url and not resolved.is_redis:
+            raise click.UsageError(
+                "No destination server. Either configure one for this project "
+                "(navegador init --storage redis) or pass --to redis://host:port."
+            )
+        results = [
+            _migrate_project(
+                Path(target),
+                dest_url,
+                graph_name,
+                dry_run=dry_run,
+                prune=prune,
+                overwrite=overwrite,
+                write_config=write_config,
+            )
+        ]
+
+    failed = [r for r in results if r.get("status") == "failed"]
+
+    if as_json:
+        click.echo(json.dumps({"results": results}, indent=2, default=str))
+        raise SystemExit(1 if failed else 0)
+
+    table = Table(title="Dry run — nothing written" if dry_run else "Migration")
+    table.add_column("Source", style="cyan", overflow="fold")
+    table.add_column("Destination graph", overflow="fold")
+    table.add_column("Nodes", justify="right")
+    table.add_column("Edges", justify="right")
+    table.add_column("Result")
+    for result in results:
+        status = result.get("status", "")
+        colour = {"ok": "green", "failed": "red", "planned": "yellow"}.get(status, "")
+        table.add_row(
+            str(result.get("source", "")),
+            str(result.get("graph", "")),
+            str(result.get("nodes", "")),
+            str(result.get("edges", "")),
+            f"[{colour}]{status}[/{colour}]" if colour else status,
+        )
+    console.print(table)
+
+    for result in failed:
+        console.print(f"[red]{result.get('source')}[/red]: {result.get('error')}")
+    if failed:
+        raise SystemExit(1)
+
+
+def _plan_graph_names(source_client, default_as: str) -> dict[str, str]:
+    """
+    Map each source graph name to its destination name.
+
+    A store's unnamespaced ``navegador`` graph is the one that collides when
+    stores are consolidated — every store has one. Giving it a namespace on the
+    way in is what makes many sources fit in one server.
+    """
+    from navegador.graph.store import GraphStore
+
+    return {
+        name: (default_as if name == GraphStore.GRAPH_NAME and default_as else name)
+        for name in sorted(source_client.list_graphs())
+    }
+
+
+def _copy_all_graphs(
+    source_client,
+    dest_url: str,
+    default_as: str,
+    dry_run: bool,
+    overwrite: bool,
+) -> dict:
+    """
+    Copy every named graph from one store to another, refusing silent clobbers.
+
+    A store holds more than one graph whenever a federated or workspace ingest
+    has run against it, so copying only the default graph would quietly leave
+    most of the data behind.
+    """
+    from navegador.graph import GraphStore
+    from navegador.graph.transfer import copy_graph
+
+    plan = _plan_graph_names(source_client, default_as)
+    if not plan:
+        return {"status": "skipped", "error": "no graphs in source", "nodes": 0, "edges": 0}
+
+    source_total = sum(source_client.with_graph(src).node_count() for src in plan)
+    if not source_total:
+        return {"status": "skipped", "error": "source graphs are empty", "nodes": 0, "edges": 0}
+
+    # A dry run is precisely what you reach for before the destination is up, so
+    # an unreachable one downgrades the clash check to a warning instead of
+    # failing the report the user asked for.
+    dest_client = None
+    reachable = False
+    existing: set[str] = set()
+    try:
+        dest_client = GraphStore.redis(dest_url)
+        existing = set(dest_client.list_graphs())
+        reachable = True
+    except Exception as e:  # noqa: BLE001
+        if not dry_run:
+            raise
+        progress.print(
+            f"  [yellow]destination not reachable, cannot check for clashes:[/yellow] {e}"
+        )
+
+    if not overwrite and reachable:
+        clashes = [
+            f"{src} → {dst}"
+            for src, dst in plan.items()
+            if dst in existing and dest_client.with_graph(dst).node_count() > 0
+        ]
+        if clashes:
+            return {
+                "status": "failed",
+                "error": (
+                    "destination already holds data for: "
+                    + ", ".join(clashes)
+                    + ". Rename the source's default graph with --default-as NAME, "
+                    "or pass --overwrite to replace them."
+                ),
+            }
+
+    if dry_run:
+        nodes = edges = 0
+        for src, dst in plan.items():
+            counts = source_client.with_graph(src)
+            n, e = counts.node_count(), counts.edge_count()
+            nodes += n
+            edges += e
+            progress.print(f"  {src} → {dst}: {n} nodes, {e} edges")
+        return {"status": "planned", "nodes": nodes, "edges": edges, "graphs": len(plan)}
+
+    nodes = edges = 0
+    for src, dst in plan.items():
+        stats = copy_graph(source_client.with_graph(src), dest_client.with_graph(dst))
+        nodes += stats["nodes"]
+        edges += stats["edges"]
+        progress.print(f"  {src} → {dst}: {stats['nodes']} nodes, {stats['edges']} edges")
+
+    return {"status": "ok", "nodes": nodes, "edges": edges, "graphs": len(plan)}
+
+
+def _migrate_project(
+    root: Path,
+    dest_url: str,
+    graph_name: str,
+    *,
+    dry_run: bool = False,
+    prune: bool = False,
+    overwrite: bool = False,
+    write_config: bool = False,
+) -> dict:
+    """Copy a project's embedded graphs — all of them — into the shared server."""
+    from navegador.config import DEFAULT_REDIS_URL, resolve_storage
+    from navegador.federation import repo_name_from_path
+    from navegador.graph import GraphStore
+    from navegador.graph.transfer import TransferError
+
+    root = Path(root).resolve()
+    db_file = root / ".navegador" / "graph.db"
+    resolved = resolve_storage(target=root)
+    url = dest_url or (resolved.redis_url if resolved.is_redis else DEFAULT_REDIS_URL)
+    default_as = graph_name or f"navegador_{repo_name_from_path(root)}"
+
+    result: dict = {"source": str(db_file), "graph": default_as, "url": url}
+
+    if not db_file.is_file():
+        return {**result, "status": "skipped", "error": "no local graph file"}
+
+    source = None
+    try:
+        source = GraphStore.sqlite(db_file)
+        outcome = _copy_all_graphs(source, url, default_as, dry_run, overwrite)
+        result.update(outcome)
+    except TransferError as e:
+        return {**result, "status": "failed", "error": str(e)}
+    except Exception as e:  # noqa: BLE001 — one bad repo must not abort the batch
+        return {**result, "status": "failed", "error": str(e)}
+    finally:
+        if source is not None:
+            source.close()
+
+    if result.get("status") == "ok" and write_config:
+        # Only after a verified copy: repointing a project at a graph that was
+        # not fully written would be worse than leaving it on the local file.
+        if _config_is_tracked(root):
+            result["config_skipped"] = "tracked by git"
+        else:
+            _point_config_at(root, url, default_as)
+            result["config_updated"] = True
+
+    if prune and result.get("status") == "ok":
+        # Only ever reached after copy_graph verified the counts matched.
+        db_file.unlink()
+        result["pruned"] = True
+
+    return result
+
+
+def _config_is_tracked(root: Path) -> bool:
+    """
+    True when the project's config.toml is committed to git.
+
+    A tracked ``[storage]`` is a decision the repository makes for everyone who
+    clones it. Repointing it at one developer's machine-local server would break
+    every teammate who has no such server, so --write-config leaves it alone.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", ".navegador/config.toml"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _point_config_at(root: Path, redis_url: str, graph_name: str) -> None:
+    """Rewrite a project's [storage] table to use the shared server."""
+    from navegador.config import init_project, read_config
+
+    existing = read_config(root / ".navegador" / "config.toml")
+    llm = existing.get("llm", {}) if isinstance(existing.get("llm"), dict) else {}
+    cluster = existing.get("cluster", {}) if isinstance(existing.get("cluster"), dict) else {}
+    init_project(
+        root,
+        storage="redis",
+        redis_url=redis_url,
+        graph_name=graph_name,
+        llm_provider=str(llm.get("provider", "")),
+        llm_model=str(llm.get("model", "")),
+        cluster=bool(cluster.get("enabled", False)),
+        commit_graph=True,  # never re-touch .gitignore on an existing project
+    )
+
+
+def _migrate_server(
+    source_url: str,
+    dest_url: str,
+    dry_run: bool,
+    default_as: str = "",
+    overwrite: bool = False,
+) -> dict:
+    """Copy every named graph from one FalkorDB server to another."""
+    from navegador.graph import GraphStore
+    from navegador.graph.transfer import TransferError
+
+    result: dict = {"source": source_url, "graph": default_as or "(all)", "url": dest_url}
+    try:
+        source_client = GraphStore.redis(source_url)
+        result.update(_copy_all_graphs(source_client, dest_url, default_as, dry_run, overwrite))
+    except TransferError as e:
+        return {**result, "status": "failed", "error": str(e)}
+    except Exception as e:  # noqa: BLE001
+        return {**result, "status": "failed", "error": str(e)}
+    return result
+
+
+# ── Manual: documentation packaged with the CLI (#172) ───────────────────────
+
+
+@main.command("manual")
+@click.argument("page", required=False, default="")
+@click.option("--search", "query", default="", metavar="TERM", help="Search all pages for TERM.")
+@click.option("--list", "list_only", is_flag=True, help="List available pages and exit.")
+@click.option("--raw", is_flag=True, help="Emit raw markdown instead of rendered output.")
+@click.option("--json", "as_json", is_flag=True)
+def manual(page: str, query: str, list_only: bool, raw: bool, as_json: bool):
+    """Read navegador's own documentation, offline.
+
+    \b
+    The docs ship inside the package — no network, no mkdocs install. PAGE is a
+    slug such as 'guide/mcp-integration', or any unambiguous fragment of one.
+
+    \b
+    Examples:
+      navegador manual                            # list every page
+      navegador manual quickstart                 # read one page
+      navegador manual guide/mcp-integration
+      navegador manual --search "redis"
+    """
+    from navegador.manual import ManualError, find_page, list_pages, search
+
+    try:
+        if query:
+            hits = search(query)
+            if as_json:
+                click.echo(json.dumps({"query": query, "results": hits}, indent=2))
+                return
+            if not hits:
+                console.print(f"No documentation matches [cyan]{query}[/cyan].")
+                return
+            for hit in hits:
+                console.print(
+                    f"[cyan]{hit['slug']}[/cyan] — {hit['title']} ({hit['matches']} hits)"
+                )
+                for line in hit["context"]:
+                    console.print(f"    {line[:120]}")
+            return
+
+        if page and not list_only:
+            doc = find_page(page)
+            if as_json:
+                click.echo(json.dumps({**doc.to_dict(), "content": doc.read()}, indent=2))
+            elif raw:
+                click.echo(doc.read())
+            else:
+                console.print(Markdown(doc.read()))
+            return
+
+        pages = list_pages()
+        if as_json:
+            click.echo(json.dumps([p.to_dict() for p in pages], indent=2))
+            return
+
+        table = Table(title=f"navegador documentation ({len(pages)} pages)")
+        table.add_column("Page", style="cyan")
+        table.add_column("Title")
+        for doc in pages:
+            table.add_row(doc.slug, doc.title)
+        console.print(table)
+        console.print("\nRead one with: [cyan]navegador manual <page>[/cyan]")
+    except ManualError as e:
+        raise click.ClickException(str(e)) from e
 
 
 if __name__ == "__main__":

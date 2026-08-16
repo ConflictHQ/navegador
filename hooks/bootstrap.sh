@@ -8,7 +8,9 @@
 
 set -euo pipefail
 
-NAV_DB="${NAVEGADOR_DB:-.navegador/graph.db}"
+# Empty unless explicitly configured: an unconditional --db would override the
+# project's own [storage] configuration and bypass a shared FalkorDB server.
+NAV_DB="${NAVEGADOR_DB:-}"
 REPO_PATH="${REPO_PATH:-.}"
 GITHUB_REPO="${GITHUB_REPO:-}"
 INSTALL_AGENT="${INSTALL_AGENT:-}"
@@ -38,18 +40,25 @@ else
 fi
 
 # ── Initialise DB directory ───────────────────────────────────────────────────
-mkdir -p "$(dirname "$NAV_DB")"
-echo "→ Graph DB: $NAV_DB"
+# --db is a per-command option, so it is appended after the subcommand.
+DB_ARGS=()
+if [[ -n "$NAV_DB" ]]; then
+  mkdir -p "$(dirname "$NAV_DB")"
+  DB_ARGS=(--db "$NAV_DB")
+  echo "→ Graph DB: $NAV_DB"
+else
+  echo "→ Graph DB: resolved from configuration (navegador doctor)"
+fi
 
 # ── Ingest code ───────────────────────────────────────────────────────────────
 echo "→ Ingesting code from $REPO_PATH ..."
-navegador --db "$NAV_DB" ingest "$REPO_PATH" --json | \
+navegador ingest "$REPO_PATH" "${DB_ARGS[@]}" --json | \
   python3 -c "import json,sys; d=json.load(sys.stdin); print(f\"  files={d['files']} functions={d['functions']} classes={d['classes']} edges={d['edges']}\")"
 
 # ── Ingest wiki ───────────────────────────────────────────────────────────────
 if [[ "$INGEST_WIKI" == "true" && -n "$GITHUB_REPO" ]]; then
   echo "→ Ingesting GitHub wiki for $GITHUB_REPO ..."
-  navegador --db "$NAV_DB" wiki ingest --repo "$GITHUB_REPO" ${GITHUB_TOKEN:+--token "$GITHUB_TOKEN"} || true
+  navegador wiki ingest --repo "$GITHUB_REPO" "${DB_ARGS[@]}" ${GITHUB_TOKEN:+--token "$GITHUB_TOKEN"} || true
 fi
 
 # ── Install agent hook ────────────────────────────────────────────────────────
@@ -104,7 +113,7 @@ esac
 # ── Stats ─────────────────────────────────────────────────────────────────────
 echo ""
 echo "→ Graph stats:"
-navegador --db "$NAV_DB" stats 2>/dev/null || true
+navegador stats "${DB_ARGS[@]}" 2>/dev/null || true
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

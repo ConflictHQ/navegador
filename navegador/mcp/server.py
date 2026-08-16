@@ -42,9 +42,14 @@ def create_mcp_server(store_factory, read_only: bool = False):
             _loader = ContextLoader(_store)
         return _loader
 
+    #: Tools that mutate the graph. In read-only mode these are not advertised
+    #: at all, so a caller can route around them instead of discovering the
+    #: restriction by calling one and being refused (#171).
+    WRITE_TOOLS = frozenset({"ingest_repo"})
+
     @server.list_tools()
     async def list_tools() -> list[Tool]:
-        return [
+        tools = [
             Tool(
                 name="ingest_repo",
                 description="Parse and ingest a local code repository into the navegador graph.",
@@ -59,6 +64,32 @@ def create_mcp_server(store_factory, read_only: bool = False):
                         },
                     },
                     "required": ["path"],
+                },
+            ),
+            Tool(
+                name="read_docs",
+                description=(
+                    "Read navegador's own documentation, bundled with the package. "
+                    "Call with no arguments to list every page, 'page' to read one, "
+                    "or 'query' to search. Prefer this over guessing at navegador's "
+                    "CLI, SDK, or configuration."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "page": {
+                            "type": "string",
+                            "default": "",
+                            "description": (
+                                "Page slug, e.g. 'guide/mcp-integration' or 'quickstart'."
+                            ),
+                        },
+                        "query": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Search all pages for this term instead.",
+                        },
+                    },
                 },
             ),
             Tool(
@@ -629,6 +660,44 @@ def create_mcp_server(store_factory, read_only: bool = False):
                 },
             ),
         ]
+        if read_only:
+            return [t for t in tools if t.name not in WRITE_TOOLS]
+        return tools
+
+    def _ingest_status(store, repo: str = "") -> dict:
+        """
+        Tell "empty" apart from "never ingested" (#171).
+
+        A namespace that exists but holds nothing answers every question with a
+        valid-looking negative — the most misleading state a caller can be in,
+        because it reads as "no such symbol" rather than "this was never
+        indexed". Reporting the count alone cannot distinguish the two.
+        """
+        try:
+            if repo:
+                result = store.query(
+                    "MATCH (n {repo: $repo}) RETURN count(n), max(n.ingested_at)",
+                    {"repo": repo},
+                )
+            else:
+                result = store.query("MATCH (n) RETURN count(n), max(n.ingested_at)")
+            row = (result.result_set or [[0, None]])[0]
+            count, last_ingested = row[0], row[1]
+        except Exception:  # noqa: BLE001 — status must never break the caller's tool
+            return {"status": "unknown"}
+
+        if count:
+            return {"status": "populated", "last_ingested_at": last_ingested}
+        return {
+            "status": "registered-but-empty",
+            "last_ingested_at": None,
+            "hint": (
+                "This namespace exists but holds no nodes — it was never "
+                "successfully ingested, or the ingest wrote to a different "
+                "backend. Queries against it return empty, which is not the "
+                "same as 'not found'. Re-ingest with: navegador ingest <path>"
+            ),
+        }
 
     def _scoped_path(arguments: dict) -> str:
         """file_path, prefixed with the federated repo namespace when given."""
@@ -640,6 +709,25 @@ def create_mcp_server(store_factory, read_only: bool = False):
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+        # Documentation needs no graph — answer before touching the store, so
+        # an agent can read how to use navegador even when the graph is empty
+        # or the backend is misconfigured.
+        if name == "read_docs":
+            from navegador.manual import ManualError, find_page, list_pages
+            from navegador.manual import search as search_docs
+
+            try:
+                if query := arguments.get("query", ""):
+                    hits = search_docs(query)
+                    return [TextContent(type="text", text=json.dumps(hits, indent=2))]
+                if page := arguments.get("page", ""):
+                    doc = find_page(page)
+                    return [TextContent(type="text", text=doc.read())]
+                index = [p.to_dict() for p in list_pages()]
+                return [TextContent(type="text", text=json.dumps(index, indent=2))]
+            except ManualError as exc:
+                return [TextContent(type="text", text=f"Error: {exc}")]
+
         loader = _get_loader()
 
         if name == "ingest_repo":
@@ -723,6 +811,8 @@ def create_mcp_server(store_factory, read_only: bool = False):
                     "nodes": loader.store.node_count(),
                     "edges": loader.store.edge_count(),
                 }
+            stats["read_only"] = read_only
+            stats.update(_ingest_status(loader.store, repo))
             return [TextContent(type="text", text=json.dumps(stats, indent=2))]
 
         elif name == "list_repos":
@@ -734,7 +824,7 @@ def create_mcp_server(store_factory, read_only: bool = False):
             if not rows:
                 result = loader.store.query("MATCH (r:Repository) RETURN r.name ORDER BY r.name")
                 rows = result.result_set or []
-            repos = [row[0] for row in rows]
+            repos = [{"repo": row[0], **_ingest_status(loader.store, row[0])} for row in rows]
             return [TextContent(type="text", text=json.dumps(repos, indent=2))]
 
         elif name == "get_rationale":

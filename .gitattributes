@@ -1,0 +1,13 @@
+# LF everywhere. Without this, a checkout on Windows converts text files to
+# CRLF, and hooks/bootstrap.sh — the documented install path, which WSL2 users
+# reach via a Windows checkout — fails to parse at all:
+#
+#   bootstrap.sh: line 21: syntax error near unexpected token `$'in\r''
+#
+# Committed rather than left to each developer's global config so the
+# convention travels with the repository.
+* text=auto eol=lf
+
+# Shell scripts and the graph DB are unambiguous: never let them be rewritten.
+*.sh text eol=lf
+*.db binary
