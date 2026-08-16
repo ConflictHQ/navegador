@@ -63,6 +63,29 @@ def _open_store(db: str, target: str | None = None):
         raise click.ClickException(str(e)) from e
 
 
+def _get_llm(llm_provider: str, llm_model: str, target: str | None = None):
+    """
+    Build the configured LLM provider, or fail with something actionable.
+
+    Resolves through the same layering as storage — flags, environment, project
+    config, user config — so `[llm]` in config.toml is finally honoured (#164),
+    and turns provider/credential problems into a Click error naming the
+    provider, the layer that chose it, and the fix.
+    """
+    from navegador.config import resolve_llm
+    from navegador.llm import auto_provider, get_provider
+
+    config = resolve_llm(llm_provider or None, llm_model or None, target=target)
+    try:
+        if config.provider:
+            return get_provider(config.provider, model=config.model)
+        return auto_provider(model=config.model)
+    except (RuntimeError, ValueError, ImportError) as e:
+        raise click.ClickException(
+            f"Cannot use LLM provider {config.describe()}.\n{e}"
+        ) from e
+
+
 def _emit(text: str, fmt: str) -> None:
     if fmt == "json":
         click.echo(text)
@@ -3044,14 +3067,9 @@ def semantic_search(
       navegador semantic-search "database connection" --index --provider openai
     """
     from navegador.intelligence.search import SemanticSearch
-    from navegador.llm import auto_provider, get_provider
 
     store = _get_store(db)
-    provider = (
-        get_provider(llm_provider, model=llm_model)
-        if llm_provider
-        else auto_provider(model=llm_model)
-    )
+    provider = _get_llm(llm_provider, llm_model)
     ss = SemanticSearch(store, provider)
 
     if do_index:
@@ -3170,14 +3188,9 @@ def ask(question: str, db: str, llm_provider: str, llm_model: str):
       navegador ask "What concepts are in the auth domain?"
     """
     from navegador.intelligence.nlp import NLPEngine
-    from navegador.llm import auto_provider, get_provider
 
     store = _get_store(db)
-    provider = (
-        get_provider(llm_provider, model=llm_model)
-        if llm_provider
-        else auto_provider(model=llm_model)
-    )
+    provider = _get_llm(llm_provider, llm_model)
     engine = NLPEngine(store, provider)
 
     with console.status("[bold]Thinking...[/bold]"):
@@ -3209,14 +3222,9 @@ def generate_docs_cmd(name: str, db: str, llm_provider: str, llm_model: str, fil
       navegador generate-docs GraphStore --file navegador/graph/store.py
     """
     from navegador.intelligence.nlp import NLPEngine
-    from navegador.llm import auto_provider, get_provider
 
     store = _get_store(db)
-    provider = (
-        get_provider(llm_provider, model=llm_model)
-        if llm_provider
-        else auto_provider(model=llm_model)
-    )
+    provider = _get_llm(llm_provider, llm_model)
     engine = NLPEngine(store, provider)
 
     with console.status("[bold]Generating docs...[/bold]"):

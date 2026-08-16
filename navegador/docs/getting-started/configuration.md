@@ -176,26 +176,52 @@ max_query_complexity = 100  # Cypher query complexity limit
 
 ---
 
-## LLM provider config
+## LLM provider and model
 
-Configure LLM providers used by `navegador ask`, `navegador docs`, and `navegador semantic-search`. Requires `pip install "navegador[llm]"`.
+LLM-backed commands (`ask`, `docs --provider`, `generate-docs`,
+`semantic-search`, `pm decisions`) resolve their provider the same way storage
+does — first decision wins:
+
+| Priority | Source |
+|---|---|
+| 1 | `--provider` / `--model` flags |
+| 2 | `NAVEGADOR_LLM_PROVIDER` / `NAVEGADOR_LLM_MODEL` |
+| 3 | Project `.navegador/config.toml` `[llm]` |
+| 4 | User `~/.config/navegador/config.toml` `[llm]` |
+| 5 | Auto-discovery across the usable providers |
 
 ```toml
 [llm]
-provider = "anthropic"    # "anthropic", "openai", or "ollama"
-model = "claude-3-5-haiku-20241022"
-
-[llm.anthropic]
-api_key_env = "ANTHROPIC_API_KEY"   # env var name (not the key itself)
-
-[llm.openai]
-api_key_env = "OPENAI_API_KEY"
-model = "gpt-4o-mini"
-
-[llm.ollama]
-base_url = "http://localhost:11434"
-model = "llama3"
+provider = "anthropic"
+model = "claude-opus-5"
 ```
+
+### Credentials
+
+**Credentials are read from the environment only.** Navegador does not read
+`.env` files, keychains, or credential helpers — export the variable, or set it
+in your shell profile or CI secrets:
+
+| Provider | Credential | Notes |
+|---|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` | |
+| `openai` | `OPENAI_API_KEY` | |
+| `ollama` | *(none)* | Must be reachable at `OLLAMA_HOST`, default `http://localhost:11434` |
+
+Auto-discovery considers whether a provider can actually serve a request, not
+merely whether its SDK imports. A provider whose package is installed but whose
+credential is missing is skipped rather than selected, and the resulting error
+names every provider and why each was unusable:
+
+```
+No usable LLM provider.
+  anthropic: no credential in ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN
+  openai: no credential in OPENAI_API_KEY
+  ollama: no Ollama server is reachable at http://localhost:11434
+```
+
+Model defaults track current aliases. Pin one in `[llm] model` if you need a
+specific model rather than the provider's default.
 
 ---
 
@@ -230,6 +256,9 @@ See the [Cluster mode](../guide/cluster.md) guide for full setup instructions.
 | `NAVEGADOR_REDIS_URL` | — | Shared FalkorDB server URL. Takes precedence over `NAVEGADOR_DB` |
 | `NAVEGADOR_DB` | `.navegador/graph.db` | Path to an embedded graph file. **Not** a `redis://` URL |
 | `NAVEGADOR_HOME` | `~/.navegador` | Where `navegador server` keeps its module, config, and data |
+| `NAVEGADOR_GRAPH` | — | Named graph within the store, overriding `[storage] graph` |
+| `NAVEGADOR_LLM_PROVIDER` | — | `anthropic`, `openai`, or `ollama` |
+| `NAVEGADOR_LLM_MODEL` | — | Model ID passed to the provider |
 | `GITHUB_TOKEN` | — | GitHub personal access token for wiki ingestion |
 | `ANTHROPIC_API_KEY` | — | Anthropic API key for LLM features |
 | `OPENAI_API_KEY` | — | OpenAI API key for LLM features |
