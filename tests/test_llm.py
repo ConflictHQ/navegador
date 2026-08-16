@@ -483,6 +483,10 @@ class TestAutoProvider:
             _block_import("anthropic"),
             _block_import("openai"),
             patch.dict(sys.modules, {"ollama": fake_ol}),
+            # Ollama needs no credential, so a reachable server is the whole of
+            # its availability. Leaving that to the machine means this passes
+            # only where one happens to be running.
+            patch("urllib.request.urlopen", MagicMock()),
         ):
             llm_mod = self._reload()
             p = llm_mod.auto_provider()

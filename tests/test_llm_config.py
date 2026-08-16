@@ -13,6 +13,10 @@ label per node pattern. Alternative *relationship* types are valid and must be
 left alone.
 """
 
+import sys
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from navegador.config import resolve_llm
@@ -31,6 +35,39 @@ def isolated_env(monkeypatch, tmp_path):
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("NAVEGADOR_CONFIG", str(tmp_path / "absent.toml"))
+
+
+@contextmanager
+def sdk(**present):
+    """
+    State which provider SDKs are importable.
+
+    The SDKs live in the optional `[llm]` extra, so CI has none of them and a
+    developer machine usually has several. Availability tests that inherit that
+    difference test the machine rather than the code.
+    """
+    stubs = {name: (MagicMock() if ok else None) for name, ok in present.items()}
+    with patch.dict(sys.modules, stubs):
+        yield
+
+
+@contextmanager
+def ollama_server(running: bool):
+    """
+    State whether a local Ollama server answers.
+
+    Ollama needs no credential, so reachability is the whole of its
+    availability — and a developer running `ollama serve` would otherwise see
+    different provider selection than CI.
+    """
+
+    def urlopen(*_args, **_kwargs):
+        if not running:
+            raise OSError("connection refused")
+        return MagicMock()
+
+    with patch("urllib.request.urlopen", urlopen):
+        yield
 
 
 def write_config(root, body):
@@ -98,34 +135,45 @@ class TestProviderAvailability:
         The reported failure: the SDK is installed, no key is exported, and
         Anthropic was selected anyway — failing later with a raw auth error.
         """
-        available, why = provider_available("anthropic")
+        with sdk(anthropic=True):
+            available, why = provider_available("anthropic")
         assert available is False
         assert "ANTHROPIC_API_KEY" in why
 
     def test_credential_makes_it_available(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-        assert provider_available("anthropic")[0] is True
+        with sdk(anthropic=True):
+            assert provider_available("anthropic")[0] is True
 
     def test_auth_token_also_counts(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "token")
-        assert provider_available("anthropic")[0] is True
+        with sdk(anthropic=True):
+            assert provider_available("anthropic")[0] is True
 
     def test_missing_sdk_is_reported_as_such(self):
-        available, why = provider_available("ollama")
-        if not available and "not installed" in why:
-            assert "pip install" in why
+        """A missing package and a missing key are different problems."""
+        with sdk(anthropic=False):
+            available, why = provider_available("anthropic")
+        assert available is False
+        assert "pip install anthropic" in why
+
+    def test_a_local_provider_needs_a_running_server(self):
+        """Ollama takes no credential, so reachability is its availability."""
+        with sdk(ollama=True), ollama_server(running=False):
+            available, why = provider_available("ollama")
+        assert available is False
+        assert "no Ollama server" in why
 
     def test_auto_provider_skips_credential_less_providers(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-        try:
+        with sdk(anthropic=True, openai=True, ollama=False):
             provider = auto_provider()
-        except RuntimeError:
-            pytest.skip("openai SDK not installed in this environment")
         assert provider.name == "openai"
 
     def test_auto_provider_error_explains_each_provider(self):
-        with pytest.raises(RuntimeError) as excinfo:
-            auto_provider()
+        with sdk(anthropic=True, openai=True, ollama=True), ollama_server(running=False):
+            with pytest.raises(RuntimeError) as excinfo:
+                auto_provider()
         message = str(excinfo.value)
         assert "ANTHROPIC_API_KEY" in message
         assert "config.toml" in message
