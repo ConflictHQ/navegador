@@ -216,6 +216,15 @@ def init(
     help="Detect and ingest as a monorepo workspace (Turborepo, Nx, Yarn, pnpm, Cargo, Go).",
 )
 @click.option(
+    "--repo-name",
+    "repo_key",
+    default="",
+    metavar="NAME",
+    help="Pin the Repository node's identity. Defaults to the git remote's "
+    "owner/repo, falling back to the directory name — so a worktree or a "
+    "renamed clone does not create a second, phantom repository.",
+)
+@click.option(
     "--exclude",
     "excludes",
     multiple=True,
@@ -233,6 +242,7 @@ def ingest(
     as_json: bool,
     redact: bool,
     monorepo: bool,
+    repo_key: str,
     excludes: tuple[str, ...],
 ):
     """Ingest a repository's code into the graph (AST + call graph)."""
@@ -278,11 +288,15 @@ def ingest(
         return
 
     if as_json:
-        stats = ingester.ingest(repo_path, clear=clear, incremental=incremental)
+        stats = ingester.ingest(
+            repo_path, clear=clear, incremental=incremental, repo_key=repo_key or None
+        )
         click.echo(json.dumps(stats, indent=2))
     else:
         with console.status(f"[bold]Ingesting[/bold] {repo_path}..."):
-            stats = ingester.ingest(repo_path, clear=clear, incremental=incremental)
+            stats = ingester.ingest(
+                repo_path, clear=clear, incremental=incremental, repo_key=repo_key or None
+            )
         table = Table(title="Ingestion complete")
         table.add_column("Metric", style="cyan")
         table.add_column("Count", justify="right", style="green")
@@ -2209,6 +2223,111 @@ def cycles(db: str, check_imports: bool, check_calls: bool, as_json: bool):
 @main.group()
 def repo():
     """Manage and query across multiple repositories."""
+
+
+@repo.command("nodes")
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True)
+def repo_nodes(db: str, as_json: bool):
+    """List Repository nodes in the graph with how many files each owns.
+
+    \b
+    Useful for spotting phantom repositories — before repository identity was
+    derived from the git remote, a worktree or a renamed clone created a second
+    node indistinguishable from a real one (#167).
+    """
+    store = _get_store(db)
+    rows = (
+        store.query(
+            "MATCH (r:Repository) "
+            "OPTIONAL MATCH (f)-[:BELONGS_TO]->(r) "
+            "RETURN r.path AS path, r.name AS name, count(f) AS files "
+            "ORDER BY r.path"
+        ).result_set
+        or []
+    )
+    entries = [{"path": r[0], "name": r[1], "files": r[2]} for r in rows]
+
+    if as_json:
+        click.echo(json.dumps(entries, indent=2))
+        return
+    if not entries:
+        console.print("No Repository nodes in this graph.")
+        return
+
+    table = Table(title=f"{len(entries)} Repository node(s)")
+    table.add_column("Identity", style="cyan", overflow="fold")
+    table.add_column("Name")
+    table.add_column("Files", justify="right")
+    for e in entries:
+        table.add_row(str(e["path"]), str(e["name"]), str(e["files"]))
+    console.print(table)
+
+    names = [e["name"] for e in entries]
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        console.print(
+            f"\n[yellow]{len(dupes)} name(s) held by more than one node[/yellow]: "
+            f"{', '.join(dupes)}\n"
+            "If these are the same repository under different checkout names, merge them:\n"
+            "  [cyan]navegador repo merge <phantom-identity> <canonical-identity>[/cyan]"
+        )
+
+
+@repo.command("merge")
+@click.argument("source")
+@click.argument("target")
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True)
+def repo_merge(source: str, target: str, db: str, as_json: bool):
+    """Merge Repository node SOURCE into TARGET, then delete SOURCE.
+
+    \b
+    Repairs graphs that accumulated phantom repositories before identity was
+    derived from the git remote. Every file owned by SOURCE is re-pointed at
+    TARGET; files already owned by both simply lose the duplicate edge.
+
+    \b
+    Example:
+      navegador repo merge myproj-worktree ExampleOrg/myproj
+    """
+    store = _get_store(db)
+
+    def count(identity: str) -> int | None:
+        rows = store.query(
+            "MATCH (r:Repository {path: $p}) RETURN count(r)", {"p": identity}
+        ).result_set
+        return rows[0][0] if rows else 0
+
+    if not count(source):
+        raise click.ClickException(f"No Repository node with identity {source!r}.")
+    if not count(target):
+        raise click.ClickException(
+            f"No Repository node with identity {target!r}. "
+            f"Merging into a node that does not exist would lose the files instead."
+        )
+    if source == target:
+        raise click.ClickException("SOURCE and TARGET are the same identity.")
+
+    moved = (
+        store.query(
+            "MATCH (f)-[old:BELONGS_TO]->(:Repository {path: $src}), "
+            "(t:Repository {path: $tgt}) "
+            "DELETE old "
+            "MERGE (f)-[:BELONGS_TO]->(t) "
+            "RETURN count(f)",
+            {"src": source, "tgt": target},
+        ).result_set
+        or [[0]]
+    )[0][0]
+
+    store.query("MATCH (r:Repository {path: $src}) DETACH DELETE r", {"src": source})
+
+    result = {"source": source, "target": target, "files_moved": moved}
+    if as_json:
+        click.echo(json.dumps(result, indent=2))
+    else:
+        console.print(f"[green]Merged[/green] {source} → {target} ({moved} file(s) re-pointed)")
 
 
 @repo.command("add")

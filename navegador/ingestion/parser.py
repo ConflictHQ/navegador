@@ -70,6 +70,52 @@ LANGUAGE_MAP: dict[str, str] = {
 }
 
 
+def _relative_path(path: Path, root: Path) -> str | None:
+    """
+    Path relative to *root*, or None when it lies outside.
+
+    The raw path is tried first so ordinary files keep their literal recorded
+    path; resolution is a fallback for the case where one side has already been
+    resolved through a symlink and the other has not (on macOS, /var against
+    /private/var). Returning None rather than raising keeps a stray path from
+    aborting an entire ingest.
+    """
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        pass
+    try:
+        return str(path.resolve().relative_to(root))
+    except ValueError:
+        logger.debug("Skipping %s: not under %s", path, root)
+        return None
+
+
+def repo_identity(repo_path: Path) -> str:
+    """
+    Stable graph identity for a checkout.
+
+    The directory basename is not an identity: a worktree, a renamed clone, or
+    ``git clone <url> <otherdir>`` all produce a different basename for the same
+    repository, and each one used to create an additional Repository node
+    indistinguishable from a real one (#167). The git remote is the only thing
+    that stays constant across all three, so it is preferred; the basename
+    remains the fallback for a checkout with no remote.
+    """
+    from navegador.vcs import GitAdapter
+
+    try:
+        identity = GitAdapter(repo_path).remote_identity()
+    except Exception:  # noqa: BLE001 — identity must never fail an ingest
+        identity = ""
+    return identity or repo_path.name
+
+
+def repo_display_name(repo_key: str) -> str:
+    """Human-facing name for a repo key — the segment after any owner prefix."""
+    return repo_key.rsplit("/", 1)[-1] if repo_key else ""
+
+
 class RepoIngester:
     """
     Parses a local code repository and populates a GraphStore.
@@ -127,7 +173,8 @@ class RepoIngester:
             clear: If True, wipe the graph before ingesting.
             incremental: If True, skip files whose content hash hasn't changed.
             repo_key: Portable graph identity for the Repository node
-                (defaults to the repo directory name). Workspace ingesters
+                (defaults to the ``owner/repo`` of the git remote, falling back
+                to the directory name when there is none). Workspace ingesters
                 pass the workspace-relative path here so nested repos with
                 the same basename stay distinct.
             rel_root: Ancestor directory that node paths are recorded
@@ -171,14 +218,17 @@ class RepoIngester:
         rel_root: Path | None = None,
     ) -> dict[str, int]:
         rel_root = rel_root or repo_path
-        repo_key = repo_key or repo_path.name
+        repo_key = repo_key or repo_identity(repo_path)
         # Create repository node. Keyed by a portable identity, not the
         # absolute checkout path — exports are committed/shared, and machine
         # paths churned ids across machines and leaked local layout (#145).
+        # `name` is derived from the key rather than the directory, or a
+        # worktree's directory name silently clobbers the display name of the
+        # node its files are attached to (#167).
         self.store.create_node(
             NodeLabel.Repository,
             {
-                "name": repo_path.name,
+                "name": repo_display_name(repo_key),
                 "path": repo_key,
                 "file_path": "",
             },
@@ -200,7 +250,9 @@ class RepoIngester:
         present: set[str] = set()
 
         for source_file in self._iter_source_files(repo_path):
-            rel_path = str(source_file.relative_to(rel_root))
+            rel_path = _relative_path(source_file, rel_root)
+            if rel_path is None:
+                continue
             present.add(rel_path)
 
             language = LANGUAGE_MAP.get(source_file.suffix)
@@ -552,7 +604,7 @@ class RepoIngester:
         from navegador.ingestion.ansible import AnsibleParser
 
         rel_root = rel_root or repo_path
-        repo_key = repo_key or repo_path.name
+        repo_key = repo_key or repo_identity(repo_path)
         is_ansible_file = AnsibleParser.is_ansible_file
 
         ansible_parser: AnsibleParser | None = None
@@ -563,7 +615,9 @@ class RepoIngester:
             if not is_ansible_file(path, repo_path):
                 continue
 
-            rel_path = str(path.relative_to(rel_root))
+            rel_path = _relative_path(path, rel_root)
+            if rel_path is None:
+                continue
             # Recorded before the unchanged/skip check: an Ansible file that did
             # not need re-parsing this pass is still present on disk and must
             # not be pruned.
