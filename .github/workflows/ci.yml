@@ -26,8 +26,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      # --cov-fail-under reads the ratchet from pyproject so a local run
+      # enforces the same bar as CI. Coverage was measured but never enforced
+      # before this, which made the number decorative (#191).
       - name: Run tests
-        run: pytest tests/ -v --tb=short
+        run: pytest tests/ -v --tb=short --cov-report=term-missing
 
       - name: Check code style
         run: ruff check navegador/

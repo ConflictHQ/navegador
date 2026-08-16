@@ -142,3 +142,13 @@ addopts = "--cov=navegador"
 filterwarnings = [
     "ignore::ResourceWarning",
 ]
+
+[tool.coverage.report]
+# A ratchet, not a target. Coverage was measured but never enforced, so the
+# number drifted freely; it sat at 94% while all eight of the 1.5 fidelity
+# bugs shipped inside covered lines. Raising the bar would not have caught
+# any of them — see tests/test_no_store_mocks.py for the rule that would.
+#
+# Set one point below the measured value so an unrelated change does not
+# fail on noise. Raise it when coverage rises on its own; never lower it.
+fail_under = 93
