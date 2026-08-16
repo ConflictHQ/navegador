@@ -1,22 +1,39 @@
 """
 Text-based graph export and import for navegador.
 
-Exports the full graph to a deterministic JSON Lines format (.jsonl)
-suitable for committing to version control. Each line is a self-contained
-JSON object — either a node or an edge.
+Exports the full graph to a deterministic JSON Lines format (.jsonl) suitable
+for committing to version control. Each line is a self-contained JSON object —
+either a node or an edge.
 
-Format:
-  {"kind": "node", "label": "Function", "props": {"name": "foo", ...}}
-  {"kind": "edge", "type": "CALLS", "from": {...}, "to": {...}}
+Format (conflict-kg/v1 identity, one record per line)::
+
+  {"kind": "node", "id": "Function::foo", "type": "Function",
+   "name": "foo", "props": {...}}
+  {"kind": "edge", "type": "CALLS", "source": "Function::foo",
+   "target": "Function::bar", "props": {...}}
+
+Node ids are content-derived (``type:path:name``, with a ``#n`` suffix on
+collision) and edges reference them, so a round trip preserves every edge
+exactly. This is the same identity scheme as the conflict-kg interchange
+format, deliberately: two serializations of one canonical shape rather than two
+formats that disagree about what a node is.
+
+Legacy exports — which identified endpoints by ``(name, path)`` merge keys —
+are still readable; see :func:`_import_legacy_edge`.
 """
 
 import json
 import logging
 from pathlib import Path
 
-from navegador.graph.store import GraphStore, paged_query
+from navegador.graph.interchange import collect_graph, merge_key
+from navegador.graph.store import GraphStore
 
 logger = logging.getLogger(__name__)
+
+
+class ExportError(RuntimeError):
+    """Raised when an import cannot reproduce the exported graph."""
 
 
 def export_graph(store: GraphStore, output_path: str | Path) -> dict[str, int]:
@@ -29,24 +46,37 @@ def export_graph(store: GraphStore, output_path: str | Path) -> dict[str, int]:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    nodes = _export_nodes(store)
-    edges = _export_edges(store)
-
-    # Sort for deterministic output
-    nodes.sort(key=lambda n: (n["label"], json.dumps(n["props"], sort_keys=True)))
-    edges.sort(
-        key=lambda e: (
-            e["type"],
-            json.dumps(e["from"], sort_keys=True),
-            json.dumps(e["to"], sort_keys=True),
-        )
-    )
+    nodes, edges = collect_graph(store)
 
     with output_path.open("w", encoding="utf-8") as f:
         for node in nodes:
-            f.write(json.dumps(node, sort_keys=True) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "kind": "node",
+                        "id": node["id"],
+                        "type": node["type"],
+                        "name": node["name"],
+                        "props": node["props"],
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
         for edge in edges:
-            f.write(json.dumps(edge, sort_keys=True) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "kind": "edge",
+                        "type": edge["type"],
+                        "source": edge["source"],
+                        "target": edge["target"],
+                        "props": edge["props"],
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
 
     logger.info("Exported %d nodes, %d edges to %s", len(nodes), len(edges), output_path)
     return {"nodes": len(nodes), "edges": len(edges)}
@@ -62,117 +92,131 @@ def import_graph(store: GraphStore, input_path: str | Path, clear: bool = True) 
         clear: If True (default), wipe the graph before importing.
 
     Returns:
-        Dict with counts: nodes, edges.
+        Dict with counts of what was actually created — not of lines read.
+
+    Raises:
+        ExportError: when a fresh import creates fewer edges than the file
+            describes. An import that silently drops relationships leaves a pile
+            of disconnected nodes that answers every structural query with an
+            empty result, which reads as a valid negative.
     """
     input_path = Path(input_path)
     if not input_path.exists():
         raise FileNotFoundError(f"Export file not found: {input_path}")
 
-    if clear:
-        store.clear()
-
-    node_count = 0
-    edge_count = 0
-
+    node_records: list[dict] = []
+    edge_records: list[dict] = []
     with input_path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             record = json.loads(line)
+            if record.get("kind") == "node":
+                node_records.append(record)
+            elif record.get("kind") == "edge":
+                edge_records.append(record)
 
-            if record["kind"] == "node":
-                _import_node(store, record)
-                node_count += 1
-            elif record["kind"] == "edge":
-                _import_edge(store, record)
-                edge_count += 1
+    if clear:
+        store.clear()
 
-    logger.info("Imported %d nodes, %d edges from %s", node_count, edge_count, input_path)
-    return {"nodes": node_count, "edges": edge_count}
+    # id -> (label, merge key) for endpoint resolution
+    key_map: dict[str, tuple[str, dict]] = {}
+    for record in node_records:
+        label, props, node_id = _node_from_record(record)
+        store.create_node(label, props)
+        if node_id is not None:
+            key_map[node_id] = (label, merge_key(label, props))
 
+    created = 0
+    skipped: list[dict] = []
+    for record in edge_records:
+        if _import_edge(store, record, key_map):
+            created += 1
+        else:
+            skipped.append(record)
 
-def _export_nodes(store: GraphStore) -> list[dict]:
-    """Export all nodes with their labels and properties."""
-    rows = paged_query(
-        store, "MATCH (n) RETURN labels(n)[0] AS label, properties(n) AS props ORDER BY id(n)"
-    )
-    nodes = []
-    for row in rows:
-        label = row[0]
-        props = row[1] if isinstance(row[1], dict) else {}
-        nodes.append({"kind": "node", "label": label, "props": props})
-    return nodes
+    for record in skipped[:5]:
+        logger.warning("Skipped edge with unresolvable endpoint: %s", record)
+    if len(skipped) > 5:
+        logger.warning("… and %d more unresolvable edges", len(skipped) - 5)
 
+    logger.info("Imported %d nodes, %d edges from %s", len(node_records), created, input_path)
 
-def _export_edges(store: GraphStore) -> list[dict]:
-    """Export all edges with type and endpoint identifiers."""
-    rows = paged_query(
-        store,
-        "MATCH (a)-[r]->(b) "
-        "RETURN type(r) AS type, labels(a)[0] AS from_label, "
-        "a.name AS from_name, coalesce(a.file_path, a.path, '') AS from_path, "
-        "labels(b)[0] AS to_label, b.name AS to_name, "
-        "coalesce(b.file_path, b.path, '') AS to_path "
-        "ORDER BY id(r)",
-    )
-    edges = []
-    for row in rows:
-        edges.append(
-            {
-                "kind": "edge",
-                "type": row[0],
-                "from": {"label": row[1], "name": row[2], "path": row[3]},
-                "to": {"label": row[4], "name": row[5], "path": row[6]},
-            }
+    if clear and created != len(edge_records):
+        raise ExportError(
+            f"Import did not reproduce the export — refusing to report success.\n"
+            f"  file describes: {len(node_records)} nodes, {len(edge_records)} edges\n"
+            f"  created:        {store.node_count()} nodes, {created} edges\n"
+            f"  {len(skipped)} edge(s) had endpoints that could not be resolved.\n"
+            f"The graph has been written but is incomplete; structural queries "
+            f"against it will return empty results rather than errors."
         )
-    return edges
+
+    return {"nodes": len(node_records), "edges": created}
 
 
-def _import_node(store: GraphStore, record: dict) -> None:
-    """Create a node from an export record."""
-    label = record["label"]
-    props = record["props"]
-    # Ensure required merge keys exist
-    if "name" not in props:
-        props["name"] = ""
-    if "file_path" not in props and "path" not in props:
-        props["file_path"] = ""
+def _node_from_record(record: dict) -> tuple[str, dict, str | None]:
+    """
+    Read a node record in either the current or the legacy shape.
 
-    prop_str = ", ".join(f"n.{k} = ${k}" for k in props)
-    # Use name + file_path or path for merge key
-    if "file_path" in props:
-        cypher = f"MERGE (n:{label} {{name: $name, file_path: $file_path}}) SET {prop_str}"
-    else:
-        cypher = f"MERGE (n:{label} {{name: $name, path: $path}}) SET {prop_str}"
-    store.query(cypher, props)
+    Legacy records carry ``label`` and no ``id``; current ones carry ``type``,
+    ``name`` and a content-derived ``id``.
+    """
+    if "label" in record and "type" not in record:
+        props = dict(record.get("props") or {})
+        return record["label"], props, None
+
+    props = dict(record.get("props") or {})
+    if record.get("name") is not None:
+        props.setdefault("name", record["name"])
+    return record["type"], props, record.get("id")
 
 
-def _import_edge(store: GraphStore, record: dict) -> None:
-    """Create an edge from an export record."""
-    edge_type = record["type"]
-    from_info = record["from"]
-    to_info = record["to"]
+def _import_edge(store: GraphStore, record: dict, key_map: dict[str, tuple[str, dict]]) -> bool:
+    """Create one edge, returning whether it was actually created."""
+    source, target = record.get("source"), record.get("target")
+    if isinstance(source, str) and isinstance(target, str):
+        src, tgt = key_map.get(source), key_map.get(target)
+        if src is None or tgt is None:
+            return False
+        return store.create_edge(
+            src[0], src[1], record["type"], tgt[0], tgt[1], record.get("props") or None
+        )
 
-    from_key = "name: $from_name"
-    to_key = "name: $to_name"
+    return _import_legacy_edge(store, record)
 
-    params = {
-        "from_name": from_info["name"],
-        "to_name": to_info["name"],
-    }
 
-    if from_info.get("path"):
-        from_key += ", file_path: $from_path"
-        params["from_path"] = from_info["path"]
+def _import_legacy_edge(store: GraphStore, record: dict) -> bool:
+    """
+    Create an edge from a pre-id export record.
 
-    if to_info.get("path"):
-        to_key += ", path: $to_path"
-        params["to_path"] = to_info["path"]
+    Those records identify each endpoint by ``{label, name, path}``, where
+    ``path`` was written from ``coalesce(file_path, path, '')``. The original
+    importer matched the source on ``file_path`` and the target on ``path``,
+    which meant any edge pointing at a code symbol matched nothing at all. Both
+    endpoints are now keyed the way the node's own label is keyed.
+    """
+    from_info, to_info = record.get("from"), record.get("to")
+    if not isinstance(from_info, dict) or not isinstance(to_info, dict):
+        return False
 
-    cypher = (
-        f"MATCH (a:{from_info['label']} {{{from_key}}}), "
-        f"(b:{to_info['label']} {{{to_key}}}) "
-        f"MERGE (a)-[r:{edge_type}]->(b)"
+    def endpoint(info: dict) -> tuple[str, dict]:
+        label = info.get("label") or ""
+        props = {"name": info.get("name", "")}
+        if info.get("path"):
+            # A path-keyed label stores it as `path`; everything else as `file_path`.
+            if label in GraphStore._PATH_KEYED_LABELS:
+                props["path"] = info["path"]
+            else:
+                props["file_path"] = info["path"]
+        return label, merge_key(label, props)
+
+    src_label, src_key = endpoint(from_info)
+    tgt_label, tgt_key = endpoint(to_info)
+    if not src_label or not tgt_label:
+        return False
+
+    return store.create_edge(
+        src_label, src_key, record["type"], tgt_label, tgt_key, record.get("props") or None
     )
-    store.query(cypher, params)

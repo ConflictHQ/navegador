@@ -159,7 +159,7 @@ def import_conflict_kg(
         label = node["type"]
         props = {"name": node.get("name", ""), **node.get("props", {})}
         store.create_node(label, props)
-        key_map[node["id"]] = (label, _merge_key(label, props))
+        key_map[node["id"]] = (label, merge_key(label, props))
 
     edge_count = 0
     for edge in edges:
@@ -167,8 +167,14 @@ def import_conflict_kg(
         if src is None or tgt is None:
             logger.warning("Skipping edge with unknown endpoint: %s", edge)
             continue
-        store.create_edge(src[0], src[1], edge["type"], tgt[0], tgt[1], edge.get("props") or None)
-        edge_count += 1
+        # create_edge reports whether both endpoints matched; counting calls
+        # rather than results would make the returned total unfalsifiable.
+        if store.create_edge(
+            src[0], src[1], edge["type"], tgt[0], tgt[1], edge.get("props") or None
+        ):
+            edge_count += 1
+        else:
+            logger.warning("Edge endpoints did not match on import: %s", edge)
 
     logger.info("Imported %d nodes, %d edges from %s", len(nodes), edge_count, input_path)
     return {"nodes": len(nodes), "edges": edge_count}
@@ -189,7 +195,7 @@ def is_conflict_kg_json(path: str | Path) -> bool:
     return isinstance(payload, dict) and payload.get("format") == FORMAT
 
 
-def _merge_key(label: str, props: dict) -> dict:
+def merge_key(label: str, props: dict) -> dict:
     """Merge-key props for a node, mirroring GraphStore.create_node key selection."""
     if label in GraphStore._PATH_KEYED_LABELS:
         return {"path": props.get("path", "")}
