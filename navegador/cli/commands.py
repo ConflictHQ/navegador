@@ -4116,6 +4116,150 @@ def storage():
     """Inspect and move the graph data behind the [storage] configuration."""
 
 
+def _audit_reports(server_url: str, root: str):
+    """Audit every graph, checking against whatever checkouts we can find."""
+    from navegador.graph.audit import audit_server
+    from navegador.inventory import scan
+
+    roots = {}
+    for record in scan(root):
+        if record.effective and record.effective.graph_name:
+            roots[record.effective.graph_name] = record.root
+    return audit_server(server_url, roots)
+
+
+def _resolve_server_url(db: str) -> str:
+    from navegador.config import resolve_storage
+
+    storage_config = resolve_storage(db or None)
+    if not storage_config.is_redis:
+        raise click.ClickException(
+            "This inspects a shared server; the resolved backend is "
+            f"{storage_config.describe()}. Pass --db redis://... or configure [storage]."
+        )
+    return storage_config.redis_url
+
+
+@storage.command("audit")
+@click.option("--db", default="", help="Server to inspect. Default: resolved storage.")
+@click.option(
+    "--root",
+    default=str(Path.home() / "repos"),
+    type=click.Path(),
+    help="Tree searched for the checkouts a graph is checked against. A graph "
+    "with no checkout here is reported 'unknown', never assumed stale.",
+)
+@click.option("--json", "as_json", is_flag=True)
+def storage_audit(db: str, root: str, as_json: bool):
+    """
+    Report graphs that have stopped describing anything real.
+
+    Four verdicts matter: 'junk' (a name we would not have written), 'empty',
+    'stale' (its file paths no longer exist on disk) and 'duplicate' (another
+    graph covers the same repository). Nothing is deleted here.
+    """
+    server_url = _resolve_server_url(db)
+    reports = _audit_reports(server_url, root)
+
+    if as_json:
+        click.echo(json.dumps([r.to_dict() for r in reports], indent=2))
+        return
+
+    table = Table(title=f"Graph audit — {server_url}")
+    # Graph names are long and the interesting columns are the narrow ones, so
+    # the name truncates rather than squeezing everything else to ellipses.
+    table.add_column("Graph", style="cyan", max_width=42, overflow="ellipsis", no_wrap=True)
+    table.add_column("Verdict", width=9)
+    table.add_column("Nodes", justify="right", width=9)
+    table.add_column("Size", justify="right", width=9)
+    table.add_column("Why", style="dim", overflow="fold")
+    colours = {
+        "healthy": "green",
+        "stale": "red",
+        "junk": "red",
+        "empty": "yellow",
+        "duplicate": "yellow",
+        "unknown": "dim",
+    }
+    for report in sorted(reports, key=lambda r: -r.size_bytes):
+        verdict = report.verdict
+        table.add_row(
+            report.name,
+            f"[{colours[verdict]}]{verdict}[/{colours[verdict]}]",
+            f"{report.nodes:,}",
+            f"{report.size_bytes / 1048576:.1f} MB",
+            report.explain(),
+        )
+    console.print(table)
+
+    reclaimable = [r for r in reports if r.reclaimable]
+    if reclaimable:
+        total = sum(r.size_bytes for r in reclaimable) / 1048576
+        console.print(
+            f"\n[yellow]{len(reclaimable)} graph(s) reclaimable, {total:.1f} MB[/yellow] — "
+            "run [bold]navegador storage prune[/bold] to see what would go."
+        )
+
+
+@storage.command("prune")
+@click.option("--db", default="", help="Server to prune. Default: resolved storage.")
+@click.option("--root", default=str(Path.home() / "repos"), type=click.Path())
+@click.option(
+    "--include-stale",
+    is_flag=True,
+    help="Also delete graphs whose files no longer exist. Off by default: a "
+    "moved checkout and a deleted one look identical from here, and one of "
+    "those is recoverable by re-ingesting while the other is not.",
+)
+@click.option("--yes", is_flag=True, help="Actually delete. Without it, this is a dry run.")
+@click.option("--json", "as_json", is_flag=True)
+def storage_prune(db: str, root: str, include_stale: bool, yes: bool, as_json: bool):
+    """Delete junk and empty graphs. Dry run unless --yes is given."""
+    from navegador.graph.audit import prune as prune_graphs
+
+    server_url = _resolve_server_url(db)
+    reports = _audit_reports(server_url, root)
+    doomed = [
+        r
+        for r in reports
+        if r.verdict in {"junk", "empty"} or (include_stale and r.verdict == "stale")
+    ]
+
+    if not doomed:
+        if as_json:
+            click.echo(json.dumps({"removed": [], "dry_run": not yes}, indent=2))
+        else:
+            console.print("[green]Nothing to prune.[/green]")
+        return
+
+    reclaimed = sum(r.size_bytes for r in doomed) / 1048576
+    if not yes:
+        if as_json:
+            click.echo(
+                json.dumps(
+                    {"would_remove": [r.to_dict() for r in doomed], "dry_run": True}, indent=2
+                )
+            )
+            return
+        console.print(f"[bold]Would delete {len(doomed)} graph(s), {reclaimed:.1f} MB:[/bold]")
+        for report in sorted(doomed, key=lambda r: -r.size_bytes):
+            console.print(f"  {report.name}  [dim]{report.explain()}[/dim]")
+        stale_held = [r for r in reports if r.verdict == "stale" and not include_stale]
+        if stale_held:
+            console.print(
+                f"\n[dim]{len(stale_held)} stale graph(s) held back; "
+                "--include-stale to delete them too.[/dim]"
+            )
+        console.print("\nRe-run with [bold]--yes[/bold] to delete.")
+        return
+
+    removed = prune_graphs(server_url, doomed, include_stale=include_stale)
+    if as_json:
+        click.echo(json.dumps({"removed": removed, "dry_run": False}, indent=2))
+    else:
+        console.print(f"[green]Deleted {len(removed)} graph(s), {reclaimed:.1f} MB.[/green]")
+
+
 @storage.command("migrate")
 @click.option("--target", default=".", type=click.Path(), help="Project to migrate.")
 @click.option("--to", "dest_url", default="", help="Destination server URL.")
