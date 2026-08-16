@@ -4126,6 +4126,59 @@ def storage():
     """Inspect and move the graph data behind the [storage] configuration."""
 
 
+@main.command("grep")
+@click.argument("pattern")
+@click.option("--db", default="", help="Graph to search. Default: resolved storage.")
+@click.option("--target", default=".", type=click.Path(), help="Project the graph belongs to.")
+@click.option("-e", "--regex", is_flag=True, help="Treat PATTERN as a regular expression.")
+@click.option("-i", "--ignore-case", is_flag=True)
+@click.option("-n", "--limit", default=100, help="Maximum matches.")
+@click.option(
+    "--reindex", is_flag=True, help="Index any stored content not yet in the trigram index."
+)
+@click.option("--json", "as_json", is_flag=True)
+def grep(
+    pattern: str,
+    db: str,
+    target: str,
+    regex: bool,
+    ignore_case: bool,
+    limit: int,
+    reindex: bool,
+    as_json: bool,
+):
+    """
+    Exact substring or regex search over indexed content.
+
+    Trigrams narrow the candidate set inside the database and the real pattern
+    then matches against stored text, so results are exact — verified against
+    ripgrep on this package's own source. Cost scales with the number of
+    matches rather than the size of the corpus, so a miss is nearly free.
+    """
+    from navegador.graph.trigram import TrigramIndex
+
+    store = _get_store(db, target=target)
+    index = TrigramIndex(store)
+    if reindex:
+        index.index_graph()
+
+    matches = index.search(pattern, is_regex=regex, limit=limit, ignore_case=ignore_case)
+
+    if as_json:
+        click.echo(json.dumps([m.to_dict() for m in matches], indent=2))
+        return
+
+    if not matches:
+        console.print(
+            "[dim]No matches. If content has not been indexed yet, run with --reindex.[/dim]"
+        )
+        return
+    for match in matches:
+        console.print(
+            f"[cyan]{match.path}[/cyan]:[green]{match.line}[/green]: {match.text.strip()}"
+        )
+
+
 def _audit_reports(server_url: str, root: str):
     """Audit every graph, checking against whatever checkouts we can find."""
     from navegador.graph.audit import audit_server

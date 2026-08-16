@@ -83,13 +83,32 @@ def _binary_connection(connection):
     """
     import redis as redis_lib
 
-    kwargs = dict(getattr(connection.connection_pool, "connection_kwargs", {}))
-    if not kwargs.get("decode_responses"):
+    pool_kwargs = dict(getattr(connection.connection_pool, "connection_kwargs", {}))
+    if not pool_kwargs.get("decode_responses"):
         return connection
+
+    # Only the parameters that identify and secure the connection. A pool
+    # carries internals that Redis.__init__ rejects outright — copying them
+    # wholesale raised TypeError on maint_notifications_pool_handler against a
+    # real server, while working fine against the embedded unix socket.
+    allowed = (
+        "host",
+        "port",
+        "db",
+        "username",
+        "password",
+        "socket_timeout",
+        "socket_connect_timeout",
+        "ssl",
+        "ssl_certfile",
+        "ssl_keyfile",
+        "ssl_ca_certs",
+    )
+    kwargs = {k: v for k, v in pool_kwargs.items() if k in allowed}
     kwargs["decode_responses"] = False
     # A unix socket pool keys on `path`; a TCP pool on host/port.
-    if "path" in kwargs:
-        return redis_lib.Redis(unix_socket_path=kwargs.pop("path"), **kwargs)
+    if "path" in pool_kwargs:
+        return redis_lib.Redis(unix_socket_path=pool_kwargs["path"], **kwargs)
     return redis_lib.Redis(**kwargs)
 
 
