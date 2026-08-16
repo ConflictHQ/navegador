@@ -148,6 +148,7 @@ class RepoIngester:
         # files and vendored copies cost nothing.
         self.store_content = store_content
         self._content_store = None
+        self._prose_index = None
         # When True (default), a git checkout contributes only the files git
         # does not ignore. Without this the walk pruned on a fixed directory
         # list and indexed any build output whose directory name happened to
@@ -255,6 +256,7 @@ class RepoIngester:
             "grammar_skipped": 0,
             "removed": 0,
             "content_stored": 0,
+            "prose_indexed": 0,
         }
 
         # Every path this pass saw on disk, recorded before any decision about
@@ -299,6 +301,8 @@ class RepoIngester:
                 stats["edges"] += 1
                 if self._store_content(source_file, content_hash):
                     stats["content_stored"] += 1
+                if self._index_prose(rel_path, source_file):
+                    stats["prose_indexed"] += 1
                 if stats["files"] % 1000 == 0:
                     logger.info(
                         "Ingest progress %s: %d files parsed", repo_path.name, stats["files"]
@@ -440,6 +444,28 @@ class RepoIngester:
         if self._detector is not None:
             text = self._detector.redact(text)
         return content.put(content_hash, text)
+
+    def _index_prose(self, rel_path: str, source_file: Path) -> bool:
+        """
+        Index the literals, comments and identifiers parsing discards (#185).
+
+        Separate from content storage because the two answer different
+        questions: content backs exact matching, this backs ranked "what is
+        about this" search.
+        """
+        if not self.store_content:
+            return False
+        if self._prose_index is None:
+            from navegador.graph.prose import ProseIndex
+
+            self._prose_index = ProseIndex(self.store)
+        try:
+            text = source_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        if self._detector is not None:
+            text = self._detector.redact(text)
+        return self._prose_index.index_file(rel_path, text)
 
     def _file_unchanged(self, rel_path: str, content_hash: str) -> bool:
         suffix = Path(rel_path).suffix.lower()

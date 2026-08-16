@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 # How much a hit from each source contributes before rank fusion. Exact text
 # is weighted hardest: if a literal appears somewhere, that is a fact, whereas
 # vector similarity is a guess and structure is context.
-WEIGHTS = {"exact": 1.0, "symbol": 0.9, "vector": 0.6, "structure": 0.4}
+WEIGHTS = {"exact": 1.0, "symbol": 0.9, "prose": 0.7, "vector": 0.6, "structure": 0.4}
 
 # Reciprocal rank fusion constant. 60 is the value from the original TREC work
 # and is not sensitive enough to be worth tuning here.
@@ -125,6 +125,7 @@ class Targeting:
         ranked = {
             "exact": self._exact(intent, limit),
             "symbol": self._symbols(intent, limit),
+            "prose": self._prose(intent, limit),
             "structure": self._documents(intent, limit),
         }
         if self._provider is not None:
@@ -180,6 +181,25 @@ class Targeting:
                     seen.add(candidate.key())
                     found.append(candidate)
         return found[:limit]
+
+    def _prose(self, intent: str, limit: int) -> list[Candidate]:
+        """
+        Files whose literals, comments or identifiers are about the intent.
+
+        This is what answers a pasted error message or a phrase like "rate
+        limiting" that appears in a comment but in no symbol name (#185).
+        """
+        try:
+            from navegador.graph.prose import ProseIndex
+
+            hits = ProseIndex(self._store).search(intent, limit=limit)
+        except Exception:
+            return []
+        return [
+            Candidate(path=h["path"], reasons=["text in this file is about that"])
+            for h in hits
+            if h.get("path")
+        ]
 
     def _documents(self, intent: str, limit: int) -> list[Candidate]:
         """Documents mentioning the intent — decisions and prose are context."""
