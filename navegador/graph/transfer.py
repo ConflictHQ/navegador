@@ -16,6 +16,7 @@ verifiable by comparing node and edge counts on both sides.
 
 import logging
 import re
+import time
 from collections import defaultdict
 from typing import Any
 
@@ -102,9 +103,13 @@ def copy_graph(
     if clear:
         dest.clear()
 
-    nodes_written = _copy_nodes(source, dest, batch_size)
+    nodes_written, indexed_labels = _copy_nodes(source, dest, batch_size)
     edges_written = _copy_edges(source, dest, batch_size)
     _drop_migration_key(dest)
+    # Leave no transfer scaffolding behind: the property is gone, so an index
+    # over it is dead weight, and a leftover one is what breaks the next copy.
+    for label in indexed_labels:
+        _drop_transfer_index(dest, label)
 
     dest_nodes = dest.node_count()
     dest_edges = dest.edge_count()
@@ -156,8 +161,13 @@ def _stream_by_id(source: GraphStore, match: str, returns: str, id_expr: str, pa
         last = rows[-1][0]
 
 
-def _copy_nodes(source: GraphStore, dest: GraphStore, batch_size: int) -> int:
-    """Recreate every source node in *dest*, stamped with its source id."""
+def _copy_nodes(source: GraphStore, dest: GraphStore, batch_size: int) -> tuple[int, set[str]]:
+    """
+    Recreate every source node in *dest*, stamped with its source id.
+
+    Returns the number written and the labels that were indexed, so the caller
+    can tear those indexes down once the edges are reconnected.
+    """
     # Group by label set: a label cannot be parameterised, so each distinct
     # label set needs its own CREATE statement. Buffers are flushed as they fill
     # rather than materialising the whole graph in memory first.
@@ -199,27 +209,79 @@ def _copy_nodes(source: GraphStore, dest: GraphStore, batch_size: int) -> int:
     for labels in list(buffers):
         written += flush(labels)
 
-    for labels in buffers:
-        for label in labels:
-            _ensure_transfer_index(dest, label)
+    indexed = {label for labels in buffers for label in labels}
+    for label in indexed:
+        _ensure_transfer_index(dest, label)
+    _wait_for_indexes(dest, indexed)
 
-    return written
+    return written, indexed
+
+
+def _wait_for_indexes(dest: GraphStore, labels: set[str], timeout: float = 300.0) -> None:
+    """
+    Block until every transfer index is operational.
+
+    FalkorDB builds indexes asynchronously. A lookup issued against one that is
+    still under construction returns no rows rather than waiting, so edges whose
+    endpoints were not yet indexed are silently not created — the copy finishes
+    with every node present and a fraction of the edges missing. Under light
+    load the build completes between statements and nothing goes wrong, which is
+    what makes this fail intermittently and only on larger graphs.
+    """
+    if not labels:
+        return
+
+    deadline = time.monotonic() + timeout
+    pending = set(labels)
+    while pending:
+        try:
+            rows = dest.query("CALL db.indexes()", timeout=READ_TIMEOUT_MS).result_set or []
+        except Exception:  # noqa: BLE001 — older servers may not expose db.indexes()
+            return
+        for row in rows:
+            if len(row) < 8:
+                continue
+            label = _decode(row[0])
+            props = [_decode(p) for p in row[1]] if isinstance(row[1], (list, tuple)) else []
+            if label in pending and MIGRATION_KEY in props:
+                if _decode(row[7]) == "OPERATIONAL":
+                    pending.discard(label)
+        if not pending:
+            return
+        if time.monotonic() >= deadline:
+            raise TransferError(
+                "Timed out waiting for transfer indexes to become operational on: "
+                + ", ".join(sorted(pending))
+                + ". Copying edges now would silently drop those whose endpoints "
+                "are not yet indexed."
+            )
+        time.sleep(0.1)
 
 
 def _ensure_transfer_index(dest: GraphStore, label: str) -> None:
     """
-    Index the temporary id property for *label*.
+    Build a fresh index on the temporary id property for *label*.
 
     Without an index, reconnecting edges degrades to a full scan per edge — the
-    difference between seconds and hours on a real graph. FalkorDB has no
-    ``IF NOT EXISTS`` for index creation and indexes survive a graph clear, so
-    an already-present index is an expected, benign outcome.
+    difference between seconds and hours on a real graph.
+
+    Any pre-existing index is dropped first rather than reused. Indexes survive
+    ``MATCH (n) DETACH DELETE n``, and one left over from an earlier copy into
+    the same graph returns *no rows* for nodes that are demonstrably present —
+    so edges whose endpoints it should have found are silently never created.
+    That produces a destination with every node and only some of its edges,
+    which is exactly the outcome this module exists to prevent.
     """
+    _drop_transfer_index(dest, label)
+    dest.query(f"CREATE INDEX FOR (n:{label}) ON (n.{MIGRATION_KEY})")
+
+
+def _drop_transfer_index(dest: GraphStore, label: str) -> None:
+    """Remove the transfer index for *label*, tolerating its absence."""
     try:
-        dest.query(f"CREATE INDEX FOR (n:{label}) ON (n.{MIGRATION_KEY})")
-    except Exception as e:  # noqa: BLE001 — only "already indexed" is tolerable
-        if "already indexed" not in str(e).lower():
-            raise
+        dest.query(f"DROP INDEX FOR (n:{label}) ON (n.{MIGRATION_KEY})")
+    except Exception:  # noqa: BLE001 — no index to drop is the common case
+        pass
 
 
 def _copy_edges(source: GraphStore, dest: GraphStore, batch_size: int) -> int:

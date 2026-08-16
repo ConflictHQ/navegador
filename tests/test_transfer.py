@@ -183,6 +183,46 @@ class TestClearBehaviour:
         assert dest.node_count() == source.node_count() + 1
 
 
+class TestIndexHygiene:
+    """
+    Indexes survive ``MATCH (n) DETACH DELETE n``.
+
+    A transfer index left over from an earlier copy into the same graph returns
+    no rows for nodes that are demonstrably present, so edges whose endpoints it
+    should have found are never created — leaving a destination with every node
+    and only some of its edges, reported as success by anything not comparing
+    counts. Observed in the field as a repeat migration losing exactly the edges
+    pointing at one label.
+    """
+
+    def test_repeat_copy_into_the_same_graph_keeps_every_edge(self, source, dest):
+        seed(source)
+        first = copy_graph(source, dest)
+        second = copy_graph(source, dest)
+        assert second["edges"] == first["edges"] == source.edge_count()
+
+    def test_a_stale_index_does_not_swallow_edges(self, source, dest):
+        """Simulate the leftover index directly, then copy over it."""
+        seed(source)
+        dest.query(f"CREATE INDEX FOR (n:Function) ON (n.{MIGRATION_KEY})")
+        dest.query(f"CREATE (:Function {{name: 'ghost', {MIGRATION_KEY}: 999}})")
+        dest.clear()
+
+        stats = copy_graph(source, dest)
+        assert stats["edges"] == source.edge_count()
+
+    def test_no_transfer_index_is_left_behind(self, source, dest):
+        seed(source)
+        copy_graph(source, dest)
+        rows = dest.query("CALL db.indexes()").result_set or []
+        leftover = [
+            r
+            for r in rows
+            if isinstance(r[1], (list, tuple)) and MIGRATION_KEY in [str(p) for p in r[1]]
+        ]
+        assert leftover == []
+
+
 class TestSafety:
     @pytest.mark.parametrize(
         "bad",
