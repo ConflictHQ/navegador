@@ -257,6 +257,14 @@ def init(
     "paths or single path components; a repo-root .navignore is honored too.",
 )
 @click.option(
+    "--no-content",
+    "no_content",
+    is_flag=True,
+    help="Do not keep file text in the content store. Content is addressed by "
+    "hash, so unchanged files and vendored copies cost nothing to keep — but "
+    "without it lexical search has no corpus to match against.",
+)
+@click.option(
     "--no-gitignore",
     "no_gitignore",
     is_flag=True,
@@ -277,6 +285,7 @@ def ingest(
     monorepo: bool,
     repo_key: str,
     excludes: tuple[str, ...],
+    no_content: bool,
     no_gitignore: bool,
 ):
     """Ingest a repository's code into the graph (AST + call graph)."""
@@ -308,6 +317,7 @@ def ingest(
         redact=redact,
         exclude=list(excludes),
         respect_gitignore=not no_gitignore,
+        store_content=not no_content,
     )
 
     if watch:
