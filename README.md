@@ -142,20 +142,59 @@ navegador planopticon ingest ./meeting-output/
 
 | Mode | Backend | When to use |
 |------|---------|-------------|
-| Default | `falkordblite` (embedded FalkorDB) | Local dev, zero infrastructure |
-| Production | Redis + FalkorDB module | Shared deployments, agent swarms |
+| Default | `falkordblite` (embedded FalkorDB) | One repo, one developer, zero infrastructure |
+| Shared | Redis + FalkorDB module | Many repos, CI, agent swarms |
 
 ```python
 from navegador.graph import GraphStore
 
-store = GraphStore.sqlite(".navegador/graph.db")   # default
-store = GraphStore.redis("redis://localhost:6379")  # production
+store = GraphStore.sqlite(".navegador/graph.db")    # embedded
+store = GraphStore.redis("redis://localhost:6379")  # shared server
 ```
+
+Navegador resolves the backend from layered configuration — `--db`/`--redis-url`,
+then `NAVEGADOR_REDIS_URL`/`NAVEGADOR_DB`, then the project's
+`.navegador/config.toml`, then `~/.config/navegador/config.toml`, then the
+embedded default. `navegador doctor` prints which layer decided and whether the
+result actually works.
 
 > **Note:** `.navegador/graph.db` is a FalkorDB (Redis) RDB snapshot, **not** a SQLite
 > database — `sqlite3` cannot open it. The `sqlite` name refers to the embedded,
 > single-file mode provided by `falkordblite`. Inspect the graph with `navegador`
 > (e.g. `navegador query`), not with SQLite tooling.
+
+### A shared server, without Docker
+
+Once you work across several repos — or run more than one agent — a single
+resident graph beats every process re-reading its own copy from disk:
+
+```bash
+navegador server install     # official FalkorDB module + service, no Docker
+navegador server status      # version, memory, resident graphs
+```
+
+`install` also writes `~/.config/navegador/config.toml`, so every project uses
+the shared server unless it configures otherwise. Existing local graphs move
+across without re-ingesting, verified on both sides:
+
+```bash
+navegador scan ~/repos                            # what exists, and what is stranded
+navegador storage migrate --all --root ~/repos    # copy it all into the server
+```
+
+---
+
+## Offline documentation
+
+The full documentation ships inside the package — no network, no mkdocs:
+
+```bash
+navegador manual                       # list every page
+navegador manual quickstart            # read one
+navegador manual --search "redis"      # search all of them
+```
+
+Agents get the same pages through the `read_docs` MCP tool.
 
 ---
 

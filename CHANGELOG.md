@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+### Storage configuration
+
+- **`[storage]` in `config.toml` is finally read** — `navegador init` wrote `backend = "redis"` and nothing anywhere consumed it. Storage resolved only from `--db`, `NAVEGADOR_REDIS_URL` and `NAVEGADOR_DB`, so a project configured for a shared server silently ingested into its own local file: the command reported success, the data was real, and every reader disagreed (#169)
+- **Layered resolution with provenance** — `resolve_storage()` orders explicit flags → environment → project `.navegador/config.toml` → user `~/.config/navegador/config.toml` → embedded default, and every result carries the layer that produced it. `StorageConfig.describe()` renders it, so commands can name their backend instead of leaving the user to infer it
+- **Configuration is found from the target, not the working directory** — `ingest`, `submodules ingest` and `workspace ingest` resolve against the repo they were given. Naming a repo from a directory with no config previously fell through to an embedded store on a temp socket and exited with a `redis-py` stack trace (#170)
+- **A relative `db_path` is anchored to the project root**, so running from a subdirectory opens the same graph rather than creating a second one
+- **Unreachable backends explain themselves** — `StorageResolutionError` names the backend, the config file that selected it, and the next command to run
+- **Machine-wide default** via `~/.config/navegador/config.toml`, for developers who want one shared graph across every project
+
+### Native FalkorDB server
+
+- **`navegador server install|start|stop|restart|status|uninstall`** — installs the official prebuilt FalkorDB module for the platform, writes a tuned `redis.conf`, and registers a launchd (macOS) or systemd user (Linux) service. No Docker, nothing compiled locally
+- **`noeviction` is enforced** — under any eviction policy Redis discards part of a graph rather than shedding cache, so a memory-pressured server would silently start answering incomplete queries
+- **`status` distinguishes a plain Redis from a FalkorDB** — the former answers `PING` and then fails every graph query, which is otherwise a very confusing state to debug
+
+### Migration
+
+- **`navegador storage migrate`** copies embedded graphs into a shared server, one project or a whole tree, with `--dry-run` and `--prune`. Node and edge counts are compared on both sides and a mismatch raises rather than reporting success
+- **Endpoint identity is exact** — each node is stamped with its source-internal id and edges are reconnected by it, instead of the ambiguous `(name, path)` merge keys used by the JSONL export path (#173)
+- **Consolidating servers refuses to clobber** — two servers each have an unnamespaced `navegador` graph; copying both would leave only the last. Destination graphs holding data are refused unless renamed with `--default-as` or permitted with `--overwrite`
+- **`GraphStore.query` accepts a per-query `timeout`** — servers ship a short interactive default (the official FalkorDB image sets `TIMEOUT 1000`) that a bulk read over a large graph exceeds partway through
+- **Bulk reads page by internal id, not `SKIP`/`LIMIT`** — a deep `SKIP` re-scans and re-sorts everything it skips, so page cost grew with offset. On a 738k-node graph, one page at offset 600k took 1074 ms by `SKIP` and 202 ms by id
+
+### Diagnostics
+
+- **`navegador doctor`** reports the resolved backend, which config file chose it, whether the server is reachable and usable, and whether the project holds local data while declaring a shared backend
+- **`navegador scan <root>`** inventories every project under a tree, flags the ones ingesting where nothing reads, and recommends a shared server with its reasons
+
+### Documentation
+
+- **Docs ship inside the wheel** — `docs/` moved to `navegador/docs/` and is declared as package data; mkdocs builds from there and the published site is unchanged
+- **`navegador manual`** lists, reads, and searches the documentation offline, with no network and no mkdocs install
+- **`read_docs` MCP tool** serves the same pages to agents, answered before the graph store is opened so it works even when the backend is misconfigured
+- **Corrected `NAVEGADOR_DB=redis://…`** — documented since the beginning and never functional; that variable is a filesystem path, and a URL in it was treated as a filename. The configuration guide now documents the real resolution order
+
+### MCP
+
+- **Read-only mode is discoverable before the call** — write tools are omitted from the advertised schema instead of being advertised and then refused, and `graph_stats` reports `read_only` (#171)
+- **Empty is distinguishable from never-ingested** — `graph_stats` and `list_repos` report an ingest `status`, so a registered-but-empty namespace is labelled rather than answering like a repo with no matching code. `list_repos` now returns objects rather than bare names (#171)
+
 ## 1.4.1 — 2026-07-27
 
 Distribution fixes. No functional changes to the library, CLI or graph engine.

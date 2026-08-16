@@ -10,11 +10,11 @@ An agent given this document and a business requirement should be able to genera
 
 | Layer | What's there |
 |-------|-------------|
-| Graph store | `navegador/graph/` — GraphStore + schema + queries + migrations + export + conflict-kg/v1 interchange, backed by FalkorDB |
+| Graph store | `navegador/graph/` — GraphStore + schema + queries + migrations + export + conflict-kg/v1 interchange + `transfer.py` (lossless store-to-store copy), backed by FalkorDB |
 | Federation | `navegador/federation.py` — SuperGraphAggregator: roll repo-local graphs into a central super-graph (namespacing, knowledge dedup) |
 | Ingestion | `navegador/ingestion/` — RepoIngester + 13 tree-sitter language parsers + optimization |
 | Context | `navegador/context/` — ContextLoader + ContextBundle (JSON/markdown output) |
-| MCP server | `navegador/mcp/` — 24 tools + security hardening, via the `mcp` Python SDK |
+| MCP server | `navegador/mcp/` — 25 tools + security hardening, via the `mcp` Python SDK |
 | CLI | `navegador/cli/` — Click + Rich, 50+ subcommands, entry point `navegador` |
 | Enrichment | `navegador/enrichment/` — FrameworkEnricher base + 8 framework enrichers, auto-discovered via `pkgutil` |
 | Analysis | `navegador/analysis/` — impact, flow tracing, dead code, cycles, test mapping |
@@ -26,7 +26,11 @@ An agent given this document and a business requirement should be able to genera
 | Monorepo | `navegador/monorepo.py` — workspace detection + ingestion |
 | Security | `navegador/security.py` — sensitive content detection + redaction |
 | Explorer | `navegador/explorer/` — HTTP server + browser-based graph visualization |
-| Docs | `docs/` + `mkdocs.yml` — mkdocs-material, deployed to navegador.dev |
+| Storage config | `navegador/config.py` — layered resolution (flags → env → project config → user config → default) with provenance |
+| Server | `navegador/server.py` — native FalkorDB install/start/stop/status (launchd/systemd), no Docker |
+| Inventory | `navegador/inventory.py` — find projects on a machine, flag ones ingesting where nothing reads |
+| Manual | `navegador/manual.py` — the packaged docs, readable offline and over MCP |
+| Docs | `navegador/docs/` + `mkdocs.yml` — mkdocs-material, ships in the wheel, deployed to navegador.dev |
 
 Stack: **Python 3.12+**, standalone (no Django). tree-sitter for AST parsing, FalkorDB property graph, Pydantic models, Click + Rich CLI, Ruff for lint/format.
 
@@ -35,14 +39,34 @@ Stack: **Python 3.12+**, standalone (no Django). tree-sitter for AST parsing, Fa
 ## FalkorDB Connection
 
 ```python
-# Embedded (local, zero-infra) — uses falkordblite; graph file is an RDB snapshot, not SQLite
-from redislite import FalkorDB   # falkordblite provides this
-db = FalkorDB("path/to/graph.db")
-graph = db.select_graph("navegador")
+# Never construct a store directly in command code — resolve it, so project and
+# user configuration are honoured and the choice can be explained.
+from navegador.config import get_store, resolve_storage
 
-# Redis (production)
-import falkordb
-client = falkordb.FalkorDB.from_url("redis://localhost:6379")
+store = get_store(target="/path/to/repo")        # honours the full config chain
+print(resolve_storage(target="/path/to/repo").describe())
+
+# The two backends underneath:
+from navegador.graph import GraphStore
+store = GraphStore.sqlite("path/to/graph.db")     # embedded (falkordblite)
+store = GraphStore.redis("redis://localhost:6379")  # shared FalkorDB server
+```
+
+Storage resolves in this order — first decision wins, and `StorageConfig.source`
+records which one it was:
+
+1. `--db` / `--redis-url`
+2. `NAVEGADOR_REDIS_URL` / `NAVEGADOR_DB`
+3. project `.navegador/config.toml` `[storage]`, found by walking up from the
+   **target** path being operated on, not the current directory
+4. user `~/.config/navegador/config.toml` `[storage]`
+5. embedded default at `.navegador/graph.db`
+
+Any CLI command that takes a repo path must pass it as `target` so the right
+project's configuration is used:
+
+```python
+store, storage = _open_store(db, target=repo_path)
 ```
 
 ---
