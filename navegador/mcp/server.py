@@ -93,6 +93,53 @@ def create_mcp_server(store_factory, read_only: bool = False):
                 },
             ),
             Tool(
+                name="resolve_address",
+                description=(
+                    "Resolve a supergraph contract address into the code graph and "
+                    "return the node plus its immediate neighbourhood. This is the "
+                    "brain-to-code hop: given the target of an `implemented_in` join "
+                    "edge, it returns the entry point from which traversal continues "
+                    "(callers, callees, containing file). Addresses look like "
+                    "`[<repo>/]code:<path>[#<symbol>]`."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "address": {
+                            "type": "string",
+                            "description": (
+                                "Contract address, e.g. `myrepo/code:src/auth.py#validate_token`."
+                            ),
+                        },
+                    },
+                    "required": ["address"],
+                },
+            ),
+            Tool(
+                name="propose_join_edges",
+                description=(
+                    "Propose supergraph join edges from inferred documentation-to-code "
+                    "affinity, in contract format with confidence and evidence. "
+                    "Navegador proposes; the brain reviews and decides what to commit. "
+                    "Targets are code-realm addresses."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repo": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Federation namespace to qualify targets with.",
+                        },
+                        "min_confidence": {
+                            "type": "number",
+                            "default": 0.5,
+                            "description": "Drop proposals scoring below this.",
+                        },
+                    },
+                },
+            ),
+            Tool(
                 name="load_file_context",
                 description="Return all symbols (functions, classes, imports) in a file.",
                 inputSchema={
@@ -664,6 +711,42 @@ def create_mcp_server(store_factory, read_only: bool = False):
             return [t for t in tools if t.name not in WRITE_TOOLS]
         return tools
 
+    def _neighbourhood(store, resolved) -> dict:
+        """
+        One hop out from a resolved node, so a brain-side traversal that just
+        crossed a join edge can keep going without a second round trip.
+        """
+        try:
+            callers = (
+                store.query(
+                    "MATCH (a)-[:CALLS]->(b {name: $name, file_path: $path}) "
+                    "RETURN labels(a)[0], a.name, coalesce(a.file_path, '') LIMIT 25",
+                    {"name": resolved.name, "path": resolved.path},
+                ).result_set
+                or []
+            )
+            callees = (
+                store.query(
+                    "MATCH (a {name: $name, file_path: $path})-[:CALLS]->(b) "
+                    "RETURN labels(b)[0], b.name, coalesce(b.file_path, '') LIMIT 25",
+                    {"name": resolved.name, "path": resolved.path},
+                ).result_set
+                or []
+            )
+        except Exception:  # noqa: BLE001 — a partial answer beats no answer
+            callers, callees = [], []
+
+        from navegador.contract import address_for_node
+
+        def entries(rows):
+            out = []
+            for row in rows:
+                address = address_for_node(row[0] or "", row[1] or "", row[2] or "")
+                out.append({"name": row[1], "label": row[0], "address": address})
+            return out
+
+        return {"callers": entries(callers), "callees": entries(callees)}
+
     def _ingest_status(store, repo: str = "") -> dict:
         """
         Tell "empty" apart from "never ingested" (#171).
@@ -730,7 +813,36 @@ def create_mcp_server(store_factory, read_only: bool = False):
 
         loader = _get_loader()
 
-        if name == "ingest_repo":
+        if name == "resolve_address":
+            from navegador.contract import AddressError, resolve
+
+            try:
+                resolved = resolve(loader.store, arguments["address"])
+            except AddressError as exc:
+                return [TextContent(type="text", text=f"Error: {exc}")]
+
+            payload = resolved.to_dict()
+            if resolved.found:
+                payload["neighbourhood"] = _neighbourhood(loader.store, resolved)
+            else:
+                payload["hint"] = (
+                    "No node at that address. The repo may not be ingested, or the "
+                    "path may be recorded relative to a different root — check "
+                    "list_repos and graph_stats."
+                )
+            return [TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
+
+        elif name == "propose_join_edges":
+            from navegador.contract import propose_join_edges
+
+            payload = propose_join_edges(
+                loader.store,
+                repo=arguments.get("repo", ""),
+                min_confidence=arguments.get("min_confidence", 0.5),
+            )
+            return [TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
+
+        elif name == "ingest_repo":
             if read_only:
                 return [
                     TextContent(
@@ -772,8 +884,18 @@ def create_mcp_server(store_factory, read_only: bool = False):
                 limit=arguments.get("limit", 20),
                 repo=arguments.get("repo", ""),
             )
-            lines = [f"- **{r.type}** `{r.name}` — `{r.file_path}`:{r.line_start}" for r in results]
-            return [TextContent(type="text", text="\n".join(lines) or "No results.")]
+            # Each hit carries its contract address so a brain can record an
+            # `implemented_in` join edge pointing straight back at it (#158).
+            from navegador.contract import address_for_node
+
+            repo = arguments.get("repo", "")
+            lines = []
+            for r in results:
+                address = address_for_node(r.type, r.name, r.file_path, repo=repo)
+                suffix = f"  `{address}`" if address else ""
+                lines.append(f"- **{r.type}** `{r.name}` — `{r.file_path}`:{r.line_start}{suffix}")
+            body = "\n".join(lines) or "No results."
+            return [TextContent(type="text", text=body)]
 
         elif name == "query_graph":
             cypher = arguments["cypher"]

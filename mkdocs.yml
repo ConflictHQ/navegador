@@ -91,6 +91,7 @@ nav:
       - Python SDK: guide/sdk.md
       - Graph Queries: guide/graph-queries.md
       - MCP Integration: guide/mcp-integration.md
+      - Supergraph Contract: guide/supergraph-contract.md
       - CI/CD: guide/ci-cd.md
       - Cluster Mode: guide/cluster.md
       - Agent Hooks: guide/agent-hooks.md

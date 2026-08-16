@@ -81,9 +81,7 @@ def _get_llm(llm_provider: str, llm_model: str, target: str | None = None):
             return get_provider(config.provider, model=config.model)
         return auto_provider(model=config.model)
     except (RuntimeError, ValueError, ImportError) as e:
-        raise click.ClickException(
-            f"Cannot use LLM provider {config.describe()}.\n{e}"
-        ) from e
+        raise click.ClickException(f"Cannot use LLM provider {config.describe()}.\n{e}") from e
 
 
 def _emit(text: str, fmt: str) -> None:
@@ -4455,6 +4453,106 @@ def _migrate_server(
     except Exception as e:  # noqa: BLE001
         return {**result, "status": "failed", "error": str(e)}
     return result
+
+
+# ── Supergraph contract v1.0 (#158) ──────────────────────────────────────────
+
+
+@main.group()
+def contract():
+    """Supergraph interop contract — the code realm's output boundary."""
+
+
+@contract.command("resolve")
+@click.argument("address")
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True)
+def contract_resolve(address: str, db: str, as_json: bool):
+    """Resolve a contract ADDRESS into the code graph.
+
+    \b
+    This is the brain-to-code hop: given the target of an `implemented_in` join
+    edge, it returns the node and the callers/callees traversal continues to.
+
+    \b
+    Examples:
+      navegador contract resolve "code:src/auth.py#validate_token"
+      navegador contract resolve "myrepo/code:src/auth.py"
+    """
+    from navegador.contract import AddressError, resolve
+
+    store = _get_store(db)
+    try:
+        resolved = resolve(store, address)
+    except AddressError as e:
+        raise click.ClickException(str(e)) from e
+
+    if as_json:
+        click.echo(json.dumps(resolved.to_dict(), indent=2, default=str))
+        raise SystemExit(0 if resolved.found else 1)
+
+    if not resolved.found:
+        console.print(f"[yellow]No node at[/yellow] {resolved.address}")
+        console.print(
+            "  The repo may not be ingested, or its paths may be recorded "
+            "relative to a different root. Check: [cyan]navegador repo nodes[/cyan]"
+        )
+        raise SystemExit(1)
+
+    console.print(f"[green]{resolved.label}[/green] {resolved.name}")
+    console.print(f"  address: {resolved.address}")
+    console.print(f"  path:    {resolved.path}")
+
+
+@contract.command("propose")
+@click.option("--repo", default="", help="Federation namespace to qualify targets with.")
+@click.option(
+    "--min-confidence",
+    default=0.5,
+    show_default=True,
+    help="Drop proposals scoring below this.",
+)
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True)
+def contract_propose(repo: str, min_confidence: float, db: str, as_json: bool):
+    """Propose join edges from inferred documentation-to-code affinity.
+
+    \b
+    Emits contract-format `implemented_in` proposals with confidence and
+    evidence. Navegador proposes; the brain reviews and decides what to commit.
+
+    \b
+    Examples:
+      navegador contract propose --repo myrepo --json
+      navegador contract propose --min-confidence 0.8
+    """
+    from navegador.contract import propose_join_edges
+
+    payload = propose_join_edges(_get_store(db), repo=repo, min_confidence=min_confidence)
+
+    if as_json:
+        click.echo(json.dumps(payload, indent=2, default=str))
+        return
+
+    proposals = payload["proposals"]
+    if not proposals:
+        console.print("No join edges to propose above that confidence.")
+        return
+
+    table = Table(title=f"{len(proposals)} join-edge proposal(s), contract {payload['contract']}")
+    table.add_column("Source", style="cyan", overflow="fold")
+    table.add_column("Edge")
+    table.add_column("Target address", overflow="fold")
+    table.add_column("Conf.", justify="right")
+    for item in proposals:
+        table.add_row(
+            f"{item['source']['kind']}:{item['source']['name']}",
+            item["edge"],
+            item["target"],
+            f"{item['confidence']:.2f}",
+        )
+    console.print(table)
+    console.print("\nReview and commit these in the brain — navegador only proposes.")
 
 
 # ── Manual: documentation packaged with the CLI (#172) ───────────────────────
