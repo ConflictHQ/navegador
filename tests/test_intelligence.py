@@ -14,6 +14,7 @@ All LLM providers are mocked — no real API calls are made.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from unittest.mock import MagicMock, patch
@@ -22,6 +23,7 @@ import pytest
 from click.testing import CliRunner
 
 from navegador.cli.commands import main
+from navegador.graph import GraphStore
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -47,169 +49,162 @@ def _mock_provider(complete_return="mocked answer", embed_return=None):
     return provider
 
 
-# ── SemanticSearch: _cosine_similarity ────────────────────────────────────────
+# ── SemanticSearch ────────────────────────────────────────────────────────────
+#
+# These run against a real embedded store and a real vector index. The previous
+# versions mocked the store and asserted the old implementation's internals —
+# JSON-encoded vectors and a Python cosine loop — so they could not survive
+# moving the k-NN search into the database (#182), and would not have noticed
+# if it returned nothing.
 
 
-class TestCosineSimilarity:
-    def setup_method(self):
-        from navegador.intelligence.search import SemanticSearch
+class DeterministicProvider:
+    """
+    A real embedding function with no network: hash tokens into buckets.
 
-        self.cls = SemanticSearch
+    Similar text lands in overlapping buckets, so ranking is meaningful and
+    reproducible without an API key or a recorded fixture.
+    """
 
-    def test_identical_vectors_return_one(self):
-        v = [1.0, 0.0, 0.0]
-        assert self.cls._cosine_similarity(v, v) == pytest.approx(1.0)
+    def __init__(self, dimension: int = 16) -> None:
+        self.dimension = dimension
+        self.calls = 0
 
-    def test_orthogonal_vectors_return_zero(self):
-        a = [1.0, 0.0]
-        b = [0.0, 1.0]
-        assert self.cls._cosine_similarity(a, b) == pytest.approx(0.0)
-
-    def test_opposite_vectors_return_minus_one(self):
-        a = [1.0, 0.0]
-        b = [-1.0, 0.0]
-        assert self.cls._cosine_similarity(a, b) == pytest.approx(-1.0)
-
-    def test_zero_vector_returns_zero(self):
-        a = [0.0, 0.0]
-        b = [1.0, 2.0]
-        assert self.cls._cosine_similarity(a, b) == 0.0
-
-    def test_different_length_vectors_return_zero(self):
-        a = [1.0, 2.0]
-        b = [1.0, 2.0, 3.0]
-        assert self.cls._cosine_similarity(a, b) == 0.0
-
-    def test_known_similarity(self):
-        a = [1.0, 1.0]
-        b = [1.0, 0.0]
-        # cos(45°) = 1/sqrt(2)
-        expected = 1.0 / math.sqrt(2)
-        assert self.cls._cosine_similarity(a, b) == pytest.approx(expected, abs=1e-6)
-
-    def test_general_non_unit_vectors(self):
-        a = [3.0, 4.0]
-        b = [3.0, 4.0]
-        # Same direction → 1.0 regardless of magnitude
-        assert self.cls._cosine_similarity(a, b) == pytest.approx(1.0)
+    def embed(self, text: str) -> list[float]:
+        self.calls += 1
+        vector = [0.0] * self.dimension
+        for token in text.lower().replace("_", " ").replace("—", " ").split():
+            vector[int(hashlib.md5(token.encode()).hexdigest(), 16) % self.dimension] += 1.0
+        norm = math.sqrt(sum(v * v for v in vector)) or 1.0
+        return [v / norm for v in vector]
 
 
-# ── SemanticSearch: index ─────────────────────────────────────────────────────
+@pytest.fixture
+def store(tmp_path):
+    return GraphStore.sqlite(str(tmp_path / "g.db"))
+
+
+@pytest.fixture
+def populated(store):
+    store.query(
+        "CREATE (:Function {name:'validate_jwt_token', file_path:'auth.py', "
+        "docstring:'verify a signed token'})"
+    )
+    store.query(
+        "CREATE (:Function {name:'render_template', file_path:'views.py', "
+        "docstring:'produce html output'})"
+    )
+    store.query(
+        "CREATE (:Class {name:'TokenValidator', file_path:'auth.py', docstring:'validates tokens'})"
+    )
+    return store
 
 
 class TestSemanticSearchIndex:
-    def test_index_embeds_and_stores(self):
+    def test_index_embeds_every_labelled_node(self, populated):
         from navegador.intelligence.search import SemanticSearch
 
-        rows = [
-            ["Function", "my_func", "app.py", "Does something important"],
-            ["Class", "MyClass", "app.py", "A useful class"],
-        ]
-        store = _mock_store(rows)
-        provider = _mock_provider(embed_return=[0.1, 0.2, 0.3])
+        provider = DeterministicProvider()
+        assert SemanticSearch(populated, provider).index() == 3
+        assert provider.calls == 3
 
-        ss = SemanticSearch(store, provider)
-        count = ss.index(limit=10)
-
-        assert count == 2
-        # embed called once per node
-        assert provider.embed.call_count == 2
-        # SET query called for each node
-        assert store.query.call_count >= 3  # 1 fetch + 2 set
-
-    def test_index_skips_nodes_without_text(self):
+    def test_reindexing_unchanged_content_embeds_nothing(self, populated):
+        """
+        The old index() re-embedded everything on every call, re-paying the
+        whole bill to learn nothing had changed.
+        """
         from navegador.intelligence.search import SemanticSearch
 
-        rows = [
-            ["Function", "no_doc", "app.py", ""],  # empty text
-            ["Class", "HasDoc", "app.py", "Some docstring"],
-        ]
-        store = _mock_store(rows)
-        provider = _mock_provider(embed_return=[0.1, 0.2])
-
-        ss = SemanticSearch(store, provider)
-        count = ss.index()
-
-        assert count == 1  # only the node with text
-        assert provider.embed.call_count == 1
-
-    def test_index_returns_zero_for_empty_graph(self):
-        from navegador.intelligence.search import SemanticSearch
-
-        store = _mock_store([])
-        provider = _mock_provider()
-        ss = SemanticSearch(store, provider)
+        ss = SemanticSearch(populated, DeterministicProvider())
+        ss.index()
         assert ss.index() == 0
-        provider.embed.assert_not_called()
 
-
-# ── SemanticSearch: search ────────────────────────────────────────────────────
-
-
-class TestSemanticSearchSearch:
-    def test_search_returns_sorted_results(self):
+    def test_changed_content_is_re_embedded(self, populated):
         from navegador.intelligence.search import SemanticSearch
 
-        # Two nodes with known embeddings
-        # Node A: parallel to query → similarity 1.0
-        # Node B: orthogonal to query → similarity 0.0
-        query_vec = [1.0, 0.0]
-        node_a_vec = [1.0, 0.0]  # sim = 1.0
-        node_b_vec = [0.0, 1.0]  # sim = 0.0
+        ss = SemanticSearch(populated, DeterministicProvider())
+        ss.index()
+        populated.query(
+            "MATCH (n:Function {name:'render_template'}) SET n.docstring = 'now does something else'"
+        )
+        assert ss.index() == 1
 
-        rows = [
-            ["Function", "node_a", "a.py", "doc a", json.dumps(node_a_vec)],
-            ["Class", "node_b", "b.py", "doc b", json.dumps(node_b_vec)],
-        ]
-        store = _mock_store(rows)
-        provider = _mock_provider(embed_return=query_vec)
-
-        ss = SemanticSearch(store, provider)
-        results = ss.search("find something", limit=10)
-
-        assert len(results) == 2
-        assert results[0]["name"] == "node_a"
-        assert results[0]["score"] == pytest.approx(1.0)
-        assert results[1]["name"] == "node_b"
-        assert results[1]["score"] == pytest.approx(0.0)
-
-    def test_search_respects_limit(self):
+    def test_nodes_without_a_docstring_are_still_indexed(self, store):
+        """
+        Only docstring-bearing nodes used to be embeddable, which made most
+        real functions invisible. A name carries meaning on its own.
+        """
         from navegador.intelligence.search import SemanticSearch
 
-        rows = [
-            ["Function", f"func_{i}", "app.py", f"doc {i}", json.dumps([float(i), 0.0])]
-            for i in range(1, 6)
-        ]
-        store = _mock_store(rows)
-        provider = _mock_provider(embed_return=[1.0, 0.0])
+        store.query("CREATE (:Function {name:'parse_import_statement', file_path:'p.py'})")
+        assert SemanticSearch(store, DeterministicProvider()).index() == 1
 
-        ss = SemanticSearch(store, provider)
-        results = ss.search("query", limit=3)
-        assert len(results) == 3
-
-    def test_search_handles_invalid_embedding_json(self):
+    def test_index_returns_zero_for_empty_graph(self, store):
         from navegador.intelligence.search import SemanticSearch
 
-        rows = [
-            ["Function", "bad_node", "app.py", "doc", "not-valid-json"],
-            ["Function", "good_node", "app.py", "doc", json.dumps([1.0, 0.0])],
-        ]
-        store = _mock_store(rows)
-        provider = _mock_provider(embed_return=[1.0, 0.0])
+        provider = DeterministicProvider()
+        assert SemanticSearch(store, provider).index() == 0
+        assert provider.calls == 0
 
-        ss = SemanticSearch(store, provider)
-        results = ss.search("q", limit=10)
-        # Only good_node should appear
-        assert len(results) == 1
-        assert results[0]["name"] == "good_node"
-
-    def test_search_empty_graph_returns_empty_list(self):
+    def test_limit_is_honoured(self, populated):
         from navegador.intelligence.search import SemanticSearch
 
-        store = _mock_store([])
-        provider = _mock_provider()
-        ss = SemanticSearch(store, provider)
-        assert ss.search("anything") == []
+        assert SemanticSearch(populated, DeterministicProvider()).index(limit=2) == 2
+
+
+class TestSemanticSearchQuery:
+    def test_nearest_match_ranks_first(self, populated):
+        from navegador.intelligence.search import SemanticSearch
+
+        ss = SemanticSearch(populated, DeterministicProvider())
+        ss.index()
+        results = ss.search("validate token", limit=3)
+
+        assert results, "vector index returned nothing"
+        assert results[0]["name"] == "validate_jwt_token"
+
+    def test_results_are_sorted_by_descending_score(self, populated):
+        """
+        The index returns cosine *distance*, where lower is nearer. Passing
+        that through unchanged would invert every ranking.
+        """
+        from navegador.intelligence.search import SemanticSearch
+
+        ss = SemanticSearch(populated, DeterministicProvider())
+        ss.index()
+        scores = [r["score"] for r in ss.search("validate token", limit=5)]
+        assert scores == sorted(scores, reverse=True)
+        assert all(0.0 <= s <= 1.0 for s in scores)
+
+    def test_limit_is_respected(self, populated):
+        from navegador.intelligence.search import SemanticSearch
+
+        ss = SemanticSearch(populated, DeterministicProvider())
+        ss.index()
+        assert len(ss.search("token", limit=2)) <= 2
+
+    def test_results_span_labels(self, populated):
+        """
+        A FalkorDB node pattern takes one label and an index is per label, so
+        the query fans out; a bug there silently drops whole node types.
+        """
+        from navegador.intelligence.search import SemanticSearch
+
+        ss = SemanticSearch(populated, DeterministicProvider())
+        ss.index()
+        types = {r["type"] for r in ss.search("token validation", limit=10)}
+        assert "Class" in types and "Function" in types
+
+    def test_search_before_indexing_returns_empty(self, populated):
+        """No index yet is not an error — it is simply no answer."""
+        from navegador.intelligence.search import SemanticSearch
+
+        assert SemanticSearch(populated, DeterministicProvider()).search("anything") == []
+
+    def test_search_empty_graph_returns_empty_list(self, store):
+        from navegador.intelligence.search import SemanticSearch
+
+        assert SemanticSearch(store, DeterministicProvider()).search("anything") == []
 
 
 # ── CommunityDetector ─────────────────────────────────────────────────────────
@@ -249,8 +244,10 @@ class TestCommunityDetector:
             [4, "func_e", "b.py", "Function"],
         ]
         edge_rows = [
-            [0, 1], [1, 2], [0, 2],  # triangle
-            [3, 4],                  # pair
+            [0, 1],
+            [1, 2],
+            [0, 2],  # triangle
+            [3, 4],  # pair
         ]
         store = self._make_store(node_rows, edge_rows)
         detector = CommunityDetector(store)
@@ -343,12 +340,19 @@ class TestCommunityDetector:
         # 4-node clique + 2-node pair with a bridge → label propagation may merge
         # Use two fully disconnected groups of sizes 4 and 2
         node_rows = [
-            [0, "a", "", "F"], [1, "b", "", "F"], [2, "c", "", "F"], [3, "d", "", "F"],
-            [4, "e", "", "F"], [5, "f", "", "F"],
+            [0, "a", "", "F"],
+            [1, "b", "", "F"],
+            [2, "c", "", "F"],
+            [3, "d", "", "F"],
+            [4, "e", "", "F"],
+            [5, "f", "", "F"],
         ]
         edge_rows = [
-            [0, 1], [1, 2], [2, 3], [0, 3],  # 4-cycle (all same community)
-            [4, 5],                            # pair
+            [0, 1],
+            [1, 2],
+            [2, 3],
+            [0, 3],  # 4-cycle (all same community)
+            [4, 5],  # pair
         ]
         store = self._make_store(node_rows, edge_rows)
         detector = CommunityDetector(store)
@@ -445,12 +449,16 @@ class TestNLPEngine:
         from navegador.intelligence.nlp import NLPEngine
 
         expected_docs = "## my_func\nDoes great things."
-        store = _mock_store([
-            ["Function", "my_func", "app.py", "Does great things.", "def my_func():"]
-        ])
+        store = _mock_store(
+            [["Function", "my_func", "app.py", "Does great things.", "def my_func():"]]
+        )
         # Make subsequent query calls (callers, callees) also return empty
         store.query.side_effect = [
-            MagicMock(result_set=[["Function", "my_func", "app.py", "Does great things.", "def my_func():"]]),
+            MagicMock(
+                result_set=[
+                    ["Function", "my_func", "app.py", "Does great things.", "def my_func():"]
+                ]
+            ),
             MagicMock(result_set=[]),
             MagicMock(result_set=[]),
         ]
@@ -612,8 +620,10 @@ class TestDocGeneratorLLMMode:
 class TestSemanticSearchCLI:
     def test_search_outputs_table(self):
         runner = CliRunner()
-        with patch("navegador.cli.commands._get_store") as mock_store_fn, \
-             patch("navegador.llm.auto_provider") as mock_auto:
+        with (
+            patch("navegador.cli.commands._get_store") as mock_store_fn,
+            patch("navegador.llm.auto_provider") as mock_auto,
+        ):
             store = _mock_store([])
             mock_store_fn.return_value = store
             mock_provider = _mock_provider(embed_return=[1.0, 0.0])
@@ -621,22 +631,28 @@ class TestSemanticSearchCLI:
 
             # search returns no results
             from navegador.intelligence.search import SemanticSearch
+
             with patch.object(SemanticSearch, "search", return_value=[]):
                 result = runner.invoke(main, ["semantic-search", "test query"])
                 assert result.exit_code == 0
 
     def test_search_with_index_flag(self):
         runner = CliRunner()
-        with patch("navegador.cli.commands._get_store") as mock_store_fn, \
-             patch("navegador.llm.auto_provider") as mock_auto:
+        with (
+            patch("navegador.cli.commands._get_store") as mock_store_fn,
+            patch("navegador.llm.auto_provider") as mock_auto,
+        ):
             store = _mock_store([])
             mock_store_fn.return_value = store
             mock_provider = _mock_provider()
             mock_auto.return_value = mock_provider
 
             from navegador.intelligence.search import SemanticSearch
-            with patch.object(SemanticSearch, "index", return_value=5) as mock_index, \
-                 patch.object(SemanticSearch, "search", return_value=[]):
+
+            with (
+                patch.object(SemanticSearch, "index", return_value=5) as mock_index,
+                patch.object(SemanticSearch, "search", return_value=[]),
+            ):
                 result = runner.invoke(main, ["semantic-search", "test", "--index"])
                 assert result.exit_code == 0
                 mock_index.assert_called_once()
@@ -646,13 +662,16 @@ class TestSemanticSearchCLI:
         fake_results = [
             {"type": "Function", "name": "foo", "file_path": "a.py", "text": "doc", "score": 0.95}
         ]
-        with patch("navegador.cli.commands._get_store") as mock_store_fn, \
-             patch("navegador.llm.auto_provider") as mock_auto:
+        with (
+            patch("navegador.cli.commands._get_store") as mock_store_fn,
+            patch("navegador.llm.auto_provider") as mock_auto,
+        ):
             store = _mock_store([])
             mock_store_fn.return_value = store
             mock_auto.return_value = _mock_provider()
 
             from navegador.intelligence.search import SemanticSearch
+
             with patch.object(SemanticSearch, "search", return_value=fake_results):
                 result = runner.invoke(main, ["semantic-search", "foo", "--json"])
                 assert result.exit_code == 0
@@ -678,6 +697,7 @@ class TestCommunitiesCLI:
         with patch("navegador.cli.commands._get_store") as mock_store_fn:
             mock_store_fn.return_value = _mock_store()
             from navegador.intelligence.community import CommunityDetector
+
             with patch.object(CommunityDetector, "detect", return_value=self._make_communities()):
                 result = runner.invoke(main, ["communities"])
                 assert result.exit_code == 0
@@ -687,6 +707,7 @@ class TestCommunitiesCLI:
         with patch("navegador.cli.commands._get_store") as mock_store_fn:
             mock_store_fn.return_value = _mock_store()
             from navegador.intelligence.community import CommunityDetector
+
             with patch.object(CommunityDetector, "detect", return_value=self._make_communities()):
                 result = runner.invoke(main, ["communities", "--json"])
                 assert result.exit_code == 0
@@ -699,6 +720,7 @@ class TestCommunitiesCLI:
         with patch("navegador.cli.commands._get_store") as mock_store_fn:
             mock_store_fn.return_value = _mock_store()
             from navegador.intelligence.community import CommunityDetector
+
             with patch.object(CommunityDetector, "detect", return_value=[]) as mock_detect:
                 runner.invoke(main, ["communities", "--min-size", "5"])
                 mock_detect.assert_called_once_with(min_size=5)
@@ -708,6 +730,7 @@ class TestCommunitiesCLI:
         with patch("navegador.cli.commands._get_store") as mock_store_fn:
             mock_store_fn.return_value = _mock_store()
             from navegador.intelligence.community import CommunityDetector
+
             with patch.object(CommunityDetector, "detect", return_value=[]):
                 result = runner.invoke(main, ["communities"])
                 assert result.exit_code == 0
@@ -718,8 +741,11 @@ class TestCommunitiesCLI:
         with patch("navegador.cli.commands._get_store") as mock_store_fn:
             mock_store_fn.return_value = _mock_store()
             from navegador.intelligence.community import CommunityDetector
-            with patch.object(CommunityDetector, "detect", return_value=self._make_communities()), \
-                 patch.object(CommunityDetector, "store_communities", return_value=5) as mock_store:
+
+            with (
+                patch.object(CommunityDetector, "detect", return_value=self._make_communities()),
+                patch.object(CommunityDetector, "store_communities", return_value=5) as mock_store,
+            ):
                 result = runner.invoke(main, ["communities", "--store-labels"])
                 assert result.exit_code == 0
                 mock_store.assert_called_once()
@@ -731,12 +757,15 @@ class TestCommunitiesCLI:
 class TestAskCLI:
     def test_ask_prints_answer(self):
         runner = CliRunner()
-        with patch("navegador.cli.commands._get_store") as mock_store_fn, \
-             patch("navegador.llm.auto_provider") as mock_auto:
+        with (
+            patch("navegador.cli.commands._get_store") as mock_store_fn,
+            patch("navegador.llm.auto_provider") as mock_auto,
+        ):
             mock_store_fn.return_value = _mock_store()
             mock_auto.return_value = _mock_provider()
 
             from navegador.intelligence.nlp import NLPEngine
+
             with patch.object(NLPEngine, "natural_query", return_value="The answer is 42."):
                 result = runner.invoke(main, ["ask", "What is the answer?"])
                 assert result.exit_code == 0
@@ -744,16 +773,17 @@ class TestAskCLI:
 
     def test_ask_with_explicit_provider(self):
         runner = CliRunner()
-        with patch("navegador.cli.commands._get_store") as mock_store_fn, \
-             patch("navegador.llm.get_provider") as mock_get:
+        with (
+            patch("navegador.cli.commands._get_store") as mock_store_fn,
+            patch("navegador.llm.get_provider") as mock_get,
+        ):
             mock_store_fn.return_value = _mock_store()
             mock_get.return_value = _mock_provider()
 
             from navegador.intelligence.nlp import NLPEngine
+
             with patch.object(NLPEngine, "natural_query", return_value="Answer."):
-                result = runner.invoke(
-                    main, ["ask", "question", "--provider", "openai"]
-                )
+                result = runner.invoke(main, ["ask", "question", "--provider", "openai"])
                 assert result.exit_code == 0
                 mock_get.assert_called_once_with("openai", model="")
 
@@ -764,12 +794,15 @@ class TestAskCLI:
 class TestGenerateDocsCLI:
     def test_generate_docs_prints_output(self):
         runner = CliRunner()
-        with patch("navegador.cli.commands._get_store") as mock_store_fn, \
-             patch("navegador.llm.auto_provider") as mock_auto:
+        with (
+            patch("navegador.cli.commands._get_store") as mock_store_fn,
+            patch("navegador.llm.auto_provider") as mock_auto,
+        ):
             mock_store_fn.return_value = _mock_store()
             mock_auto.return_value = _mock_provider()
 
             from navegador.intelligence.nlp import NLPEngine
+
             with patch.object(NLPEngine, "generate_docs", return_value="## my_func\nDocs here."):
                 result = runner.invoke(main, ["generate-docs", "my_func"])
                 assert result.exit_code == 0
@@ -777,16 +810,17 @@ class TestGenerateDocsCLI:
 
     def test_generate_docs_with_file_option(self):
         runner = CliRunner()
-        with patch("navegador.cli.commands._get_store") as mock_store_fn, \
-             patch("navegador.llm.auto_provider") as mock_auto:
+        with (
+            patch("navegador.cli.commands._get_store") as mock_store_fn,
+            patch("navegador.llm.auto_provider") as mock_auto,
+        ):
             mock_store_fn.return_value = _mock_store()
             mock_auto.return_value = _mock_provider()
 
             from navegador.intelligence.nlp import NLPEngine
+
             with patch.object(NLPEngine, "generate_docs", return_value="Docs.") as mock_gd:
-                runner.invoke(
-                    main, ["generate-docs", "my_func", "--file", "app.py"]
-                )
+                runner.invoke(main, ["generate-docs", "my_func", "--file", "app.py"])
                 mock_gd.assert_called_once_with("my_func", file_path="app.py")
 
 
@@ -799,7 +833,10 @@ class TestDocsCLI:
         with patch("navegador.cli.commands._get_store") as mock_store_fn:
             mock_store_fn.return_value = _mock_store()
             from navegador.intelligence.docgen import DocGenerator
-            with patch.object(DocGenerator, "generate_file_docs", return_value="# File docs") as mock_fd:
+
+            with patch.object(
+                DocGenerator, "generate_file_docs", return_value="# File docs"
+            ) as mock_fd:
                 result = runner.invoke(main, ["docs", "app/store.py"])
                 assert result.exit_code == 0
                 mock_fd.assert_called_once_with("app/store.py")
@@ -809,7 +846,10 @@ class TestDocsCLI:
         with patch("navegador.cli.commands._get_store") as mock_store_fn:
             mock_store_fn.return_value = _mock_store()
             from navegador.intelligence.docgen import DocGenerator
-            with patch.object(DocGenerator, "generate_module_docs", return_value="# Module docs") as mock_md:
+
+            with patch.object(
+                DocGenerator, "generate_module_docs", return_value="# Module docs"
+            ) as mock_md:
                 result = runner.invoke(main, ["docs", "navegador.graph"])
                 assert result.exit_code == 0
                 mock_md.assert_called_once_with("navegador.graph")
@@ -819,7 +859,10 @@ class TestDocsCLI:
         with patch("navegador.cli.commands._get_store") as mock_store_fn:
             mock_store_fn.return_value = _mock_store()
             from navegador.intelligence.docgen import DocGenerator
-            with patch.object(DocGenerator, "generate_project_docs", return_value="# Project") as mock_pd:
+
+            with patch.object(
+                DocGenerator, "generate_project_docs", return_value="# Project"
+            ) as mock_pd:
                 result = runner.invoke(main, ["docs", ".", "--project"])
                 assert result.exit_code == 0
                 mock_pd.assert_called_once()
@@ -829,6 +872,7 @@ class TestDocsCLI:
         with patch("navegador.cli.commands._get_store") as mock_store_fn:
             mock_store_fn.return_value = _mock_store()
             from navegador.intelligence.docgen import DocGenerator
+
             with patch.object(DocGenerator, "generate_project_docs", return_value="# Project"):
                 result = runner.invoke(main, ["docs", ".", "--project", "--json"])
                 assert result.exit_code == 0
@@ -837,13 +881,16 @@ class TestDocsCLI:
 
     def test_docs_with_llm_provider(self):
         runner = CliRunner()
-        with patch("navegador.cli.commands._get_store") as mock_store_fn, \
-             patch("navegador.intelligence.docgen.DocGenerator.generate_file_docs", return_value="# Docs"):
+        with (
+            patch("navegador.cli.commands._get_store") as mock_store_fn,
+            patch(
+                "navegador.intelligence.docgen.DocGenerator.generate_file_docs",
+                return_value="# Docs",
+            ),
+        ):
             mock_store_fn.return_value = _mock_store()
             with patch("navegador.llm.get_provider") as mock_get:
                 mock_get.return_value = _mock_provider()
-                result = runner.invoke(
-                    main, ["docs", "app/store.py", "--provider", "openai"]
-                )
+                result = runner.invoke(main, ["docs", "app/store.py", "--provider", "openai"])
                 assert result.exit_code == 0
                 mock_get.assert_called_once_with("openai", model="")

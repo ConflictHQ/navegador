@@ -1,187 +1,230 @@
 """
-SemanticSearch — embedding-based similarity search over the navegador graph.
+SemanticSearch — vector similarity over the navegador graph.
 
-Embeds function/class docstrings via an LLMProvider, stores the embedding
-vectors as JSON in a node property (``embedding``), and retrieves the top-k
-most similar nodes to a natural-language query using cosine similarity.
+Embeds the text attached to a node and retrieves the nearest matches for a
+natural-language query using FalkorDB's native vector index.
+
+The previous implementation stored embeddings as JSON strings and, on every
+query, fetched **every** embedded node together with its full vector, parsed
+each one, and computed cosine similarity in a Python loop. At 100k nodes and
+1536 dimensions that is on the order of a gigabyte crossing the wire per
+query, and the cost grew with the graph — reintroducing exactly the full-scan
+problem this project exists to remove, and multiplying it by every agent
+sharing the server (#182).
+
+Now the k-nearest search happens inside the database against an index, so
+query cost is independent of graph size and no vector is transferred except
+the query's own.
 
 Usage::
 
-    from navegador.graph import GraphStore
+    from navegador.config import get_store
     from navegador.llm import get_provider
     from navegador.intelligence.search import SemanticSearch
 
-    store = GraphStore.sqlite(".navegador/graph.db")
-    provider = get_provider("openai")
-    ss = SemanticSearch(store, provider)
-
-    # Build / refresh the index (idempotent — re-embeds all nodes)
-    ss.index()
-
-    # Query
-    results = ss.search("function that validates JWT tokens", limit=5)
-    for r in results:
-        print(r["name"], r["score"])
+    ss = SemanticSearch(get_store(target="."), get_provider("openai"))
+    ss.index()                       # incremental; unchanged text is skipped
+    ss.search("validates JWT tokens", limit=5)
 """
 
 from __future__ import annotations
 
-import json
-import math
+import hashlib
+import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from navegador.graph.store import GraphStore
     from navegador.llm import LLMProvider
 
+logger = logging.getLogger(__name__)
 
-# Cypher to fetch all embeddable nodes (those with a docstring or description)
-_EMBEDDABLE_NODES = """
-MATCH (n)
-WHERE (n:Function OR n:Class OR n:Method OR n:Concept OR n:Rule OR n:Decision)
-  AND (n.docstring IS NOT NULL OR n.description IS NOT NULL)
-RETURN
-    labels(n)[0] AS type,
-    n.name AS name,
-    coalesce(n.file_path, '') AS file_path,
-    coalesce(n.docstring, n.description, '') AS text
-LIMIT $limit
-"""
+# A FalkorDB node pattern takes exactly one label, and a vector index is
+# created per label, so both the index and the query fan out across these.
+EMBEDDABLE_LABELS = ("Function", "Method", "Class", "Concept", "Rule", "Decision")
 
-# Cypher to fetch nodes that already have a stored embedding
-_NODES_WITH_EMBEDDINGS = """
-MATCH (n)
-WHERE n.embedding IS NOT NULL
-RETURN
-    labels(n)[0] AS type,
-    n.name AS name,
-    coalesce(n.file_path, '') AS file_path,
-    coalesce(n.docstring, n.description, '') AS text,
-    n.embedding AS embedding
-"""
+# Nodes whose embedded text is unchanged are skipped on re-index. The hash is
+# of the text actually embedded rather than File.content_hash, because symbol
+# nodes carry no content hash and a file can change without changing a given
+# function's signature or docstring.
+_EMBED_HASH = "embedding_hash"
 
-# Upsert the embedding property on a matched node
-_SET_EMBEDDING = """
-MATCH (n)
-WHERE n.name = $name AND ($file_path = '' OR n.file_path = $file_path)
-SET n.embedding = $embedding
-"""
+
+def _text_for(row: dict) -> str:
+    """
+    The text embedded for a node.
+
+    Previously only nodes with a docstring or description were embeddable,
+    which made most real functions invisible to semantic search. The name and
+    signature carry real meaning on their own — `parse_import_statement` is
+    findable from "handle imports" without a word of prose.
+    """
+    parts = [row.get("name") or ""]
+    if row.get("class_name"):
+        parts.append(f"in {row['class_name']}")
+    if row.get("file_path"):
+        parts.append(row["file_path"].replace("/", " ").replace("_", " "))
+    if row.get("text"):
+        parts.append(row["text"])
+    return " — ".join(p for p in parts if p).strip()
 
 
 class SemanticSearch:
     """
-    Embedding-based semantic search over the navegador graph.
-
-    Embeddings are stored as a JSON string (serialised ``list[float]``) in the
-    ``embedding`` property of each node so they survive graph restarts without
-    any external vector store.
+    Vector search over the graph, backed by FalkorDB's native vector index.
 
     Args:
-        store: A :class:`~navegador.graph.GraphStore` instance.
-        provider: An :class:`~navegador.llm.LLMProvider` that implements
-            :meth:`embed`.
+        store: A :class:`~navegador.graph.GraphStore`.
+        provider: An :class:`~navegador.llm.LLMProvider` implementing ``embed``.
     """
 
     def __init__(self, store: "GraphStore", provider: "LLMProvider") -> None:
         self._store = store
         self._provider = provider
 
-    # ── Index ─────────────────────────────────────────────────────────────────
+    # ── Index ─────────────────────────────────────────────────────────────
 
-    def index(self, limit: int = 1000) -> int:
+    def _ensure_index(self, label: str, dimension: int) -> None:
         """
-        Embed all function/class/concept docstrings and store on the nodes.
+        Create the vector index for *label*, ignoring "already indexed".
+
+        FalkorDB has no CREATE VECTOR INDEX IF NOT EXISTS, so the second call
+        raises and there is nothing to do about it but carry on.
+        """
+        try:
+            self._store.query(
+                f"CREATE VECTOR INDEX FOR (n:{label}) ON (n.embedding) "
+                f"OPTIONS {{dimension:{int(dimension)}, similarityFunction:'cosine'}}"
+            )
+        except Exception as exc:  # noqa: BLE001 — the only failure worth acting on is a new one
+            if "already" not in str(exc).lower():
+                logger.debug("vector index for %s: %s", label, exc)
+
+    def index(self, limit: int | None = None, batch: int = 256) -> int:
+        """
+        Embed node text and store it as a native vector.
+
+        Incremental: a node whose embedded text has not changed since last
+        time is skipped, so re-indexing an unchanged repository costs nothing
+        and does not re-pay the embedding bill.
 
         Args:
-            limit: Maximum number of nodes to index in one pass.
+            limit: Stop after this many nodes. None means all of them — the
+                old default silently truncated at 1000, leaving a partially
+                indexed graph that looked complete.
+            batch: Nodes per write round trip.
 
         Returns:
-            The number of nodes that were (re-)embedded.
+            Number of nodes newly embedded.
         """
-        result = self._store.query(_EMBEDDABLE_NODES, {"limit": limit})
-        rows = result.result_set or []
-        indexed = 0
-        for row in rows:
-            node_type, name, file_path, text = row[0], row[1], row[2], row[3]
-            if not text:
-                continue
-            label = f"[{node_type}] {name}: {text}"
-            vector = self._provider.embed(label)
-            self._store.query(
-                _SET_EMBEDDING,
-                {
-                    "name": name,
-                    "file_path": file_path,
-                    "embedding": json.dumps(vector),
-                },
-            )
-            indexed += 1
-        return indexed
+        embedded = 0
+        dimension: int | None = None
 
-    # ── Search ────────────────────────────────────────────────────────────────
+        for label in EMBEDDABLE_LABELS:
+            rows = self._store.query(
+                f"MATCH (n:{label}) "
+                "RETURN id(n), n.name, coalesce(n.file_path,''), "
+                "coalesce(n.docstring, n.description, ''), "
+                f"coalesce(n.class_name,''), n.{_EMBED_HASH}"
+            ).result_set
+            pending: list[tuple[int, list[float], str]] = []
+
+            for row in rows or []:
+                if limit is not None and embedded >= limit:
+                    break
+                node_id, name, file_path, text, class_name, stored_hash = row
+                if not name:
+                    continue
+                content = _text_for(
+                    {
+                        "name": name,
+                        "file_path": file_path,
+                        "text": text,
+                        "class_name": class_name,
+                    }
+                )
+                if not content:
+                    continue
+                digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                if stored_hash == digest:
+                    continue  # unchanged since last index
+
+                vector = self._provider.embed(content)
+                if not vector:
+                    continue
+                if dimension is None:
+                    dimension = len(vector)
+                    for lbl in EMBEDDABLE_LABELS:
+                        self._ensure_index(lbl, dimension)
+                pending.append((int(node_id), vector, digest))
+                embedded += 1
+                if len(pending) >= batch:
+                    self._write(pending)
+                    pending = []
+
+            if pending:
+                self._write(pending)
+
+        return embedded
+
+    def _write(self, pending: list[tuple[int, list[float], str]]) -> None:
+        """
+        Attach vectors to nodes by internal id.
+
+        The previous version matched on name plus optional file_path, which is
+        ambiguous for an overloaded method or a module-level function sharing
+        a name with one — it could write the embedding to the wrong node, or
+        to several.
+        """
+        for node_id, vector, digest in pending:
+            literal = ",".join(f"{v:.7g}" for v in vector)
+            self._store.query(
+                f"MATCH (n) WHERE id(n) = {node_id} "
+                f"SET n.embedding = vecf32([{literal}]), n.{_EMBED_HASH} = $digest",
+                {"digest": digest},
+            )
+
+    # ── Search ────────────────────────────────────────────────────────────
 
     def search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
         """
-        Embed *query* and return the *limit* most similar indexed nodes.
+        Return the *limit* nodes nearest to *query*.
 
-        Each result dict has keys: ``type``, ``name``, ``file_path``,
-        ``text``, ``score`` (cosine similarity, 0–1).
-
-        Args:
-            query: Natural-language search query.
-            limit: Maximum number of results to return.
-
-        Returns:
-            List of result dicts sorted by descending similarity score.
+        Each result has ``type``, ``name``, ``file_path``, ``text`` and
+        ``score`` — cosine similarity in 0..1, converted from the distance the
+        index returns so that higher remains better for callers.
         """
-        query_vec = self._provider.embed(query)
+        vector = self._provider.embed(query)
+        if not vector:
+            return []
+        literal = ",".join(f"{v:.7g}" for v in vector)
 
-        result = self._store.query(_NODES_WITH_EMBEDDINGS, {})
-        rows = result.result_set or []
-
-        scored: list[dict[str, Any]] = []
-        for row in rows:
-            node_type, name, file_path, text, emb_json = (row[0], row[1], row[2], row[3], row[4])
-            if not emb_json:
-                continue
+        results: list[dict[str, Any]] = []
+        for label in EMBEDDABLE_LABELS:
             try:
-                node_vec: list[float] = json.loads(emb_json)
-            except (json.JSONDecodeError, TypeError):
+                rows = self._store.query(
+                    f"CALL db.idx.vector.queryNodes('{label}', 'embedding', {int(limit)}, "
+                    f"vecf32([{literal}])) YIELD node, score "
+                    "RETURN labels(node)[0], node.name, coalesce(node.file_path,''), "
+                    "coalesce(node.docstring, node.description, ''), score"
+                ).result_set
+            except Exception as exc:  # noqa: BLE001
+                # No index for this label yet — nothing has been embedded for
+                # it. Not an error; the other labels still answer.
+                logger.debug("vector query on %s: %s", label, exc)
                 continue
-            score = self._cosine_similarity(query_vec, node_vec)
-            scored.append(
-                {
-                    "type": node_type,
-                    "name": name,
-                    "file_path": file_path,
-                    "text": text,
-                    "score": score,
-                }
-            )
 
-        scored.sort(key=lambda x: x["score"], reverse=True)
-        return scored[:limit]
+            for row in rows or []:
+                node_type, name, file_path, text, distance = row
+                results.append(
+                    {
+                        "type": node_type,
+                        "name": name,
+                        "file_path": file_path,
+                        "text": text,
+                        "score": max(0.0, 1.0 - float(distance)),
+                    }
+                )
 
-    # ── Internals ─────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _cosine_similarity(a: list[float], b: list[float]) -> float:
-        """
-        Compute the cosine similarity between two vectors.
-
-        Args:
-            a: First embedding vector.
-            b: Second embedding vector.
-
-        Returns:
-            Cosine similarity in the range ``[-1, 1]``.  Returns ``0.0`` if
-            either vector is the zero vector or the lengths differ.
-        """
-        if len(a) != len(b):
-            return 0.0
-        dot = sum(x * y for x, y in zip(a, b))
-        mag_a = math.sqrt(sum(x * x for x in a))
-        mag_b = math.sqrt(sum(x * x for x in b))
-        if mag_a == 0.0 or mag_b == 0.0:
-            return 0.0
-        return dot / (mag_a * mag_b)
+        results.sort(key=lambda r: r["score"], reverse=True)
+        return results[:limit]
