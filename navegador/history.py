@@ -135,7 +135,7 @@ class LineageReport:
         for step in self.chain:
             tag = f"**{step.event}**" if step.event != "continued" else step.event
             detail = f" — {step.detail}" if step.detail else ""
-            lines.append(f"- `{step.ref}` {tag} `{step.name}` `{step.file_path}`{detail}")
+            lines.append(f"- `{step.ref}` {tag} `{step.name}` " f"`{step.file_path}`{detail}")
         return "\n".join(lines)
 
     def to_json(self) -> str:
@@ -436,7 +436,8 @@ class HistoryStore:
                             label=best.label,
                             event="renamed",
                             detail=(
-                                f"`{current_name}` → `{best.name}` (similarity={best_score:.2f})"
+                                f"`{current_name}` → `{best.name}` "
+                                f"(similarity={best_score:.2f})"
                             ),
                         )
                     )
