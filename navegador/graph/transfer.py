@@ -19,16 +19,28 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from navegador.graph.store import GraphStore, paged_query
+from navegador.graph.store import GraphStore
 
 logger = logging.getLogger(__name__)
 
 #: Temporary property holding the source graph's internal node id.
 MIGRATION_KEY = "_nav_transfer_id"
 
-#: Rows sent per Cypher round trip. Large enough to amortise latency, small
+#: Rows sent per write round trip. Large enough to amortise latency, small
 #: enough to stay well under FalkorDB's query and result-set ceilings.
 DEFAULT_BATCH = 500
+
+#: Rows fetched per read round trip. Deliberately larger than the write batch:
+#: reads are the cheaper half and their cost is dominated by round trips, so a
+#: small read page turns a million-node graph into thousands of them.
+READ_PAGE = 5000
+
+#: Per-query ceilings for migration, in milliseconds. A server's configured
+#: default is tuned for interactive queries — the official FalkorDB image ships
+#: TIMEOUT 1000 — which a bulk read over a million-edge graph will exceed. A
+#: migration is a batch job and is allowed to take minutes.
+READ_TIMEOUT_MS = 600_000
+WRITE_TIMEOUT_MS = 600_000
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -117,35 +129,77 @@ def copy_graph(
     }
 
 
+def _stream_by_id(source: GraphStore, match: str, returns: str, id_expr: str, page: int):
+    """
+    Yield rows in pages, walking forward by internal id.
+
+    Deliberately not SKIP/LIMIT: a deep SKIP re-scans and re-sorts everything it
+    skips, so page cost grows with offset and a large graph eventually exceeds
+    the server's query timeout mid-migration. Carrying the last id forward keeps
+    every page the same cost. The first returned column must be *id_expr*.
+    """
+    last = -1
+    while True:
+        rows = (
+            source.query(
+                f"MATCH {match} WHERE {id_expr} > {int(last)} "
+                f"RETURN {returns} ORDER BY {id_expr} LIMIT {int(page)}",
+                timeout=READ_TIMEOUT_MS,
+            ).result_set
+            or []
+        )
+        if not rows:
+            return
+        yield from rows
+        if len(rows) < page:
+            return
+        last = rows[-1][0]
+
+
 def _copy_nodes(source: GraphStore, dest: GraphStore, batch_size: int) -> int:
     """Recreate every source node in *dest*, stamped with its source id."""
-    rows = paged_query(
-        source,
-        "MATCH (n) RETURN id(n) AS nid, labels(n) AS labels, properties(n) AS props ORDER BY id(n)",
-    )
-
     # Group by label set: a label cannot be parameterised, so each distinct
-    # label set needs its own CREATE statement.
-    grouped: dict[tuple[str, ...], list[dict]] = defaultdict(list)
-    for row in rows:
-        node_id, raw_labels, props = row[0], row[1], row[2]
-        labels = tuple(_labels_of(raw_labels))
-        grouped[labels].append({"id": node_id, "props": props if isinstance(props, dict) else {}})
-
+    # label set needs its own CREATE statement. Buffers are flushed as they fill
+    # rather than materialising the whole graph in memory first.
+    buffers: dict[tuple[str, ...], list[dict]] = defaultdict(list)
     written = 0
-    for labels, items in grouped.items():
+
+    def flush(labels: tuple[str, ...]) -> int:
+        items = buffers[labels]
+        if not items:
+            return 0
         for label in labels:
             _safe_identifier(label, "label")
         label_clause = "".join(f":{label}" for label in labels)
         # Unlabelled nodes are legal in FalkorDB and must still be copied.
         pattern = f"(n{label_clause})" if label_clause else "(n)"
-        cypher = (
-            f"UNWIND $rows AS row CREATE {pattern} SET n = row.props SET n.{MIGRATION_KEY} = row.id"
+        dest.query(
+            f"UNWIND $rows AS row CREATE {pattern} "
+            f"SET n = row.props SET n.{MIGRATION_KEY} = row.id",
+            {"rows": items},
+            timeout=WRITE_TIMEOUT_MS,
         )
-        for chunk in _chunks(items, batch_size):
-            dest.query(cypher, {"rows": chunk})
-            written += len(chunk)
+        count = len(items)
+        buffers[labels] = []
+        return count
 
+    rows = _stream_by_id(
+        source,
+        "(n)",
+        "id(n) AS nid, labels(n) AS labels, properties(n) AS props",
+        "id(n)",
+        READ_PAGE,
+    )
+    for row in rows:
+        labels = tuple(_labels_of(row[1]))
+        buffers[labels].append({"id": row[0], "props": row[2] if isinstance(row[2], dict) else {}})
+        if len(buffers[labels]) >= batch_size:
+            written += flush(labels)
+
+    for labels in list(buffers):
+        written += flush(labels)
+
+    for labels in buffers:
         for label in labels:
             _ensure_transfer_index(dest, label)
 
@@ -170,43 +224,55 @@ def _ensure_transfer_index(dest: GraphStore, label: str) -> None:
 
 def _copy_edges(source: GraphStore, dest: GraphStore, batch_size: int) -> int:
     """Reconnect every source edge in *dest* using the stamped source ids."""
-    rows = paged_query(
-        source,
-        "MATCH (a)-[r]->(b) "
-        "RETURN id(a) AS src, labels(a) AS src_labels, type(r) AS type, "
-        "properties(r) AS props, id(b) AS dst, labels(b) AS dst_labels "
-        "ORDER BY id(r)",
-    )
-
     # Group by (source label, type, destination label) so each statement can use
     # labelled, index-backed lookups on both endpoints.
-    grouped: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
-    for row in rows:
-        src_labels = _labels_of(row[1])
-        dst_labels = _labels_of(row[5])
-        key = (
-            src_labels[0] if src_labels else "",
-            _decode(row[2]),
-            dst_labels[0] if dst_labels else "",
-        )
-        grouped[key].append(
-            {"src": row[0], "dst": row[4], "props": row[3] if isinstance(row[3], dict) else {}}
-        )
-
+    buffers: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     written = 0
-    for (src_label, edge_type, dst_label), items in grouped.items():
+
+    def flush(key: tuple[str, str, str]) -> int:
+        items = buffers[key]
+        if not items:
+            return 0
+        src_label, edge_type, dst_label = key
         _safe_identifier(edge_type, "relationship type")
         src_clause = f":{_safe_identifier(src_label, 'label')}" if src_label else ""
         dst_clause = f":{_safe_identifier(dst_label, 'label')}" if dst_label else ""
-        cypher = (
+        dest.query(
             f"UNWIND $rows AS row "
             f"MATCH (a{src_clause} {{{MIGRATION_KEY}: row.src}}), "
             f"(b{dst_clause} {{{MIGRATION_KEY}: row.dst}}) "
-            f"CREATE (a)-[r:{edge_type}]->(b) SET r = row.props"
+            f"CREATE (a)-[r:{edge_type}]->(b) SET r = row.props",
+            {"rows": items},
+            timeout=WRITE_TIMEOUT_MS,
         )
-        for chunk in _chunks(items, batch_size):
-            dest.query(cypher, {"rows": chunk})
-            written += len(chunk)
+        count = len(items)
+        buffers[key] = []
+        return count
+
+    rows = _stream_by_id(
+        source,
+        "(a)-[r]->(b)",
+        "id(r) AS rid, id(a) AS src, labels(a) AS src_labels, type(r) AS type, "
+        "properties(r) AS props, id(b) AS dst, labels(b) AS dst_labels",
+        "id(r)",
+        READ_PAGE,
+    )
+    for row in rows:
+        src_labels = _labels_of(row[2])
+        dst_labels = _labels_of(row[6])
+        key = (
+            src_labels[0] if src_labels else "",
+            _decode(row[3]),
+            dst_labels[0] if dst_labels else "",
+        )
+        buffers[key].append(
+            {"src": row[1], "dst": row[5], "props": row[4] if isinstance(row[4], dict) else {}}
+        )
+        if len(buffers[key]) >= batch_size:
+            written += flush(key)
+
+    for key in list(buffers):
+        written += flush(key)
 
     return written
 

@@ -28,6 +28,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -437,6 +438,23 @@ def probe(url: str = "redis://localhost:6379") -> dict:
         info["error"] = str(e)
 
     return info
+
+
+def wait_until_ready(url: str, timeout: float = 15.0, interval: float = 0.3) -> dict:
+    """
+    Poll *url* until the graph module answers, or *timeout* elapses.
+
+    The service manager returns as soon as the process is spawned, but FalkorDB
+    takes a moment to initialise its thread pool and register the module. Without
+    this, a freshly installed server reports itself unusable for a second or two.
+    """
+    deadline = time.monotonic() + timeout
+    info: dict = {}
+    while True:
+        info = probe(url)
+        if info.get("graph_module") or time.monotonic() >= deadline:
+            return info
+        time.sleep(interval)
 
 
 def _decode_module_version(ver) -> str:

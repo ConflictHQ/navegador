@@ -112,6 +112,11 @@ navegador = "navegador.cli.commands:main"
 [tool.setuptools.packages.find]
 include = ["navegador*"]
 
+[tool.setuptools.package-data]
+# Documentation ships inside the wheel so `navegador manual` works offline
+# and the MCP server can serve it to agents without network access.
+navegador = ["docs/**/*.md", "docs/**/*.css", "docs/**/*.svg", "docs/**/*.png"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

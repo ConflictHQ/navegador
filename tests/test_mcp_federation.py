@@ -139,7 +139,15 @@ class TestListRepos:
     @pytest.mark.asyncio
     async def test_lists_federated_namespaces(self, call_tool):
         result = await call_tool("list_repos", {})
-        assert json.loads(_text(result)) == ["repo-a", "repo-b"]
+        rows = json.loads(_text(result))
+        assert [r["repo"] for r in rows] == ["repo-a", "repo-b"]
+
+    @pytest.mark.asyncio
+    async def test_reports_ingest_status_per_repo(self, call_tool):
+        """A caller must be able to tell empty from never-ingested (#171)."""
+        result = await call_tool("list_repos", {})
+        rows = json.loads(_text(result))
+        assert all(r["status"] in {"populated", "registered-but-empty"} for r in rows)
 
 
 # ── search_symbols ─────────────────────────────────────────────────────────

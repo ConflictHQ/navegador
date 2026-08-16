@@ -13,6 +13,7 @@ from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.table import Table
 
 console = Console()
@@ -3598,7 +3599,7 @@ def server_install(
             manifest["service"] = srv.start_service()
         except srv.ServerError as e:
             raise click.ClickException(str(e)) from e
-        manifest["probe"] = srv.probe(url)
+        manifest["probe"] = srv.wait_until_ready(url)
 
     manifest["url"] = url
 
@@ -3916,6 +3917,17 @@ def storage():
 @click.option(
     "--graph", "graph_name", default="", help="Destination graph name. Default: per-repo."
 )
+@click.option(
+    "--default-as",
+    "default_as",
+    default="",
+    metavar="NAME",
+    help="With --from: destination name for the source server's unnamespaced "
+    "'navegador' graph, so it does not collide with the destination's own.",
+)
+@click.option(
+    "--overwrite", is_flag=True, help="Replace destination graphs that already hold data."
+)
 @click.option("--dry-run", is_flag=True, help="Report what would move without writing.")
 @click.option("--prune", is_flag=True, help="Delete the local graph file after a verified copy.")
 @click.option("--json", "as_json", is_flag=True)
@@ -3926,6 +3938,8 @@ def storage_migrate(
     migrate_all: bool,
     root: str,
     graph_name: str,
+    default_as: str,
+    overwrite: bool,
     dry_run: bool,
     prune: bool,
     as_json: bool,
@@ -3947,7 +3961,15 @@ def storage_migrate(
     from navegador.config import DEFAULT_REDIS_URL, resolve_storage
 
     if source_url:
-        results = [_migrate_server(source_url, dest_url or DEFAULT_REDIS_URL, dry_run)]
+        results = [
+            _migrate_server(
+                source_url,
+                dest_url or DEFAULT_REDIS_URL,
+                dry_run,
+                default_as=default_as,
+                overwrite=overwrite,
+            )
+        ]
     elif migrate_all:
         from navegador.inventory import scan
 
@@ -4043,33 +4065,147 @@ def _migrate_project(
     return result
 
 
-def _migrate_server(source_url: str, dest_url: str, dry_run: bool) -> dict:
-    """Copy every named graph from one FalkorDB server to another."""
+def _migrate_server(
+    source_url: str,
+    dest_url: str,
+    dry_run: bool,
+    default_as: str = "",
+    overwrite: bool = False,
+) -> dict:
+    """
+    Copy every named graph from one FalkorDB server to another.
+
+    Consolidating servers is where graph names collide: each server has its own
+    unnamespaced ``navegador`` graph, and copying both would silently leave only
+    the last one. Destination graphs that already hold data are refused unless
+    renamed with --default-as or explicitly permitted with --overwrite.
+    """
     from navegador.graph import GraphStore
+    from navegador.graph.store import GraphStore as _GS
     from navegador.graph.transfer import TransferError, copy_graph
 
     result: dict = {"source": source_url, "graph": "(all)", "url": dest_url}
     try:
         source_client = GraphStore.redis(source_url)
-        names = source_client.list_graphs()
+        names = sorted(source_client.list_graphs())
     except Exception as e:  # noqa: BLE001
         return {**result, "status": "failed", "error": str(e)}
 
+    # The source's default graph can be given a namespace on the way in, so it
+    # does not collide with the destination's own default graph.
+    plan = {name: (default_as if name == _GS.GRAPH_NAME and default_as else name) for name in names}
+
+    try:
+        dest_client = GraphStore.redis(dest_url)
+        existing = set(dest_client.list_graphs())
+    except Exception as e:  # noqa: BLE001
+        return {**result, "status": "failed", "error": str(e)}
+
+    if not overwrite:
+        clashes = [
+            f"{src} → {dst}"
+            for src, dst in plan.items()
+            if dst in existing and dest_client.with_graph(dst).node_count() > 0
+        ]
+        if clashes:
+            return {
+                **result,
+                "status": "failed",
+                "error": (
+                    "destination already holds data for: "
+                    + ", ".join(clashes)
+                    + ". Rename the source's default graph with --default-as NAME, "
+                    "or pass --overwrite to replace them."
+                ),
+            }
+
     if dry_run:
+        for src, dst in plan.items():
+            counts = source_client.with_graph(src)
+            console.print(
+                f"  {src} → {dst}: {counts.node_count()} nodes, {counts.edge_count()} edges"
+            )
         return {**result, "status": "planned", "nodes": f"{len(names)} graph(s)", "edges": ""}
 
-    dest_client = GraphStore.redis(dest_url)
     nodes = edges = 0
-    for name in names:
+    for src, dst in plan.items():
         try:
-            stats = copy_graph(source_client.with_graph(name), dest_client.with_graph(name))
+            stats = copy_graph(source_client.with_graph(src), dest_client.with_graph(dst))
         except TransferError as e:
-            return {**result, "status": "failed", "error": f"{name}: {e}"}
+            return {**result, "status": "failed", "error": f"{src}: {e}"}
         nodes += stats["nodes"]
         edges += stats["edges"]
-        console.print(f"  {name}: {stats['nodes']} nodes, {stats['edges']} edges")
+        console.print(f"  {src} → {dst}: {stats['nodes']} nodes, {stats['edges']} edges")
 
     return {**result, "status": "ok", "nodes": nodes, "edges": edges, "graphs": len(names)}
+
+
+# ── Manual: documentation packaged with the CLI (#172) ───────────────────────
+
+
+@main.command("manual")
+@click.argument("page", required=False, default="")
+@click.option("--search", "query", default="", metavar="TERM", help="Search all pages for TERM.")
+@click.option("--list", "list_only", is_flag=True, help="List available pages and exit.")
+@click.option("--raw", is_flag=True, help="Emit raw markdown instead of rendered output.")
+@click.option("--json", "as_json", is_flag=True)
+def manual(page: str, query: str, list_only: bool, raw: bool, as_json: bool):
+    """Read navegador's own documentation, offline.
+
+    \b
+    The docs ship inside the package — no network, no mkdocs install. PAGE is a
+    slug such as 'guide/mcp-integration', or any unambiguous fragment of one.
+
+    \b
+    Examples:
+      navegador manual                            # list every page
+      navegador manual quickstart                 # read one page
+      navegador manual guide/mcp-integration
+      navegador manual --search "redis"
+    """
+    from navegador.manual import ManualError, find_page, list_pages, search
+
+    try:
+        if query:
+            hits = search(query)
+            if as_json:
+                click.echo(json.dumps({"query": query, "results": hits}, indent=2))
+                return
+            if not hits:
+                console.print(f"No documentation matches [cyan]{query}[/cyan].")
+                return
+            for hit in hits:
+                console.print(
+                    f"[cyan]{hit['slug']}[/cyan] — {hit['title']} ({hit['matches']} hits)"
+                )
+                for line in hit["context"]:
+                    console.print(f"    {line[:120]}")
+            return
+
+        if page and not list_only:
+            doc = find_page(page)
+            if as_json:
+                click.echo(json.dumps({**doc.to_dict(), "content": doc.read()}, indent=2))
+            elif raw:
+                click.echo(doc.read())
+            else:
+                console.print(Markdown(doc.read()))
+            return
+
+        pages = list_pages()
+        if as_json:
+            click.echo(json.dumps([p.to_dict() for p in pages], indent=2))
+            return
+
+        table = Table(title=f"navegador documentation ({len(pages)} pages)")
+        table.add_column("Page", style="cyan")
+        table.add_column("Title")
+        for doc in pages:
+            table.add_row(doc.slug, doc.title)
+        console.print(table)
+        console.print("\nRead one with: [cyan]navegador manual <page>[/cyan]")
+    except ManualError as e:
+        raise click.ClickException(str(e)) from e
 
 
 if __name__ == "__main__":

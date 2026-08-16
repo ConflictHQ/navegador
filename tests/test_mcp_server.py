@@ -127,9 +127,9 @@ class TestListTools:
         self.fx = _ServerFixture()
 
     @pytest.mark.asyncio
-    async def test_returns_twenty_four_tools(self):
+    async def test_returns_twenty_five_tools(self):
         tools = await self.fx.list_tools_fn()
-        assert len(tools) == 24
+        assert len(tools) == 25
 
     @pytest.mark.asyncio
     async def test_tool_names(self):
@@ -137,6 +137,7 @@ class TestListTools:
         names = {t["name"] for t in tools}
         assert names == {
             "ingest_repo",
+            "read_docs",
             "load_file_context",
             "load_function_context",
             "load_class_context",
