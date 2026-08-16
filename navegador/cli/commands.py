@@ -3973,11 +3973,18 @@ def storage_migrate(
     elif migrate_all:
         from navegador.inventory import scan
 
-        records = [r for r in scan(root) if r.has_local_data]
+        # Select on the graph file existing, not on its size: the size threshold
+        # is a heuristic for spotting stranded ingests, and a small repo's
+        # legitimate graph must not be silently left behind. Genuinely empty
+        # sources are reported as skipped once opened.
+        records = [r for r in scan(root) if r.db_path]
         if not records:
-            console.print(f"No projects with local graph data found under {root}.")
+            console.print(f"No projects with a local graph found under {root}.")
             return
-        results = [_migrate_project(r.root, dest_url, graph_name, dry_run, prune) for r in records]
+        results = [
+            _migrate_project(r.root, dest_url, graph_name, dry_run, prune, overwrite)
+            for r in records
+        ]
     else:
         resolved = resolve_storage(target=target)
         if not dest_url and not resolved.is_redis:
@@ -4053,6 +4060,10 @@ def _copy_all_graphs(
     plan = _plan_graph_names(source_client, default_as)
     if not plan:
         return {"status": "skipped", "error": "no graphs in source", "nodes": 0, "edges": 0}
+
+    source_total = sum(source_client.with_graph(src).node_count() for src in plan)
+    if not source_total:
+        return {"status": "skipped", "error": "source graphs are empty", "nodes": 0, "edges": 0}
 
     # A dry run is precisely what you reach for before the destination is up, so
     # an unreachable one downgrades the clash check to a warning instead of

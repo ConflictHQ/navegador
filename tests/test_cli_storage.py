@@ -195,11 +195,45 @@ class TestStorageMigrate:
         assert result.exit_code != 0
         assert "failed" in result.output
 
+    def test_overwrite_reaches_the_bulk_path(self, tmp_path):
+        """
+        --overwrite must be threaded into every project, not just single ones.
+
+        It was silently dropped from the --all branch, so a bulk migration kept
+        refusing the exact clashes the flag was passed to resolve.
+        """
+        from unittest.mock import patch
+
+        from navegador.graph.store import GraphStore
+
+        project = make_project(tmp_path / "repo", backend="redis")
+        store = GraphStore.sqlite(str(project / ".navegador" / "graph.db"))
+        store.query("CREATE (:Function {name: 'seeded', file_path: 'a.py'})")
+        store.close()
+
+        with patch(
+            "navegador.cli.commands._migrate_project", return_value={"status": "ok"}
+        ) as migrate:
+            CliRunner().invoke(
+                main,
+                [
+                    "storage",
+                    "migrate",
+                    "--all",
+                    "--root",
+                    str(tmp_path),
+                    "--to",
+                    "redis://127.0.0.1:1",
+                    "--overwrite",
+                ],
+            )
+        assert migrate.call_args.args[-1] is True
+
     def test_all_reports_when_nothing_to_do(self, tmp_path):
-        make_project(tmp_path / "empty", backend="redis")
+        make_project(tmp_path / "empty", backend="redis")  # config only, no graph file
         result = CliRunner().invoke(
             main,
             ["storage", "migrate", "--all", "--root", str(tmp_path), "--to", "redis://127.0.0.1:1"],
         )
         assert result.exit_code == 0
-        assert "No projects with local graph data" in result.output
+        assert "No projects with a local graph" in result.output

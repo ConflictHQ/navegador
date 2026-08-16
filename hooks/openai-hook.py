@@ -21,7 +21,10 @@ import os
 import subprocess
 import sys
 
-NAV_DB = os.environ.get("NAVEGADOR_DB", ".navegador/graph.db")
+# Only pass --db when one is explicitly configured. Passing it unconditionally
+# would pin every lookup to a per-project file and override the project's own
+# [storage] configuration — defeating a shared FalkorDB server entirely.
+NAV_DB = os.environ.get("NAVEGADOR_DB", "")
 NAV_CMD = os.environ.get("NAVEGADOR_CMD", "navegador")
 
 DISPATCH = {
@@ -61,12 +64,14 @@ def main():
         print(json.dumps({"error": f"Unknown tool: {name}"}))
         sys.exit(1)
 
-    cmd = DISPATCH[name](arguments)
-    result = subprocess.run(
-        ["--db", NAV_DB] and ([cmd[0]] + ["--db", NAV_DB] + cmd[1:]),
-        capture_output=True, text=True,
-    )
+    # --db is a per-command option: appended, not spliced in ahead of the
+    # subcommand, where click would reject the whole invocation.
+    cmd = list(DISPATCH[name](arguments))
+    if NAV_DB:
+        cmd += ["--db", NAV_DB]
+    result = subprocess.run(cmd, capture_output=True, text=True)
     sys.stdout.write(result.stdout or result.stderr)
+    sys.exit(result.returncode)
 
 
 if __name__ == "__main__":
