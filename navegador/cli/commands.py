@@ -253,6 +253,15 @@ def init(
     help="Exclude paths matching GLOB (repeatable). Matches repo-relative "
     "paths or single path components; a repo-root .navignore is honored too.",
 )
+@click.option(
+    "--no-gitignore",
+    "no_gitignore",
+    is_flag=True,
+    help="Index files git ignores. By default a git checkout contributes only "
+    "the files git tracks or would show as untracked, which is the same set "
+    "ripgrep walks — without this, build output lands in the graph and agents "
+    "are handed generated code as if it were source.",
+)
 def ingest(
     repo_path: str,
     db: str,
@@ -265,6 +274,7 @@ def ingest(
     monorepo: bool,
     repo_key: str,
     excludes: tuple[str, ...],
+    no_gitignore: bool,
 ):
     """Ingest a repository's code into the graph (AST + call graph)."""
     if monorepo:
@@ -290,7 +300,12 @@ def ingest(
     from navegador.ingestion import RepoIngester
 
     store = _get_store(db, target=repo_path)
-    ingester = RepoIngester(store, redact=redact, exclude=list(excludes))
+    ingester = RepoIngester(
+        store,
+        redact=redact,
+        exclude=list(excludes),
+        respect_gitignore=not no_gitignore,
+    )
 
     if watch:
         console.print(f"[bold]Watching[/bold] {repo_path} (interval={interval}s, Ctrl-C to stop)")

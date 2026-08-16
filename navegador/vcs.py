@@ -120,6 +120,30 @@ class GitAdapter(VCSAdapter):
         result = self._run(["rev-parse", "--abbrev-ref", "HEAD"])
         return result.stdout.strip()
 
+    def visible_files(self) -> list[str]:
+        """
+        Repo-relative paths of every file git does not ignore.
+
+        ``ls-files --cached --others --exclude-standard`` is tracked files plus
+        untracked ones that survive the exclude rules, which is exactly the set
+        a tool like ripgrep walks. Using git as the oracle rather than matching
+        ``.gitignore`` ourselves keeps nested ignore files, negation patterns,
+        anchoring, ``core.excludesFile`` and ``.git/info/exclude`` correct for
+        free — all of which a hand-rolled matcher gets subtly wrong (#180).
+
+        Returns an empty list outside a git repository, which callers read as
+        "no opinion" and fall back to walking everything.
+        """
+        if not self.is_repo():
+            return []
+        result = self._run(
+            ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+            check=False,
+        )
+        if result.returncode != 0:
+            return []
+        return [p for p in result.stdout.split("\0") if p]
+
     def changed_files(self, since: str = "") -> list[str]:
         """
         Return file paths that differ from *since* (or from HEAD when empty).
