@@ -44,6 +44,33 @@ GRAPH_BLOBS = "nav:graph:{graph}:blobs"
 LEVEL = 6
 
 
+ZLIB = b"\x01"  # payload is zlib-compressed
+RAW = b"\x00"  # payload is stored as-is
+
+
+def _encode(text: str) -> bytes:
+    """
+    Compress, unless compressing makes it bigger.
+
+    zlib adds a header and a checksum, so on a short file the "compressed"
+    form is larger than the original — a 81-byte fixture came back as 93.
+    A one-byte tag says which form the payload is in, which costs less than
+    ever storing the worse of the two.
+    """
+    encoded = text.encode("utf-8")
+    squeezed = zlib.compress(encoded, LEVEL)
+    if len(squeezed) < len(encoded):
+        return ZLIB + squeezed
+    return RAW + encoded
+
+
+def _decode(blob: bytes) -> str:
+    tag, payload = blob[:1], blob[1:]
+    if tag == ZLIB:
+        payload = zlib.decompress(payload)
+    return payload.decode("utf-8", errors="replace")
+
+
 def _binary_connection(connection):
     """
     A sibling connection that does not decode responses.
@@ -115,7 +142,7 @@ class ContentStore:
         self._conn.sadd(GRAPH_BLOBS.format(graph=self._graph), sha)
         if self._conn.exists(key):
             return False
-        self._conn.set(key, zlib.compress(text.encode("utf-8"), LEVEL))
+        self._conn.set(key, _encode(text))
         return True
 
     # ── Read ──────────────────────────────────────────────────────────────
@@ -124,7 +151,7 @@ class ContentStore:
         blob = self._conn.get(BLOB.format(sha=sha))
         if blob is None:
             return None
-        return zlib.decompress(blob).decode("utf-8", errors="replace")
+        return _decode(blob)
 
     def lines(self, sha: str) -> list[str]:
         text = self.get(sha)
@@ -217,5 +244,5 @@ class ContentStore:
                 continue
             stats.blobs += 1
             stats.compressed_bytes += len(blob)
-            stats.original_bytes += len(zlib.decompress(blob))
+            stats.original_bytes += len(_decode(blob).encode("utf-8"))
         return stats

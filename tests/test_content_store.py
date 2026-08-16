@@ -170,6 +170,36 @@ class TestRefcounting:
         assert not content.exists(sha)
 
 
+class TestEncoding:
+    def test_short_content_is_stored_uncompressed(self, content):
+        """
+        zlib adds a header and checksum, so a short file comes back larger
+        than it went in. Storing the worse of the two forms would make the
+        content store grow the thing it exists to shrink.
+        """
+        text = "x = 1\n"
+        sha = sha_of(text)
+        content.put(sha, text)
+
+        stats = content.stats()
+        assert stats.compressed_bytes <= stats.original_bytes + 1  # +1 for the tag
+        assert content.get(sha) == text
+
+    def test_long_content_is_compressed(self, content):
+        text = SOURCE * 50
+        sha = sha_of(text)
+        content.put(sha, text)
+
+        stats = content.stats()
+        assert stats.compressed_bytes < stats.original_bytes / 2
+
+    def test_both_forms_round_trip(self, content):
+        for text in ("tiny\n", SOURCE * 40, "ünïcode — ✓\n" * 5):
+            sha = sha_of(text)
+            content.put(sha, text)
+            assert content.get(sha) == text
+
+
 class TestStats:
     def test_reports_compression(self, content):
         text = SOURCE * 50

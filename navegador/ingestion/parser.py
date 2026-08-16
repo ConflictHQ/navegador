@@ -139,9 +139,15 @@ class RepoIngester:
         exclude: list[str] | None = None,
         include_nested_repos: bool = False,
         respect_gitignore: bool = True,
+        store_content: bool = True,
     ) -> None:
         self.store = store
         self.redact = redact
+        # Keep each file's text in the content store so lexical search has
+        # something to match against (#183). Content-addressed, so unchanged
+        # files and vendored copies cost nothing.
+        self.store_content = store_content
+        self._content_store = None
         # When True (default), a git checkout contributes only the files git
         # does not ignore. Without this the walk pruned on a fixed directory
         # list and indexed any build output whose directory name happened to
@@ -248,6 +254,7 @@ class RepoIngester:
             "skipped": 0,
             "grammar_skipped": 0,
             "removed": 0,
+            "content_stored": 0,
         }
 
         # Every path this pass saw on disk, recorded before any decision about
@@ -290,6 +297,8 @@ class RepoIngester:
                 self._store_file_hash(rel_path, content_hash)
                 self._link_file_to_repo(rel_path, repo_key)
                 stats["edges"] += 1
+                if self._store_content(source_file, content_hash):
+                    stats["content_stored"] += 1
                 if stats["files"] % 1000 == 0:
                     logger.info(
                         "Ingest progress %s: %d files parsed", repo_path.name, stats["files"]
@@ -391,6 +400,46 @@ class RepoIngester:
 
     # Extensions handled by MarkdownParser — these produce Document nodes, not File nodes.
     _DOCUMENT_EXTENSIONS = frozenset({".md", ".markdown"})
+
+    @property
+    def _content(self):
+        """
+        Lazily opened content store, or None when content is not being kept.
+
+        Opened once per ingester rather than per file: it holds a Redis
+        connection, and building one for each of 50,000 files would dominate
+        the ingest.
+        """
+        if not self.store_content:
+            return None
+        if self._content_store is None:
+            from navegador.graph.content import ContentStore
+
+            self._content_store = ContentStore(self.store)
+        return self._content_store
+
+    def _store_content(self, source_file: Path, content_hash: str) -> bool:
+        """
+        Keep the file's text so lexical search has something to match against.
+
+        Returns True only when the blob was newly written; an unchanged file
+        or one already stored by another repository returns False, which is
+        what makes re-ingest and vendored copies free.
+
+        Redaction is deliberately honoured here: if content is being redacted
+        for the graph, storing the unredacted original beside it would put the
+        secret back on the server through another door.
+        """
+        content = self._content
+        if content is None:
+            return False
+        try:
+            text = source_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        if self._detector is not None:
+            text = self._detector.redact(text)
+        return content.put(content_hash, text)
 
     def _file_unchanged(self, rel_path: str, content_hash: str) -> bool:
         suffix = Path(rel_path).suffix.lower()
