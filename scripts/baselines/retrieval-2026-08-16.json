@@ -1,0 +1,65 @@
+{
+  "sample": {
+    "sessions": 133,
+    "projects": 22,
+    "tool_calls": 57972,
+    "idle_threshold_s": 120.0
+  },
+  "orientation_turns": {
+    "n": 1477,
+    "mean": 8.16,
+    "p25": 2,
+    "p50": 5,
+    "p75": 10,
+    "p90": 19
+  },
+  "turns_to_first_target": {
+    "n": 5016,
+    "mean": 25.44,
+    "p25": 5,
+    "p50": 13.0,
+    "p75": 32,
+    "p90": 62
+  },
+  "reread_ratio": {
+    "n": 124,
+    "mean": 1.27,
+    "p25": 1.0,
+    "p50": 1.17,
+    "p75": 1.41,
+    "p90": 1.64
+  },
+  "fs_reads_per_active_minute": {
+    "n": 133,
+    "mean": 0.52,
+    "p25": 0.25,
+    "p50": 0.45,
+    "p75": 0.7,
+    "p90": 0.99
+  },
+  "tool_calls_per_session": {
+    "n": 133,
+    "mean": 435.88,
+    "p25": 76,
+    "p50": 206,
+    "p75": 524,
+    "p90": 1045
+  },
+  "scope_mix_pct": {
+    "file list": 49.0,
+    "single file": 43.1,
+    "subdirectory": 4.4,
+    "whole tree": 3.4,
+    "glob": 0.1
+  },
+  "top_tools": {
+    "Bash": 40752,
+    "Edit": 6713,
+    "Read": 2817,
+    "Write": 1818,
+    "mcp__claude-in-chrome__computer": 977,
+    "TaskUpdate": 925,
+    "TaskCreate": 553,
+    "mcp__claude-in-chrome__navigate": 395
+  }
+}
