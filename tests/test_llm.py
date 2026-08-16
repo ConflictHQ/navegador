@@ -110,7 +110,7 @@ class TestAnthropicProvider:
 
             importlib.reload(llm_mod)
             p = llm_mod.AnthropicProvider()
-            assert p.model == "claude-3-5-haiku-20241022"
+            assert p.model == "claude-opus-5"
 
     def test_custom_model(self):
         fake_mod, _ = _fake_anthropic_module()
@@ -426,6 +426,23 @@ class TestGetProvider:
 
 
 class TestAutoProvider:
+    @pytest.fixture(autouse=True)
+    def no_ambient_credentials(self, monkeypatch):
+        """
+        Selection depends on credentials since #164, so the environment must be
+        stated by each test rather than inherited. Without this, the result
+        depends on which keys the developer happens to export, and CI — which
+        exports none — disagrees with every laptop.
+        """
+        for var in (
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "OPENAI_API_KEY",
+            "NAVEGADOR_LLM_PROVIDER",
+            "NAVEGADOR_LLM_MODEL",
+        ):
+            monkeypatch.delenv(var, raising=False)
+
     def _reload(self):
         import importlib
 
@@ -434,7 +451,9 @@ class TestAutoProvider:
         importlib.reload(llm_mod)
         return llm_mod
 
-    def test_prefers_anthropic_when_all_available(self):
+    def test_prefers_anthropic_when_all_available(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         fake_a, _ = _fake_anthropic_module()
         fake_o, _ = _fake_openai_module()
         fake_ol, _ = _fake_ollama_module()
@@ -446,7 +465,8 @@ class TestAutoProvider:
             p = llm_mod.auto_provider()
             assert p.name == "anthropic"
 
-    def test_falls_back_to_openai_when_anthropic_missing(self):
+    def test_falls_back_to_openai_when_anthropic_missing(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         fake_o, _ = _fake_openai_module()
         fake_ol, _ = _fake_ollama_module()
         with (
@@ -471,7 +491,7 @@ class TestAutoProvider:
     def test_raises_runtime_error_when_no_sdk_available(self):
         with _block_import("anthropic"), _block_import("openai"), _block_import("ollama"):
             llm_mod = self._reload()
-            with pytest.raises(RuntimeError, match="No LLM SDK is installed"):
+            with pytest.raises(RuntimeError, match="No usable LLM provider"):
                 llm_mod.auto_provider()
 
     def test_runtime_error_message_includes_install_hints(self):
@@ -480,7 +500,8 @@ class TestAutoProvider:
             with pytest.raises(RuntimeError, match="pip install"):
                 llm_mod.auto_provider()
 
-    def test_passes_model_to_provider(self):
+    def test_passes_model_to_provider(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
         fake_a, _ = _fake_anthropic_module()
         with patch.dict(sys.modules, {"anthropic": fake_a}):
             llm_mod = self._reload()
