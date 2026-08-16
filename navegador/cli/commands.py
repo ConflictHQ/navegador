@@ -6,15 +6,18 @@ Navegador CLI — the single interface to your project's knowledge graph.
   UNIVERSAL: explain, search (spans both layers), stats
 """
 
-import asyncio
 import json
 import logging
 from pathlib import Path
 
 import click
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.table import Table
+
+# asyncio and rich.markdown are imported where they are used, not here. They
+# cost ~95ms of the ~137ms it took to import this module, and every CLI
+# invocation paid it — including the agent hooks, which shell out per call
+# (#190). Only the MCP server needs asyncio; only `manual` renders markdown.
 
 console = Console()
 # Progress narration goes to stderr so that --json output on stdout stays
@@ -1835,6 +1838,8 @@ def mcp(db: str, read_only: bool, federate: tuple[str, ...]):
     mode = "read-only" if read_only else "read-write"
     federated = f", federated over {len(federate)} repos" if federate else ""
     console.print(f"[green]Navegador MCP server running[/green] (stdio, {mode}{federated})")
+
+    import asyncio
 
     async def _run():
         async with stdio_server() as (read_stream, write_stream):
@@ -4619,6 +4624,8 @@ def manual(page: str, query: str, list_only: bool, raw: bool, as_json: bool):
             elif raw:
                 click.echo(doc.read())
             else:
+                from rich.markdown import Markdown
+
                 console.print(Markdown(doc.read()))
             return
 
