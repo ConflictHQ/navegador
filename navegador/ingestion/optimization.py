@@ -335,6 +335,7 @@ class ParallelIngester:
         max_workers: int | None = None,
         clear: bool = False,
         incremental: bool = False,
+        repo_key: str | None = None,
     ) -> dict[str, int]:
         """
         Ingest a repository, parsing files concurrently.
@@ -346,13 +347,22 @@ class ParallelIngester:
                          :class:`~concurrent.futures.ThreadPoolExecutor`.
             clear: Wipe the graph before ingesting.
             incremental: Skip files whose content hash hasn't changed.
+            repo_key: Portable graph identity for the Repository node. Defaults
+                to the git remote's ``owner/repo``, falling back to the
+                directory name — the same derivation the serial ingester uses,
+                so the two paths cannot disagree about repository identity.
 
         Returns:
             Aggregated stats dict with keys: files, functions, classes,
             edges, skipped, errors.
         """
         from navegador.graph.schema import NodeLabel
-        from navegador.ingestion.parser import LANGUAGE_MAP, _file_hash
+        from navegador.ingestion.parser import (
+            LANGUAGE_MAP,
+            _file_hash,
+            repo_display_name,
+            repo_identity,
+        )
 
         repo_path = Path(repo_path).resolve()
         if not repo_path.exists():
@@ -361,13 +371,15 @@ class ParallelIngester:
         if clear:
             self._store.clear()
 
-        # Repository node (same as RepoIngester.ingest) — keyed by name, not
-        # the machine-local checkout path (#145).
+        # Repository node (same as RepoIngester.ingest) — keyed by a portable
+        # identity, not the machine-local checkout path (#145) and not the
+        # directory basename, which differs per worktree or renamed clone (#167).
+        repo_key = repo_key or repo_identity(repo_path)
         self._store.create_node(
             NodeLabel.Repository,
             {
-                "name": repo_path.name,
-                "path": repo_path.name,
+                "name": repo_display_name(repo_key),
+                "path": repo_key,
             },
         )
 

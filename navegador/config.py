@@ -162,6 +162,55 @@ def storage_from_file(path: Path, label: str) -> StorageConfig | None:
     return None
 
 
+@dataclass(frozen=True)
+class LLMConfig:
+    """A resolved LLM provider selection, with the layer that produced it."""
+
+    provider: str = ""
+    model: str = ""
+    source: str = "default"
+
+    def describe(self) -> str:
+        return f"{self.provider or '(auto)'}/{self.model or '(default)'} (from {self.source})"
+
+
+def resolve_llm(
+    provider: str | None = None,
+    model: str | None = None,
+    target: str | Path | None = None,
+) -> LLMConfig:
+    """
+    Resolve which LLM provider and model to use, and record why.
+
+    Layered exactly like storage: explicit flags, then environment, then the
+    project's ``[llm]`` table, then the user's. `navegador init` has always
+    written ``[llm] provider`` and ``model``, and nothing read them (#164).
+    """
+    if provider or model:
+        return LLMConfig(provider=provider or "", model=model or "", source="command line")
+
+    env_provider = os.environ.get("NAVEGADOR_LLM_PROVIDER", "").strip()
+    env_model = os.environ.get("NAVEGADOR_LLM_MODEL", "").strip()
+    if env_provider or env_model:
+        return LLMConfig(provider=env_provider, model=env_model, source="environment")
+
+    for path, label in (
+        (find_project_config(target), "project config"),
+        (user_config_path(), "user config"),
+    ):
+        if not path or not Path(path).is_file():
+            continue
+        section = read_config(path).get("llm")
+        if not isinstance(section, dict):
+            continue
+        name = str(section.get("provider", "")).strip()
+        model_id = str(section.get("model", "")).strip()
+        if name or model_id:
+            return LLMConfig(provider=name, model=model_id, source=f"{label} {path}")
+
+    return LLMConfig()
+
+
 # ── Resolution ────────────────────────────────────────────────────────────────
 
 

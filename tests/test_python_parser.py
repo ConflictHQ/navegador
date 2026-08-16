@@ -345,43 +345,50 @@ class TestHandleImportFrom:
         return parser
 
     def test_handle_import_from_with_member(self):
+        """
+        Parsed from real source rather than a hand-built node tree.
+
+        The previous version asserted against a node type called
+        `import_from_member`, which the grammar does not produce: members are
+        `dotted_name`, exactly like the module. The mock made the handler look
+        correct while `from X import Y` created no Import node at all (#163).
+        """
+        from navegador.ingestion.python import _get_parser
+
         parser = self._make_parser()
         store = MagicMock()
         stats = {"functions": 0, "classes": 0, "edges": 0}
-        combined = b"os.pathjoin"
-        module_node3 = MockNode("dotted_name", start_byte=0, end_byte=7)
-        member_node3 = MockNode("import_from_member", start_byte=7, end_byte=11)
-        node3 = MockNode("import_from_statement",
-                         children=[module_node3, member_node3],
-                         start_point=(0, 0))
-        parser._handle_import_from(node3, combined, "app.py", store, stats)
+        source = b"from os.path import join\n"
+        node = _get_parser().parse(source).root_node.children[0]
+
+        parser._handle_import_from(node, source, "app.py", store, stats)
+
         store.create_node.assert_called_once()
-        store.create_edge.assert_called_once()
+        _label, props = store.create_node.call_args[0]
+        assert props["name"] == "join"
+        assert props["module"] == "os.path"
         assert stats["edges"] == 1
 
     def test_handle_import_from_no_member(self):
+        """A wildcard import binds no nameable symbol, so nothing is created."""
+        from navegador.ingestion.python import _get_parser
+
         parser = self._make_parser()
         store = MagicMock()
-        # No import_from_member children — nothing should be created
-        module_node = MockNode("dotted_name", start_byte=0, end_byte=7)
-        node = MockNode("import_from_statement",
-                        children=[module_node],
-                        start_point=(0, 0))
+        source = b"from os.path import *\n"
+        node = _get_parser().parse(source).root_node.children[0]
         stats = {"functions": 0, "classes": 0, "edges": 0}
-        parser._handle_import_from(node, b"os.path", "app.py", store, stats)
+        parser._handle_import_from(node, source, "app.py", store, stats)
         store.create_node.assert_not_called()
         assert stats["edges"] == 0
 
     def test_walk_dispatches_import_from(self):
+        from navegador.ingestion.python import _get_parser
+
         parser = self._make_parser()
         store = MagicMock()
-        source = b"os.pathjoin"
-        module_node = MockNode("dotted_name", start_byte=0, end_byte=7)
-        member_node = MockNode("import_from_member", start_byte=7, end_byte=11)
-        import_from = MockNode("import_from_statement",
-                               children=[module_node, member_node],
-                               start_point=(0, 0))
-        root = MockNode("module", children=[import_from])
+        source = b"from os.path import join\n"
+        root = _get_parser().parse(source).root_node
         stats = {"functions": 0, "classes": 0, "edges": 0}
         parser._walk(root, source, "app.py", store, stats, class_name=None)
         assert stats["edges"] == 1

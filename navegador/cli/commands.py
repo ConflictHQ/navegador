@@ -63,6 +63,27 @@ def _open_store(db: str, target: str | None = None):
         raise click.ClickException(str(e)) from e
 
 
+def _get_llm(llm_provider: str, llm_model: str, target: str | None = None):
+    """
+    Build the configured LLM provider, or fail with something actionable.
+
+    Resolves through the same layering as storage — flags, environment, project
+    config, user config — so `[llm]` in config.toml is finally honoured (#164),
+    and turns provider/credential problems into a Click error naming the
+    provider, the layer that chose it, and the fix.
+    """
+    from navegador.config import resolve_llm
+    from navegador.llm import auto_provider, get_provider
+
+    config = resolve_llm(llm_provider or None, llm_model or None, target=target)
+    try:
+        if config.provider:
+            return get_provider(config.provider, model=config.model)
+        return auto_provider(model=config.model)
+    except (RuntimeError, ValueError, ImportError) as e:
+        raise click.ClickException(f"Cannot use LLM provider {config.describe()}.\n{e}") from e
+
+
 def _emit(text: str, fmt: str) -> None:
     if fmt == "json":
         click.echo(text)
@@ -216,6 +237,15 @@ def init(
     help="Detect and ingest as a monorepo workspace (Turborepo, Nx, Yarn, pnpm, Cargo, Go).",
 )
 @click.option(
+    "--repo-name",
+    "repo_key",
+    default="",
+    metavar="NAME",
+    help="Pin the Repository node's identity. Defaults to the git remote's "
+    "owner/repo, falling back to the directory name — so a worktree or a "
+    "renamed clone does not create a second, phantom repository.",
+)
+@click.option(
     "--exclude",
     "excludes",
     multiple=True,
@@ -233,6 +263,7 @@ def ingest(
     as_json: bool,
     redact: bool,
     monorepo: bool,
+    repo_key: str,
     excludes: tuple[str, ...],
 ):
     """Ingest a repository's code into the graph (AST + call graph)."""
@@ -278,11 +309,15 @@ def ingest(
         return
 
     if as_json:
-        stats = ingester.ingest(repo_path, clear=clear, incremental=incremental)
+        stats = ingester.ingest(
+            repo_path, clear=clear, incremental=incremental, repo_key=repo_key or None
+        )
         click.echo(json.dumps(stats, indent=2))
     else:
         with console.status(f"[bold]Ingesting[/bold] {repo_path}..."):
-            stats = ingester.ingest(repo_path, clear=clear, incremental=incremental)
+            stats = ingester.ingest(
+                repo_path, clear=clear, incremental=incremental, repo_key=repo_key or None
+            )
         table = Table(title="Ingestion complete")
         table.add_column("Metric", style="cyan")
         table.add_column("Count", justify="right", style="green")
@@ -2211,6 +2246,111 @@ def repo():
     """Manage and query across multiple repositories."""
 
 
+@repo.command("nodes")
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True)
+def repo_nodes(db: str, as_json: bool):
+    """List Repository nodes in the graph with how many files each owns.
+
+    \b
+    Useful for spotting phantom repositories — before repository identity was
+    derived from the git remote, a worktree or a renamed clone created a second
+    node indistinguishable from a real one (#167).
+    """
+    store = _get_store(db)
+    rows = (
+        store.query(
+            "MATCH (r:Repository) "
+            "OPTIONAL MATCH (f)-[:BELONGS_TO]->(r) "
+            "RETURN r.path AS path, r.name AS name, count(f) AS files "
+            "ORDER BY r.path"
+        ).result_set
+        or []
+    )
+    entries = [{"path": r[0], "name": r[1], "files": r[2]} for r in rows]
+
+    if as_json:
+        click.echo(json.dumps(entries, indent=2))
+        return
+    if not entries:
+        console.print("No Repository nodes in this graph.")
+        return
+
+    table = Table(title=f"{len(entries)} Repository node(s)")
+    table.add_column("Identity", style="cyan", overflow="fold")
+    table.add_column("Name")
+    table.add_column("Files", justify="right")
+    for e in entries:
+        table.add_row(str(e["path"]), str(e["name"]), str(e["files"]))
+    console.print(table)
+
+    names = [e["name"] for e in entries]
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        console.print(
+            f"\n[yellow]{len(dupes)} name(s) held by more than one node[/yellow]: "
+            f"{', '.join(dupes)}\n"
+            "If these are the same repository under different checkout names, merge them:\n"
+            "  [cyan]navegador repo merge <phantom-identity> <canonical-identity>[/cyan]"
+        )
+
+
+@repo.command("merge")
+@click.argument("source")
+@click.argument("target")
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True)
+def repo_merge(source: str, target: str, db: str, as_json: bool):
+    """Merge Repository node SOURCE into TARGET, then delete SOURCE.
+
+    \b
+    Repairs graphs that accumulated phantom repositories before identity was
+    derived from the git remote. Every file owned by SOURCE is re-pointed at
+    TARGET; files already owned by both simply lose the duplicate edge.
+
+    \b
+    Example:
+      navegador repo merge myproj-worktree ExampleOrg/myproj
+    """
+    store = _get_store(db)
+
+    def count(identity: str) -> int | None:
+        rows = store.query(
+            "MATCH (r:Repository {path: $p}) RETURN count(r)", {"p": identity}
+        ).result_set
+        return rows[0][0] if rows else 0
+
+    if not count(source):
+        raise click.ClickException(f"No Repository node with identity {source!r}.")
+    if not count(target):
+        raise click.ClickException(
+            f"No Repository node with identity {target!r}. "
+            f"Merging into a node that does not exist would lose the files instead."
+        )
+    if source == target:
+        raise click.ClickException("SOURCE and TARGET are the same identity.")
+
+    moved = (
+        store.query(
+            "MATCH (f)-[old:BELONGS_TO]->(:Repository {path: $src}), "
+            "(t:Repository {path: $tgt}) "
+            "DELETE old "
+            "MERGE (f)-[:BELONGS_TO]->(t) "
+            "RETURN count(f)",
+            {"src": source, "tgt": target},
+        ).result_set
+        or [[0]]
+    )[0][0]
+
+    store.query("MATCH (r:Repository {path: $src}) DETACH DELETE r", {"src": source})
+
+    result = {"source": source, "target": target, "files_moved": moved}
+    if as_json:
+        click.echo(json.dumps(result, indent=2))
+    else:
+        console.print(f"[green]Merged[/green] {source} → {target} ({moved} file(s) re-pointed)")
+
+
 @repo.command("add")
 @click.argument("name")
 @click.argument("path", type=click.Path())
@@ -2925,14 +3065,9 @@ def semantic_search(
       navegador semantic-search "database connection" --index --provider openai
     """
     from navegador.intelligence.search import SemanticSearch
-    from navegador.llm import auto_provider, get_provider
 
     store = _get_store(db)
-    provider = (
-        get_provider(llm_provider, model=llm_model)
-        if llm_provider
-        else auto_provider(model=llm_model)
-    )
+    provider = _get_llm(llm_provider, llm_model)
     ss = SemanticSearch(store, provider)
 
     if do_index:
@@ -3051,14 +3186,9 @@ def ask(question: str, db: str, llm_provider: str, llm_model: str):
       navegador ask "What concepts are in the auth domain?"
     """
     from navegador.intelligence.nlp import NLPEngine
-    from navegador.llm import auto_provider, get_provider
 
     store = _get_store(db)
-    provider = (
-        get_provider(llm_provider, model=llm_model)
-        if llm_provider
-        else auto_provider(model=llm_model)
-    )
+    provider = _get_llm(llm_provider, llm_model)
     engine = NLPEngine(store, provider)
 
     with console.status("[bold]Thinking...[/bold]"):
@@ -3090,14 +3220,9 @@ def generate_docs_cmd(name: str, db: str, llm_provider: str, llm_model: str, fil
       navegador generate-docs GraphStore --file navegador/graph/store.py
     """
     from navegador.intelligence.nlp import NLPEngine
-    from navegador.llm import auto_provider, get_provider
 
     store = _get_store(db)
-    provider = (
-        get_provider(llm_provider, model=llm_model)
-        if llm_provider
-        else auto_provider(model=llm_model)
-    )
+    provider = _get_llm(llm_provider, llm_model)
     engine = NLPEngine(store, provider)
 
     with console.status("[bold]Generating docs...[/bold]"):
@@ -4328,6 +4453,106 @@ def _migrate_server(
     except Exception as e:  # noqa: BLE001
         return {**result, "status": "failed", "error": str(e)}
     return result
+
+
+# ── Supergraph contract v1.0 (#158) ──────────────────────────────────────────
+
+
+@main.group()
+def contract():
+    """Supergraph interop contract — the code realm's output boundary."""
+
+
+@contract.command("resolve")
+@click.argument("address")
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True)
+def contract_resolve(address: str, db: str, as_json: bool):
+    """Resolve a contract ADDRESS into the code graph.
+
+    \b
+    This is the brain-to-code hop: given the target of an `implemented_in` join
+    edge, it returns the node and the callers/callees traversal continues to.
+
+    \b
+    Examples:
+      navegador contract resolve "code:src/auth.py#validate_token"
+      navegador contract resolve "myrepo/code:src/auth.py"
+    """
+    from navegador.contract import AddressError, resolve
+
+    store = _get_store(db)
+    try:
+        resolved = resolve(store, address)
+    except AddressError as e:
+        raise click.ClickException(str(e)) from e
+
+    if as_json:
+        click.echo(json.dumps(resolved.to_dict(), indent=2, default=str))
+        raise SystemExit(0 if resolved.found else 1)
+
+    if not resolved.found:
+        console.print(f"[yellow]No node at[/yellow] {resolved.address}")
+        console.print(
+            "  The repo may not be ingested, or its paths may be recorded "
+            "relative to a different root. Check: [cyan]navegador repo nodes[/cyan]"
+        )
+        raise SystemExit(1)
+
+    console.print(f"[green]{resolved.label}[/green] {resolved.name}")
+    console.print(f"  address: {resolved.address}")
+    console.print(f"  path:    {resolved.path}")
+
+
+@contract.command("propose")
+@click.option("--repo", default="", help="Federation namespace to qualify targets with.")
+@click.option(
+    "--min-confidence",
+    default=0.5,
+    show_default=True,
+    help="Drop proposals scoring below this.",
+)
+@DB_OPTION
+@click.option("--json", "as_json", is_flag=True)
+def contract_propose(repo: str, min_confidence: float, db: str, as_json: bool):
+    """Propose join edges from inferred documentation-to-code affinity.
+
+    \b
+    Emits contract-format `implemented_in` proposals with confidence and
+    evidence. Navegador proposes; the brain reviews and decides what to commit.
+
+    \b
+    Examples:
+      navegador contract propose --repo myrepo --json
+      navegador contract propose --min-confidence 0.8
+    """
+    from navegador.contract import propose_join_edges
+
+    payload = propose_join_edges(_get_store(db), repo=repo, min_confidence=min_confidence)
+
+    if as_json:
+        click.echo(json.dumps(payload, indent=2, default=str))
+        return
+
+    proposals = payload["proposals"]
+    if not proposals:
+        console.print("No join edges to propose above that confidence.")
+        return
+
+    table = Table(title=f"{len(proposals)} join-edge proposal(s), contract {payload['contract']}")
+    table.add_column("Source", style="cyan", overflow="fold")
+    table.add_column("Edge")
+    table.add_column("Target address", overflow="fold")
+    table.add_column("Conf.", justify="right")
+    for item in proposals:
+        table.add_row(
+            f"{item['source']['kind']}:{item['source']['name']}",
+            item["edge"],
+            item["target"],
+            f"{item['confidence']:.2f}",
+        )
+    console.print(table)
+    console.print("\nReview and commit these in the brain — navegador only proposes.")
 
 
 # ── Manual: documentation packaged with the CLI (#172) ───────────────────────

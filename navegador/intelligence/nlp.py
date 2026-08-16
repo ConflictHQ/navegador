@@ -24,6 +24,7 @@ Usage::
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -49,15 +50,53 @@ Node properties (where present):
   status, domain, rationale, alternatives, date, community
 """
 
+#: `(var:A|B)` in a node pattern — the variable is optional, and the pattern
+#: ends at `)` or at a property map `{`. Relationship patterns use `[` and are
+#: deliberately not matched: FalkorDB accepts alternative relationship types.
+logger = logging.getLogger(__name__)
+
+_NODE_ALT_LABELS = re.compile(
+    r"\(\s*(\w*)\s*:\s*([A-Za-z_]\w*(?:\s*\|\s*[A-Za-z_]\w*)+)\s*(?=[){])"
+)
+
+#: The clause a WHERE must be inserted before when the query has none.
+_TRAILING_CLAUSE = re.compile(
+    r"\b(RETURN|WITH|ORDER\s+BY|SKIP|LIMIT|SET|DELETE|DETACH|CREATE|MERGE|UNWIND|CALL)\b",
+    re.IGNORECASE,
+)
+
 _NL_TO_CYPHER_PROMPT = """\
 You are a FalkorDB Cypher expert. Given the schema below and a user question,
 write a single Cypher query that answers the question.
 
 Return ONLY the Cypher query — no markdown fences, no explanation.
 
+FalkorDB dialect notes:
+- A node pattern takes exactly one label. To match several, leave the pattern
+  unlabelled and test in WHERE: MATCH (n) WHERE (n:Class OR n:Function)
+  `MATCH (n:Class|Function)` is a syntax error.
+- Alternative *relationship* types are fine: -[:CALLS|CONTAINS]->
+
 {schema}
 
 User question: {question}
+"""
+
+_RETRY_CYPHER_PROMPT = """\
+The Cypher query you wrote was rejected by FalkorDB.
+
+Query:
+{cypher}
+
+Error:
+{error}
+
+{schema}
+
+User question: {question}
+
+Rewrite the query so it runs. Return ONLY the corrected Cypher — no markdown
+fences, no explanation.
 """
 
 _FORMAT_RESULT_PROMPT = """\
@@ -117,6 +156,49 @@ class NLPEngine:
 
     # ── Natural language query ─────────────────────────────────────────────
 
+    @staticmethod
+    def _rewrite_alternative_labels(cypher: str) -> str:
+        """
+        Rewrite ``(n:A|B)`` into ``(n)`` plus a ``WHERE (n:A OR n:B)`` predicate.
+
+        FalkorDB accepts exactly one label in a node pattern, so the pipe form —
+        which the model reaches for naturally, and which is valid in some other
+        Cypher dialects — is a syntax error (#165). Relationship alternatives
+        (``-[:CALLS|CONTAINS]->``) *are* supported and are deliberately left
+        alone; only parenthesised node patterns are rewritten.
+        """
+        predicates: list[str] = []
+        counter = {"n": 0}
+
+        def replace(match: re.Match) -> str:
+            var, labels = match.group(1), match.group(2)
+            if not var:
+                counter["n"] += 1
+                var = f"_alt{counter['n']}"
+            parts = [p.strip() for p in labels.split("|") if p.strip()]
+            predicates.append("(" + " OR ".join(f"{var}:{p}" for p in parts) + ")")
+            return f"({var}"
+
+        rewritten = _NODE_ALT_LABELS.sub(replace, cypher)
+        if not predicates:
+            return cypher
+
+        joined = " AND ".join(predicates)
+        where = re.search(r"\bWHERE\b", rewritten, re.IGNORECASE)
+        if where:
+            return f"{rewritten[: where.end()]} {joined} AND{rewritten[where.end() :]}"
+
+        tail = _TRAILING_CLAUSE.search(rewritten)
+        if tail:
+            return f"{rewritten[: tail.start()]}WHERE {joined} {rewritten[tail.start() :]}"
+        return f"{rewritten} WHERE {joined}"
+
+    def _generate_cypher(self, question: str) -> str:
+        raw = self._provider.complete(
+            _NL_TO_CYPHER_PROMPT.format(schema=_SCHEMA_SUMMARY, question=question)
+        ).strip()
+        return self._rewrite_alternative_labels(_strip_fences(raw))
+
     def natural_query(self, question: str) -> str:
         """
         Convert a natural-language *question* into Cypher, execute it, and
@@ -130,20 +212,39 @@ class NLPEngine:
             A human-readable answer string.
         """
         # Step 1: translate question → Cypher
-        cypher_prompt = _NL_TO_CYPHER_PROMPT.format(schema=_SCHEMA_SUMMARY, question=question)
-        cypher = self._provider.complete(cypher_prompt).strip()
+        cypher = self._generate_cypher(question)
 
-        # Strip any accidental markdown fences the model may still produce
-        cypher = _strip_fences(cypher)
-
-        # Step 2: execute
+        # Step 2: execute, and give the model one chance to repair a query the
+        # database rejected. Reporting a syntax error back to the user as the
+        # answer leaves them with a failed query and no way forward (#165).
         try:
             result = self._store.query(cypher, {})
             rows = result.result_set or []
-        except Exception as exc:  # noqa: BLE001
-            return (
-                f"Failed to execute the generated Cypher query.\n\nQuery: {cypher}\n\nError: {exc}"
-            )
+        except Exception as first_error:  # noqa: BLE001
+            logger.info("Generated Cypher rejected, retrying once: %s", first_error)
+            try:
+                repaired = _strip_fences(
+                    self._provider.complete(
+                        _RETRY_CYPHER_PROMPT.format(
+                            cypher=cypher,
+                            error=first_error,
+                            schema=_SCHEMA_SUMMARY,
+                            question=question,
+                        )
+                    ).strip()
+                )
+                repaired = self._rewrite_alternative_labels(repaired)
+                result = self._store.query(repaired, {})
+                rows = result.result_set or []
+                cypher = repaired
+            except Exception as retry_error:  # noqa: BLE001
+                return (
+                    "Could not answer that — the generated Cypher was rejected twice.\n\n"
+                    f"First attempt: {cypher}\n  {first_error}\n\n"
+                    f"Retry also failed:\n  {retry_error}\n\n"
+                    "Rephrasing the question, or naming the node labels you mean, "
+                    "usually helps."
+                )
 
         # Step 3: format result
         rows_text = json.dumps(rows[:50], indent=2, default=str)

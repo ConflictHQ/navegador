@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import urllib.parse
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -98,6 +99,22 @@ class GitAdapter(VCSAdapter):
         """Return True when *repo_path* contains a ``.git`` directory or file."""
         return (self.repo_path / ".git").exists()
 
+    def remote_identity(self, remote: str = "origin") -> str:
+        """
+        ``owner/repo`` derived from a remote URL, or "" when there is none.
+
+        This is the only repository identifier that survives the checkout being
+        renamed, cloned to another directory, or added as a worktree — all of
+        which produce a different directory basename for the same repository
+        (#167).
+        """
+        if not self.is_repo():
+            return ""
+        result = self._run(["remote", "get-url", remote], check=False)
+        if result.returncode != 0:
+            return ""
+        return normalize_remote_url(result.stdout.strip())
+
     def current_branch(self) -> str:
         """Return the name of the current branch (e.g. ``"main"``)."""
         result = self._run(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -172,6 +189,50 @@ class GitAdapter(VCSAdapter):
         """
         result = self._run(["blame", "--porcelain", "--", file_path])
         return _parse_porcelain_blame(result.stdout)
+
+
+def normalize_remote_url(url: str) -> str:
+    """
+    Reduce a git remote URL to a stable repository identity.
+
+    Hosted remotes yield ``owner/repo``; the host itself is dropped so an ssh
+    clone and an https clone of the same repository agree. A remote that is a
+    filesystem path — how worktrees and local clones are usually set up — yields
+    just the repository name, since there is no owner to speak of.
+
+    Returns "" for anything that does not reduce cleanly, which callers treat as
+    "no remote identity" and fall back from.
+    """
+    url = (url or "").strip()
+    if not url:
+        return ""
+
+    hosted = False
+    if "://" in url:
+        parsed = urllib.parse.urlparse(url)
+        # A scheme with no host is a local URL (file:///path)
+        hosted = bool(parsed.netloc) and parsed.scheme != "file"
+        url = parsed.path
+    elif ":" in url and not Path(url).exists():
+        # scp-style git@host:owner/repo.git — never a local path
+        head, _, tail = url.rpartition(":")
+        if head and "/" not in head:
+            hosted = True
+            url = tail
+
+    url = url.strip("/")
+    if url.endswith(".git"):
+        url = url[: -len(".git")]
+
+    parts = [p for p in url.replace("\\", "/").split("/") if p and p not in (".", "..")]
+    if not parts:
+        return ""
+
+    if hosted:
+        # Keep owner/repo: enough to distinguish forks and orgs, without the
+        # host, which differs between ssh and https clones of one repository.
+        return "/".join(parts[-2:])
+    return parts[-1]
 
 
 def _parse_porcelain_blame(output: str) -> list[dict]:

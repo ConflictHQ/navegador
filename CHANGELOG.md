@@ -39,6 +39,29 @@
 - **`doctor` tells "never ingested" apart from "already migrated"** — it reads the node count of the graph the project actually resolves to. An empty one is a problem (queries return nothing, which is not the same as not-found); a populated one with a leftover local file is a note, not a warning to live with forever
 - **`navegador scan <root>`** inventories every project under a tree, flags the ones ingesting where nothing reads, and recommends a shared server with its reasons
 
+### Graph fidelity
+
+- **Export/import dropped every edge and reported success** — the JSONL export wrote node ids derived from array position, so an import re-derived different ids and every edge referenced an endpoint that did not exist. `create_edge` returned falsy, nothing checked it, and the summary counted edges it had described rather than edges it had written. A round-trip of a 4,000-node graph restored 4,000 nodes and 0 edges, which reads as a repo with no call structure rather than a failed import. Ids are now content-derived so they survive the round trip, the created count comes from the store, and a shortfall raises instead of printing a total (#173)
+- **Ingest never removed nodes for files deleted from disk** — incremental ingest compared mtimes to decide what to re-parse and had no branch at all for files that had gone. A renamed module left its old symbols in the graph indefinitely, and impact queries cited functions that no longer existed anywhere in the repository. The file set present on disk is now recorded before parse decisions are made, and the difference is pruned (#168)
+- **Repository identity survived neither a worktree nor a renamed clone** — the `Repository` node was keyed by the checkout directory's basename, so `git clone <url> myproj-review` produced a second, indistinguishable `Repository`, and files ended up owned by every node they had been ingested under. Identity now comes from the normalized git remote, the only thing constant across all three, with the directory name as the fallback outside a repo (#167)
+- **Python call edges never crossed a file boundary** — `_extract_calls` recorded every callee as living in the calling file, so an imported function resolved to a node that does not exist and the edge was dropped. On a multi-package fixture the graph held the right symbols and *zero* `CALLS` edges, so explain, trace, and impact stopped dead at each file and looked like code with no callers. Imports are now resolved to repo files (absolute, relative, and function-local), and a callable passed to a higher-order helper is recorded as `REFERENCES` rather than lost (#163)
+- **`from x import y` produced no `Import` nodes at all** — the parser matched a node type (`import_from_member`) that does not exist in the tree-sitter Python grammar; both the module and its members are `dotted_name` (#163)
+- **testmap invented confident cross-repository `TESTS` edges** — the heuristic stripped `test_`, tried ever-shorter prefixes, and took the first symbol with that name anywhere in the graph, so `test_request_returns_200` degraded to `request` and linked to an unrelated repository's method at full confidence. A wrong `TESTS` edge is worse than a missing one, because impact and context queries then cite it. Candidates are now scored on repository, path proximity, and name distinctiveness; generic verbs are never candidates at any threshold; test-module helpers are never targets; edges carry their confidence and evidence; and ties are reported as ambiguous rather than resolved by iteration order (#166)
+
+### LLM configuration
+
+- **`[llm]` in `config.toml` was written by `init` and read by nothing** — `resolve_llm()` now layers it the same way storage is resolved, with provenance
+- **Provider discovery required only that the SDK import** — Anthropic was selected whenever the package was installed, credentials or not, and the failure surfaced later as a raw auth error from inside the call. Availability now means a usable credential, and the error names what each provider is missing (#164)
+- **The default Anthropic model was retired** — `claude-3-5-haiku-20241022` has 404'd since 2026-02-19, so every fallback path was calling a model that no longer exists (#164)
+- **Generated Cypher was not executable** — the NLP engine emitted `(n:Class|Function)`, which FalkorDB rejects: a node pattern takes exactly one label. Alternative *relationship* types are valid and are left alone. Node alternatives are rewritten to `WHERE (n:Class OR n:Function)`, and a query that still fails is retried once with the error fed back (#165)
+
+### Supergraph interoperability
+
+- **Contract v1.0 conformance** — navegador owns the `code` realm and is addressable from every other graph in the system as `[<repo>/]code:<path>[#<symbol>]`. Conformance is a mapping layer at the tool surface; internal ids, the store, and the schema are unchanged (#158)
+- **`navegador contract resolve <address>`** and the `resolve_address` MCP tool complete the brain-to-code hop: a brain-side `implemented_in` edge carries a code address, and resolving it returns the node plus its callers and callees, each with its own address, so traversal continues without a second round trip
+- **`navegador contract propose`** and the `propose_join_edges` MCP tool emit contract-format join-edge proposals with confidence and evidence. Navegador proposes and writes nothing; the brain reviews and commits. Targets that are brain-realm nodes are dropped rather than given a code address we have no authority to mint
+- **Responses that emit addresses declare `contract: "1.0"`**, and `search_symbols` results carry the address a brain would record to point back at them
+
 ### Output and lifecycle correctness
 
 - **`--json` output is parseable** — per-graph progress was printed to stdout alongside the JSON payload, so piping the result into a parser failed on the narration. Progress now goes to stderr

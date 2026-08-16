@@ -10,7 +10,7 @@ Usage::
     from navegador.llm import get_provider, auto_provider, discover_providers
 
     # Explicit provider
-    provider = get_provider("anthropic", model="claude-3-5-haiku-20241022")
+    provider = get_provider("anthropic", model="claude-opus-5")
     response = provider.complete("Explain this function: ...")
 
     # Auto-detect the first available SDK
@@ -22,6 +22,7 @@ Usage::
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 
 # ── Abstract base ─────────────────────────────────────────────────────────────
@@ -63,7 +64,7 @@ class LLMProvider(ABC):
     @property
     @abstractmethod
     def model(self) -> str:
-        """Model identifier used for API calls, e.g. ``"claude-3-5-haiku-20241022"``."""
+        """Model identifier used for API calls, e.g. ``"claude-opus-5"``."""
 
 
 # ── Concrete providers ────────────────────────────────────────────────────────
@@ -78,10 +79,14 @@ class AnthropicProvider(LLMProvider):
         pip install anthropic
 
     Args:
-        model: Anthropic model ID (default ``"claude-3-5-haiku-20241022"``).
+        model: Anthropic model ID (default ``"claude-opus-5"``).
     """
 
-    _DEFAULT_MODEL = "claude-3-5-haiku-20241022"
+    #: Current model alias. Model IDs are complete as written — never append a
+    #: date suffix. The previous default, `claude-3-5-haiku-20241022`, was
+    #: retired on 2026-02-19 and returns 404, so every `ask` that reached the
+    #: Anthropic default failed on a model the user never chose (#164).
+    _DEFAULT_MODEL = "claude-opus-5"
 
     def __init__(self, model: str = "") -> None:
         try:
@@ -300,33 +305,79 @@ def get_provider(name: str, model: str = "") -> LLMProvider:
     return cls(model=model)
 
 
+#: Environment variables that carry a usable credential for each provider.
+#: Ollama is local and needs none — reachability is the check instead.
+_PROVIDER_CREDENTIALS = {
+    "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+    "openai": ("OPENAI_API_KEY",),
+    "ollama": (),
+}
+
+
+def provider_available(name: str) -> tuple[bool, str]:
+    """
+    Whether *name* can actually serve a request, and why not when it cannot.
+
+    SDK importability is not availability: the Anthropic package installed
+    without a key selected a provider that then failed at call time with a raw
+    auth error (#164). Credentials are checked here, and a local provider is
+    checked for reachability.
+    """
+    sdk = _PROVIDER_SDK_MAP.get(name, name)
+    try:
+        __import__(sdk)
+    except ImportError:
+        return False, f"the {sdk!r} package is not installed (pip install {sdk})"
+
+    if name == "ollama":
+        import urllib.error
+        import urllib.request
+
+        base = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+        try:
+            urllib.request.urlopen(f"{base}/api/tags", timeout=1.5).close()  # noqa: S310
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return False, f"no Ollama server is reachable at {base}"
+        return True, ""
+
+    env_names = _PROVIDER_CREDENTIALS.get(name, ())
+    if env_names and not any(os.environ.get(var, "").strip() for var in env_names):
+        return False, f"no credential in {' or '.join(env_names)}"
+    return True, ""
+
+
 def auto_provider(model: str = "") -> LLMProvider:
     """
-    Return the first available LLM provider based on installed SDKs.
+    Return the first provider that is actually usable.
 
-    Priority order: anthropic → openai → ollama.
+    Priority order: anthropic → openai → ollama. A provider whose SDK is
+    installed but whose credential is missing is skipped rather than selected,
+    so the failure names the missing credential instead of surfacing a raw
+    auth error from whichever SDK happened to be present.
 
     Args:
         model: Optional model ID forwarded to the provider constructor.
 
     Returns:
-        An :class:`LLMProvider` instance for the first available SDK.
+        An :class:`LLMProvider` instance for the first usable provider.
 
     Raises:
-        RuntimeError: If no supported LLM SDK is installed.
+        RuntimeError: If no provider is usable, listing why each was skipped.
     """
+    reasons: list[str] = []
     for provider_name in _PROVIDER_NAMES:
-        sdk_name = _PROVIDER_SDK_MAP[provider_name]
-        try:
-            __import__(sdk_name)
-        except ImportError:
-            continue
-        return get_provider(provider_name, model=model)
+        ok, why = provider_available(provider_name)
+        if ok:
+            return get_provider(provider_name, model=model)
+        reasons.append(f"  {provider_name}: {why}")
 
     raise RuntimeError(
-        "No LLM SDK is installed. Install at least one of: "
-        "anthropic, openai, ollama.\n"
-        "  pip install anthropic   # Anthropic Claude\n"
-        "  pip install openai      # OpenAI GPT\n"
-        "  pip install ollama      # Ollama (local models)"
+        "No usable LLM provider.\n"
+        + "\n".join(reasons)
+        + "\n\nCredentials are read from the environment. Set one of:\n"
+        "  export ANTHROPIC_API_KEY=...     # Anthropic\n"
+        "  export OPENAI_API_KEY=...        # OpenAI\n"
+        "  ollama serve                     # Ollama (local, no key)\n"
+        "Or pin one in .navegador/config.toml:\n"
+        '  [llm]\n  provider = "anthropic"\n  model = "claude-opus-5"'
     )
