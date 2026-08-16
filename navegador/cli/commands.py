@@ -3985,7 +3985,7 @@ def storage_migrate(
                 "No destination server. Either configure one for this project "
                 "(navegador init --storage redis) or pass --to redis://host:port."
             )
-        results = [_migrate_project(Path(target), dest_url, graph_name, dry_run, prune)]
+        results = [_migrate_project(Path(target), dest_url, graph_name, dry_run, prune, overwrite)]
 
     failed = [r for r in results if r.get("status") == "failed"]
 
@@ -4017,22 +4017,118 @@ def storage_migrate(
         raise SystemExit(1)
 
 
-def _migrate_project(
-    root: Path, dest_url: str, graph_name: str, dry_run: bool, prune: bool
+def _plan_graph_names(source_client, default_as: str) -> dict[str, str]:
+    """
+    Map each source graph name to its destination name.
+
+    A store's unnamespaced ``navegador`` graph is the one that collides when
+    stores are consolidated — every store has one. Giving it a namespace on the
+    way in is what makes many sources fit in one server.
+    """
+    from navegador.graph.store import GraphStore
+
+    return {
+        name: (default_as if name == GraphStore.GRAPH_NAME and default_as else name)
+        for name in sorted(source_client.list_graphs())
+    }
+
+
+def _copy_all_graphs(
+    source_client,
+    dest_url: str,
+    default_as: str,
+    dry_run: bool,
+    overwrite: bool,
 ) -> dict:
-    """Copy one project's embedded graph into the shared server."""
+    """
+    Copy every named graph from one store to another, refusing silent clobbers.
+
+    A store holds more than one graph whenever a federated or workspace ingest
+    has run against it, so copying only the default graph would quietly leave
+    most of the data behind.
+    """
+    from navegador.graph import GraphStore
+    from navegador.graph.transfer import copy_graph
+
+    plan = _plan_graph_names(source_client, default_as)
+    if not plan:
+        return {"status": "skipped", "error": "no graphs in source", "nodes": 0, "edges": 0}
+
+    # A dry run is precisely what you reach for before the destination is up, so
+    # an unreachable one downgrades the clash check to a warning instead of
+    # failing the report the user asked for.
+    dest_client = None
+    reachable = False
+    existing: set[str] = set()
+    try:
+        dest_client = GraphStore.redis(dest_url)
+        existing = set(dest_client.list_graphs())
+        reachable = True
+    except Exception as e:  # noqa: BLE001
+        if not dry_run:
+            raise
+        console.print(
+            f"  [yellow]destination not reachable, cannot check for clashes:[/yellow] {e}"
+        )
+
+    if not overwrite and reachable:
+        clashes = [
+            f"{src} → {dst}"
+            for src, dst in plan.items()
+            if dst in existing and dest_client.with_graph(dst).node_count() > 0
+        ]
+        if clashes:
+            return {
+                "status": "failed",
+                "error": (
+                    "destination already holds data for: "
+                    + ", ".join(clashes)
+                    + ". Rename the source's default graph with --default-as NAME, "
+                    "or pass --overwrite to replace them."
+                ),
+            }
+
+    if dry_run:
+        nodes = edges = 0
+        for src, dst in plan.items():
+            counts = source_client.with_graph(src)
+            n, e = counts.node_count(), counts.edge_count()
+            nodes += n
+            edges += e
+            console.print(f"  {src} → {dst}: {n} nodes, {e} edges")
+        return {"status": "planned", "nodes": nodes, "edges": edges, "graphs": len(plan)}
+
+    nodes = edges = 0
+    for src, dst in plan.items():
+        stats = copy_graph(source_client.with_graph(src), dest_client.with_graph(dst))
+        nodes += stats["nodes"]
+        edges += stats["edges"]
+        console.print(f"  {src} → {dst}: {stats['nodes']} nodes, {stats['edges']} edges")
+
+    return {"status": "ok", "nodes": nodes, "edges": edges, "graphs": len(plan)}
+
+
+def _migrate_project(
+    root: Path,
+    dest_url: str,
+    graph_name: str,
+    dry_run: bool,
+    prune: bool,
+    overwrite: bool = False,
+) -> dict:
+    """Copy a project's embedded graphs — all of them — into the shared server."""
     from navegador.config import DEFAULT_REDIS_URL, resolve_storage
     from navegador.federation import repo_name_from_path
     from navegador.graph import GraphStore
-    from navegador.graph.transfer import TransferError, copy_graph
+    from navegador.graph.transfer import TransferError
 
     root = Path(root).resolve()
     db_file = root / ".navegador" / "graph.db"
     resolved = resolve_storage(target=root)
     url = dest_url or (resolved.redis_url if resolved.is_redis else DEFAULT_REDIS_URL)
-    name = graph_name or f"navegador_{repo_name_from_path(root)}"
+    default_as = graph_name or f"navegador_{repo_name_from_path(root)}"
 
-    result: dict = {"source": str(db_file), "graph": name, "url": url}
+    result: dict = {"source": str(db_file), "graph": default_as, "url": url}
 
     if not db_file.is_file():
         return {**result, "status": "skipped", "error": "no local graph file"}
@@ -4040,15 +4136,8 @@ def _migrate_project(
     source = None
     try:
         source = GraphStore.sqlite(db_file)
-        result["nodes"] = source.node_count()
-        result["edges"] = source.edge_count()
-
-        if dry_run:
-            return {**result, "status": "planned"}
-
-        dest = GraphStore.redis(url).with_graph(name)
-        stats = copy_graph(source, dest)
-        result.update(nodes=stats["nodes"], edges=stats["edges"], status="ok")
+        outcome = _copy_all_graphs(source, url, default_as, dry_run, overwrite)
+        result.update(outcome)
     except TransferError as e:
         return {**result, "status": "failed", "error": str(e)}
     except Exception as e:  # noqa: BLE001 — one bad repo must not abort the batch
@@ -4057,7 +4146,7 @@ def _migrate_project(
         if source is not None:
             source.close()
 
-    if prune:
+    if prune and result.get("status") == "ok":
         # Only ever reached after copy_graph verified the counts matched.
         db_file.unlink()
         result["pruned"] = True
@@ -4072,72 +4161,19 @@ def _migrate_server(
     default_as: str = "",
     overwrite: bool = False,
 ) -> dict:
-    """
-    Copy every named graph from one FalkorDB server to another.
-
-    Consolidating servers is where graph names collide: each server has its own
-    unnamespaced ``navegador`` graph, and copying both would silently leave only
-    the last one. Destination graphs that already hold data are refused unless
-    renamed with --default-as or explicitly permitted with --overwrite.
-    """
+    """Copy every named graph from one FalkorDB server to another."""
     from navegador.graph import GraphStore
-    from navegador.graph.store import GraphStore as _GS
-    from navegador.graph.transfer import TransferError, copy_graph
+    from navegador.graph.transfer import TransferError
 
-    result: dict = {"source": source_url, "graph": "(all)", "url": dest_url}
+    result: dict = {"source": source_url, "graph": default_as or "(all)", "url": dest_url}
     try:
         source_client = GraphStore.redis(source_url)
-        names = sorted(source_client.list_graphs())
+        result.update(_copy_all_graphs(source_client, dest_url, default_as, dry_run, overwrite))
+    except TransferError as e:
+        return {**result, "status": "failed", "error": str(e)}
     except Exception as e:  # noqa: BLE001
         return {**result, "status": "failed", "error": str(e)}
-
-    # The source's default graph can be given a namespace on the way in, so it
-    # does not collide with the destination's own default graph.
-    plan = {name: (default_as if name == _GS.GRAPH_NAME and default_as else name) for name in names}
-
-    try:
-        dest_client = GraphStore.redis(dest_url)
-        existing = set(dest_client.list_graphs())
-    except Exception as e:  # noqa: BLE001
-        return {**result, "status": "failed", "error": str(e)}
-
-    if not overwrite:
-        clashes = [
-            f"{src} → {dst}"
-            for src, dst in plan.items()
-            if dst in existing and dest_client.with_graph(dst).node_count() > 0
-        ]
-        if clashes:
-            return {
-                **result,
-                "status": "failed",
-                "error": (
-                    "destination already holds data for: "
-                    + ", ".join(clashes)
-                    + ". Rename the source's default graph with --default-as NAME, "
-                    "or pass --overwrite to replace them."
-                ),
-            }
-
-    if dry_run:
-        for src, dst in plan.items():
-            counts = source_client.with_graph(src)
-            console.print(
-                f"  {src} → {dst}: {counts.node_count()} nodes, {counts.edge_count()} edges"
-            )
-        return {**result, "status": "planned", "nodes": f"{len(names)} graph(s)", "edges": ""}
-
-    nodes = edges = 0
-    for src, dst in plan.items():
-        try:
-            stats = copy_graph(source_client.with_graph(src), dest_client.with_graph(dst))
-        except TransferError as e:
-            return {**result, "status": "failed", "error": f"{src}: {e}"}
-        nodes += stats["nodes"]
-        edges += stats["edges"]
-        console.print(f"  {src} → {dst}: {stats['nodes']} nodes, {stats['edges']} edges")
-
-    return {**result, "status": "ok", "nodes": nodes, "edges": edges, "graphs": len(names)}
+    return result
 
 
 # ── Manual: documentation packaged with the CLI (#172) ───────────────────────
