@@ -484,54 +484,79 @@ class TestTestMapper:
         assert result.unmatched_tests[0]["name"] == "test_something_obscure"
 
     def test_heuristic_resolution_strips_test_prefix(self):
-        from navegador.analysis.testmap import TestMapper
+        """
+        `test_handle_request` resolves to `handle_request` in the same repo.
 
-        store = self._make_store(
-            test_fns=[["test_handle_request", "tests/test_views.py", 20]],
-            callee_results=[],  # no CALLS edge
-            prod_results=[["Function", "handle_request", "views.py"]],
-        )
-        mapper = TestMapper(store)
-        result = mapper.map_tests()
+        Real store: scoring consults the repository and module a candidate lives
+        in, which a fixed sequence of mocked result sets cannot express.
+        """
+        import tempfile
+
+        from navegador.analysis.testmap import TestMapper
+        from navegador.graph.store import GraphStore
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = GraphStore.sqlite(f"{tmpdir}/graph.db")
+            try:
+                store.query(
+                    "MERGE (f:File {path: 'views.py'}) "
+                    "MERGE (r:Repository {path: 'org/app'}) "
+                    "MERGE (f)-[:BELONGS_TO]->(r) "
+                    "MERGE (:Function {name: 'handle_request', file_path: 'views.py'})"
+                )
+                store.query(
+                    "MERGE (f:File {path: 'tests/test_views.py'}) "
+                    "MERGE (r:Repository {path: 'org/app'}) "
+                    "MERGE (f)-[:BELONGS_TO]->(r) "
+                    "MERGE (:Function {name: 'test_handle_request', "
+                    "file_path: 'tests/test_views.py'})"
+                )
+                result = TestMapper(store).map_tests()
+            finally:
+                store.close()
 
         assert len(result.links) == 1
         assert result.links[0].prod_name == "handle_request"
         assert result.links[0].source == "heuristic"
 
-    def test_heuristic_tries_shorter_prefixes(self):
-        """test_foo_bar should try 'foo_bar' first, then 'foo'."""
+    def test_heuristic_prefers_the_more_specific_name(self):
+        """
+        A truncated prefix is a weaker match than the full stripped name.
+
+        This previously asserted the opposite behaviour — take whatever the
+        first matching prefix finds, anywhere in the graph — which is exactly
+        how generic verbs produced cross-repository nonsense (#166).
+        """
+        import tempfile
+
         from navegador.analysis.testmap import TestMapper
+        from navegador.graph.store import GraphStore
 
-        call_log = []
-        store = MagicMock()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = GraphStore.sqlite(f"{tmpdir}/graph.db")
+            try:
+                for name, path in (
+                    ("foo_bar", "lib/specific.py"),
+                    ("foo", "lib/generic.py"),
+                ):
+                    store.query(
+                        "MERGE (f:File {path: $p}) "
+                        "MERGE (r:Repository {path: 'org/app'}) "
+                        "MERGE (f)-[:BELONGS_TO]->(r) "
+                        "MERGE (:Function {name: $n, file_path: $p})",
+                        {"n": name, "p": path},
+                    )
+                store.query(
+                    "MERGE (f:File {path: 'tests/test_lib.py'}) "
+                    "MERGE (r:Repository {path: 'org/app'}) "
+                    "MERGE (f)-[:BELONGS_TO]->(r) "
+                    "MERGE (:Function {name: 'test_foo_bar', file_path: 'tests/test_lib.py'})"
+                )
+                result = TestMapper(store).map_tests()
+            finally:
+                store.close()
 
-        def _query(cypher=None, params=None):
-            r = MagicMock()
-            q = cypher or ""
-            if "fn:Function OR fn:Method" in q:
-                r.result_set = [["test_foo_bar", "test.py", 1]]
-            elif "[:CALLS]->" in q:
-                r.result_set = []
-            elif "n.name = $name" in q:
-                call_log.append(params["name"])
-                if params["name"] == "foo":
-                    r.result_set = [["Function", "foo", "lib.py"]]
-                else:
-                    r.result_set = []
-            elif "MERGE" in q:
-                r.result_set = []
-            else:
-                r.result_set = []
-            return r
-
-        store.query.side_effect = _query
-        mapper = TestMapper(store)
-        result = mapper.map_tests()
-
-        assert "foo_bar" in call_log
-        assert "foo" in call_log
-        assert len(result.links) == 1
-        assert result.links[0].prod_name == "foo"
+        assert [lnk.prod_name for lnk in result.links] == ["foo_bar"]
 
     def test_query_exception_in_get_test_functions_handled(self):
         from navegador.analysis.testmap import TestMapper
@@ -647,10 +672,11 @@ class TestTestMapper:
         assert d["links"][0]["prod_name"] == "foo"
         assert d["unmatched_tests"][0]["name"] == "test_orphan"
 
-    def test_heuristic_non_test_name_returns_none(self):
-        """_resolve_via_heuristic should return None for names not starting with test_."""
+    def test_heuristic_non_test_name_yields_no_candidates(self):
+        """A name that is not a test cannot be resolved by the name heuristic."""
         from navegador.analysis.testmap import TestMapper
 
         store = MagicMock()
+        store.query.return_value = MagicMock(result_set=[])
         mapper = TestMapper(store)
-        assert mapper._resolve_via_heuristic("not_a_test") is None
+        assert mapper._score_heuristic_candidates("not_a_test", "") == []

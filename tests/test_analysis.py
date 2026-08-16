@@ -382,19 +382,41 @@ class TestTestMapper:
         assert link.prod_file == "core.py"
 
     def test_link_via_heuristic(self):
-        """When no CALLS edge exists, fall back to name heuristic."""
-        from navegador.analysis.testmap import TestMapper
+        """
+        When no CALLS edge exists, fall back to a scored name match.
 
-        store = _multi_mock_store(
-            [["test_render_output", "tests/test_renderer.py", 1]],  # test fns
-            [],                                                        # no CALLS
-            [["Function", "render_output", "renderer.py"]],           # heuristic
-            [["Function", "render_output", "renderer.py"]],           # verify calls
-            [],                                                        # CREATE edge
-        )
-        result = TestMapper(store).map_tests()
+        Uses a real store: resolution now consults the repository and module a
+        symbol lives in, which a fixed sequence of mocked result sets cannot
+        represent. See tests/test_testmap_precision.py for the scoring rules.
+        """
+        import tempfile
+
+        from navegador.analysis.testmap import TestMapper
+        from navegador.graph.store import GraphStore
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = GraphStore.sqlite(f"{tmpdir}/graph.db")
+            try:
+                store.query(
+                    "MERGE (f:File {path: 'renderer.py'}) "
+                    "MERGE (r:Repository {path: 'org/app'}) "
+                    "MERGE (f)-[:BELONGS_TO]->(r) "
+                    "MERGE (:Function {name: 'render_output', file_path: 'renderer.py'})"
+                )
+                store.query(
+                    "MERGE (f:File {path: 'tests/test_renderer.py'}) "
+                    "MERGE (r:Repository {path: 'org/app'}) "
+                    "MERGE (f)-[:BELONGS_TO]->(r) "
+                    "MERGE (:Function {name: 'test_render_output', "
+                    "file_path: 'tests/test_renderer.py'})"
+                )
+                result = TestMapper(store).map_tests()
+            finally:
+                store.close()
+
         assert len(result.links) == 1
         assert result.links[0].prod_name == "render_output"
+        assert result.links[0].source == "heuristic"
 
     def test_unmatched_test_recorded(self):
         """A test with no call and no matching heuristic goes to unmatched."""
