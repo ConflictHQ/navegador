@@ -4126,6 +4126,91 @@ def storage():
     """Inspect and move the graph data behind the [storage] configuration."""
 
 
+@main.command("locate")
+@click.argument("intent")
+@click.option("--db", default="", help="Graph to search. Default: resolved storage.")
+@click.option("--target", default=".", type=click.Path())
+@click.option("-n", "--limit", default=10)
+@click.option("--json", "as_json", is_flag=True)
+def locate(intent: str, db: str, target: str, limit: int, as_json: bool):
+    """
+    Where to look for INTENT, ranked, with the reason for each place.
+
+    Returns places to look, not an answer. Exact text matches, symbol names,
+    documents and semantic similarity are fused on rank, so the top result is
+    where several kinds of evidence agree.
+    """
+    from navegador.targeting import Targeting
+
+    store = _get_store(db, target=target)
+    candidates = Targeting(store).locate(intent, limit=limit)
+
+    if as_json:
+        click.echo(json.dumps([c.to_dict() for c in candidates], indent=2))
+        return
+    if not candidates:
+        console.print("[dim]Nothing found. Has this repository been ingested?[/dim]")
+        return
+
+    table = Table(title=f"Where to look — {intent}")
+    table.add_column("Where", style="cyan", overflow="fold")
+    table.add_column("Score", justify="right", width=7)
+    table.add_column("Why", style="dim", overflow="fold")
+    for candidate in candidates:
+        where = candidate.path + (f":{candidate.line}" if candidate.line else "")
+        table.add_row(where, f"{candidate.score:.4f}", "; ".join(candidate.reasons)[:90])
+    console.print(table)
+
+
+@main.command("scope")
+@click.argument("symbol")
+@click.option("--db", default="", help="Graph to search. Default: resolved storage.")
+@click.option("--target", default=".", type=click.Path())
+@click.option("--depth", default=2, help="How far to follow calls, references and imports.")
+@click.option("--pattern", default="", help="Search within the scope instead of listing it.")
+@click.option("-n", "--limit", default=50)
+@click.option("--json", "as_json", is_flag=True)
+def scope(symbol: str, db: str, target: str, depth: int, pattern: str, limit: int, as_json: bool):
+    """
+    Files reachable from SYMBOL — the set worth searching.
+
+    With --pattern, searches only those files. This is the reduction a flat
+    text index cannot compute: it follows calls, references and imports.
+    """
+    from navegador.targeting import Targeting
+
+    store = _get_store(db, target=target)
+    targeting = Targeting(store)
+    paths = targeting.scope_for(symbol, depth=depth)
+
+    if pattern:
+        matches = targeting.search_within(symbol, pattern, depth=depth, limit=limit)
+        if as_json:
+            click.echo(
+                json.dumps(
+                    {"symbol": symbol, "files": paths, "matches": [m.to_dict() for m in matches]},
+                    indent=2,
+                )
+            )
+            return
+        console.print(f"[dim]{len(paths)} file(s) in scope[/dim]")
+        for match in matches:
+            console.print(
+                f"[cyan]{match.path}[/cyan]:[green]{match.line}[/green]: {match.text.strip()}"
+            )
+        return
+
+    if as_json:
+        click.echo(json.dumps({"symbol": symbol, "files": paths}, indent=2))
+        return
+    if not paths:
+        console.print(f"[dim]No scope found for {symbol}.[/dim]")
+        return
+    console.print(f"[bold]{len(paths)} file(s) reachable from {symbol}:[/bold]")
+    for path in paths:
+        console.print(f"  {path}")
+
+
 @main.command("grep")
 @click.argument("pattern")
 @click.option("--db", default="", help="Graph to search. Default: resolved storage.")

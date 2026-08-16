@@ -706,6 +706,85 @@ def create_mcp_server(store_factory, read_only: bool = False):
                     "required": ["lens"],
                 },
             ),
+            Tool(
+                name="locate",
+                description=(
+                    "Find where to look for something, ranked, with the reason each "
+                    "place surfaced. Fuses exact text matches, symbol names, "
+                    "documents and semantic similarity. Returns places to look, not "
+                    "an answer — use it to pick a target in one call instead of "
+                    "several rounds of searching, then read or grep precisely."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "intent": {
+                            "type": "string",
+                            "description": "What you are looking for, in words or as a literal.",
+                        },
+                        "limit": {"type": "integer", "default": 10},
+                    },
+                    "required": ["intent"],
+                },
+            ),
+            Tool(
+                name="scope_for",
+                description=(
+                    "The set of files reachable from a symbol, for narrowing a "
+                    "search before running it. Pass `pattern` to search only within "
+                    "that scope and get back matching lines with file and line "
+                    "number. This is the reduction a flat text index cannot compute: "
+                    "it follows calls, references and imports through the graph."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "symbol": {"type": "string", "description": "Function, method or class."},
+                        "pattern": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Optional; search within the scope instead of "
+                            "just listing it.",
+                        },
+                        "depth": {"type": "integer", "default": 2},
+                        "limit": {"type": "integer", "default": 50},
+                    },
+                    "required": ["symbol"],
+                },
+            ),
+            Tool(
+                name="neighbourhood",
+                description=(
+                    "Callers, callees, tests and defining file for a symbol, in one "
+                    "call. Saves the several turns it otherwise takes to assemble "
+                    "the same picture."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {"symbol": {"type": "string"}},
+                    "required": ["symbol"],
+                },
+            ),
+            Tool(
+                name="grep_code",
+                description=(
+                    "Exact substring or regular-expression search over indexed "
+                    "content, returning file, line number and the matching line. "
+                    "Results are exact — verified against ripgrep — and cost scales "
+                    "with the number of matches rather than the size of the "
+                    "codebase, so a search that matches nothing is nearly free."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string"},
+                        "regex": {"type": "boolean", "default": False},
+                        "ignore_case": {"type": "boolean", "default": False},
+                        "limit": {"type": "integer", "default": 50},
+                    },
+                    "required": ["pattern"],
+                },
+            ),
         ]
         if read_only:
             return [t for t in tools if t.name not in WRITE_TOOLS]
@@ -812,6 +891,71 @@ def create_mcp_server(store_factory, read_only: bool = False):
                 return [TextContent(type="text", text=f"Error: {exc}")]
 
         loader = _get_loader()
+
+        if name == "locate":
+            from navegador.targeting import Targeting
+
+            candidates = Targeting(loader.store).locate(
+                arguments["intent"], limit=int(arguments.get("limit", 10))
+            )
+            payload = {
+                "intent": arguments["intent"],
+                "candidates": [c.to_dict() for c in candidates],
+                "note": (
+                    "These are places to look, not an answer. Read or grep the "
+                    "top candidates rather than trusting the ranking."
+                ),
+            }
+            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+
+        if name == "scope_for":
+            from navegador.targeting import Targeting
+
+            targeting = Targeting(loader.store)
+            symbol = arguments["symbol"]
+            depth = int(arguments.get("depth", 2))
+            paths = targeting.scope_for(symbol, depth=depth)
+            payload: dict = {"symbol": symbol, "depth": depth, "files": paths}
+
+            pattern = arguments.get("pattern") or ""
+            if pattern:
+                matches = targeting.search_within(
+                    symbol, pattern, depth=depth, limit=int(arguments.get("limit", 50))
+                )
+                payload["pattern"] = pattern
+                payload["matches"] = [m.to_dict() for m in matches]
+            elif paths:
+                payload["hint"] = (
+                    "Pass `pattern` to search only these files, or hand them to a "
+                    "grep as an explicit file list."
+                )
+            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+
+        if name == "neighbourhood":
+            from navegador.targeting import Targeting
+
+            payload = Targeting(loader.store).neighbourhood(arguments["symbol"])
+            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+
+        if name == "grep_code":
+            from navegador.graph.trigram import TrigramIndex
+
+            matches = TrigramIndex(loader.store).search(
+                arguments["pattern"],
+                is_regex=bool(arguments.get("regex", False)),
+                ignore_case=bool(arguments.get("ignore_case", False)),
+                limit=int(arguments.get("limit", 50)),
+            )
+            payload = {
+                "pattern": arguments["pattern"],
+                "matches": [m.to_dict() for m in matches],
+            }
+            if not matches:
+                payload["hint"] = (
+                    "No matches. If this repository was ingested before content "
+                    "storage existed, re-ingest it so there is a corpus to search."
+                )
+            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
         if name == "resolve_address":
             from navegador.contract import AddressError, resolve
