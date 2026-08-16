@@ -61,6 +61,7 @@
 
 - **Every shipped hook was broken** — all four built `navegador --db <path> <subcommand>`. `--db` is a per-command option, so click rejected the invocation outright, and because the hooks read only stdout the failure reached the agent as an empty string — indistinguishable from "the graph has no context for this file". As shipped, none of them had ever returned anything (#174)
 - `--db` now follows the subcommand and is omitted unless `NAVEGADOR_DB` is set, so project configuration and shared servers are honoured rather than overridden; non-zero exits go to stderr
+- **`bootstrap.sh` was unrunnable after a Windows checkout** — with no `.gitattributes` in the repository, git converted it to CRLF and bash rejected it outright (`syntax error near unexpected token $'in\r'`). That is the documented install path for WSL2 users, who reach it through a Windows checkout. `* text=auto eol=lf` is now committed so the convention travels with the repo
 
 ## 1.4.1 — 2026-07-27
 
