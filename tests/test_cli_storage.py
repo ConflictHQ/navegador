@@ -78,6 +78,65 @@ class TestDoctor:
         assert ok.exit_code == 0
 
 
+class TestDoctorAgainstAReachableServer:
+    """
+    Once the server answers, doctor can tell the two look-alike states apart:
+    a project whose ingest went somewhere nothing reads, and one that has
+    already been migrated and merely still has the old file on disk.
+    """
+
+    @staticmethod
+    def _server(nodes):
+        from unittest.mock import MagicMock, patch
+
+        store = MagicMock()
+        store.node_count.return_value = nodes
+        return patch(
+            "navegador.server.probe",
+            return_value={
+                "reachable": True,
+                "graph_module": True,
+                "module_version": "4.20.3",
+                "graphs": ["navegador_x"],
+                "used_memory_human": "1M",
+            },
+        ), patch("navegador.config.open_store", return_value=store)
+
+    def test_migrated_project_is_a_note_not_a_problem(self, tmp_path):
+        make_project(tmp_path, backend="redis", db_bytes=50_000)
+        probe, opener = self._server(nodes=1234)
+        with probe, opener:
+            result = CliRunner().invoke(main, ["doctor", "--target", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "nothing reads it" in result.output
+        assert "No problems found" in result.output
+
+    def test_local_data_with_an_empty_server_graph_is_a_problem(self, tmp_path):
+        make_project(tmp_path, backend="redis", db_bytes=50_000)
+        probe, opener = self._server(nodes=0)
+        with probe, opener:
+            result = CliRunner().invoke(main, ["doctor", "--target", str(tmp_path)])
+        assert result.exit_code != 0
+        assert "not visible" in result.output
+
+    def test_empty_graph_is_reported_even_without_local_data(self, tmp_path):
+        """Registered-but-empty answers every query with a valid-looking negative."""
+        make_project(tmp_path, backend="redis")
+        probe, opener = self._server(nodes=0)
+        with probe, opener:
+            result = CliRunner().invoke(main, ["doctor", "--target", str(tmp_path)])
+        assert result.exit_code != 0
+        assert "is empty" in result.output
+
+    def test_healthy_project_reports_nothing(self, tmp_path):
+        make_project(tmp_path, backend="redis")
+        probe, opener = self._server(nodes=999)
+        with probe, opener:
+            result = CliRunner().invoke(main, ["doctor", "--target", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "No problems found" in result.output
+
+
 # ── scan ───────────────────────────────────────────────────────────────────
 
 

@@ -3798,7 +3798,7 @@ def doctor(target: str, as_json: bool):
     as empty can be told apart from one that was never ingested.
     """
     from navegador import server as srv
-    from navegador.config import resolve_storage
+    from navegador.config import open_store, resolve_storage
     from navegador.inventory import inspect_project
 
     config = resolve_storage(target=target)
@@ -3814,6 +3814,9 @@ def doctor(target: str, as_json: bool):
         report["server"] = info
 
     problems: list[str] = []
+    notes: list[str] = []
+    served_nodes: int | None = None
+
     if config.is_redis:
         info = report["server"]
         if not info.get("reachable"):
@@ -3826,15 +3829,43 @@ def doctor(target: str, as_json: bool):
                 f"{config.redis_url} answers, but has no FalkorDB graph module. "
                 f"This is a plain Redis; graph queries cannot work against it."
             )
+        else:
+            # What the project would actually read. A namespace that resolves
+            # but holds nothing answers every question with a valid-looking
+            # negative, which is worse than failing.
+            try:
+                store = open_store(config)
+                served_nodes = store.node_count()
+            except Exception:  # noqa: BLE001 — diagnosis must not itself fail
+                served_nodes = None
+            report["served_nodes"] = served_nodes
+            if served_nodes == 0:
+                problems.append(
+                    f"The graph this project reads ({config.graph_name or 'navegador'}) "
+                    f"is empty. Queries will return nothing, which is not the same as "
+                    f"'not found'. Ingest it, or migrate an existing local graph: "
+                    f"navegador storage migrate"
+                )
+
     if record.is_stranded:
-        problems.append(
-            f"This project declares a Redis backend but holds "
-            f"{record.db_bytes / 1024 / 1024:.1f} MB of local graph data — those "
-            f"ingests are not visible to anything reading the server. "
-            f"Migrate it: navegador storage migrate"
-        )
+        # A local file alongside a populated server graph is leftover from a
+        # completed migration, not an ingest writing where nothing reads.
+        if served_nodes:
+            notes.append(
+                f"A local graph file is still present ({record.db_bytes / 1024 / 1024:.1f} MB) "
+                f"but the server graph is populated, so nothing reads it. Remove it, or "
+                f"re-run the migration with --prune."
+            )
+        else:
+            problems.append(
+                f"This project declares a Redis backend but holds "
+                f"{record.db_bytes / 1024 / 1024:.1f} MB of local graph data — those "
+                f"ingests are not visible to anything reading the server. "
+                f"Migrate it: navegador storage migrate"
+            )
 
     report["problems"] = problems
+    report["notes"] = notes
 
     if as_json:
         click.echo(json.dumps(report, indent=2, default=str))
@@ -3854,6 +3885,9 @@ def doctor(target: str, as_json: bool):
         console.print(
             f"Local graph file: {record.db_bytes / 1024 / 1024:.1f} MB at {record.db_path}"
         )
+
+    for note in notes:
+        console.print(f"[dim]·[/dim] {note}")
 
     if problems:
         console.print()

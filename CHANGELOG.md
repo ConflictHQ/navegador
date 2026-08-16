@@ -36,6 +36,7 @@
 ### Diagnostics
 
 - **`navegador doctor`** reports the resolved backend, which config file chose it, whether the server is reachable and usable, and whether the project holds local data while declaring a shared backend
+- **`doctor` tells "never ingested" apart from "already migrated"** — it reads the node count of the graph the project actually resolves to. An empty one is a problem (queries return nothing, which is not the same as not-found); a populated one with a leftover local file is a note, not a warning to live with forever
 - **`navegador scan <root>`** inventories every project under a tree, flags the ones ingesting where nothing reads, and recommends a shared server with its reasons
 
 ### Output and lifecycle correctness
