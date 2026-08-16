@@ -16,6 +16,18 @@ from click.testing import CliRunner
 from navegador.cli.commands import main
 
 
+def flat(result) -> str:
+    """
+    Command output with whitespace collapsed.
+
+    Rich wraps to the terminal width, so a phrase can be split across lines at
+    a point that depends on how long the surrounding paths happen to be — which
+    differs between a local run and a CI runner's temp directory. Asserting on
+    raw output makes these tests fail for reasons unrelated to behaviour.
+    """
+    return " ".join(result.output.split())
+
+
 @pytest.fixture(autouse=True)
 def isolated_env(monkeypatch, tmp_path):
     """Keep the developer's real machine configuration and server out of these."""
@@ -23,6 +35,10 @@ def isolated_env(monkeypatch, tmp_path):
     monkeypatch.delenv("NAVEGADOR_DB", raising=False)
     monkeypatch.setenv("NAVEGADOR_CONFIG", str(tmp_path / "absent.toml"))
     monkeypatch.setenv("NAVEGADOR_HOME", str(tmp_path / "server-home"))
+    # Rich wraps to the terminal width, and a CI runner's temp paths are long
+    # enough to fold table cells mid-word. Give it room so assertions are about
+    # behaviour rather than where a line happened to break.
+    monkeypatch.setenv("COLUMNS", "300")
 
 
 def make_project(root, backend="sqlite", db_bytes=0, redis_url="redis://127.0.0.1:1"):
@@ -45,25 +61,25 @@ class TestDoctor:
         make_project(tmp_path)
         result = CliRunner().invoke(main, ["doctor", "--target", str(tmp_path)])
         assert result.exit_code == 0
-        assert "project config" in result.output
+        assert "project config" in flat(result)
 
     def test_clean_project_has_no_problems(self, tmp_path):
         make_project(tmp_path)
         result = CliRunner().invoke(main, ["doctor", "--target", str(tmp_path)])
-        assert "No problems found" in result.output
+        assert "No problems found" in flat(result)
 
     def test_flags_a_stranded_project(self, tmp_path):
         """Declares Redis, holds local data — the #169 signature."""
         make_project(tmp_path, backend="redis", db_bytes=50_000)
         result = CliRunner().invoke(main, ["doctor", "--target", str(tmp_path)])
         assert result.exit_code != 0
-        assert "not visible" in result.output
+        assert "not visible" in flat(result)
 
     def test_flags_an_unreachable_server(self, tmp_path):
         make_project(tmp_path, backend="redis")
         result = CliRunner().invoke(main, ["doctor", "--target", str(tmp_path)])
         assert result.exit_code != 0
-        assert "not reachable" in result.output
+        assert "not reachable" in flat(result)
 
     def test_json_output_is_machine_readable(self, tmp_path):
         make_project(tmp_path, backend="redis", db_bytes=50_000)
@@ -108,8 +124,8 @@ class TestDoctorAgainstAReachableServer:
         with probe, opener:
             result = CliRunner().invoke(main, ["doctor", "--target", str(tmp_path)])
         assert result.exit_code == 0
-        assert "nothing reads it" in result.output
-        assert "No problems found" in result.output
+        assert "nothing reads it" in flat(result)
+        assert "No problems found" in flat(result)
 
     def test_local_data_with_an_empty_server_graph_is_a_problem(self, tmp_path):
         make_project(tmp_path, backend="redis", db_bytes=50_000)
@@ -117,7 +133,7 @@ class TestDoctorAgainstAReachableServer:
         with probe, opener:
             result = CliRunner().invoke(main, ["doctor", "--target", str(tmp_path)])
         assert result.exit_code != 0
-        assert "not visible" in result.output
+        assert "not visible" in flat(result)
 
     def test_empty_graph_is_reported_even_without_local_data(self, tmp_path):
         """Registered-but-empty answers every query with a valid-looking negative."""
@@ -126,7 +142,7 @@ class TestDoctorAgainstAReachableServer:
         with probe, opener:
             result = CliRunner().invoke(main, ["doctor", "--target", str(tmp_path)])
         assert result.exit_code != 0
-        assert "is empty" in result.output
+        assert "is empty" in flat(result)
 
     def test_healthy_project_reports_nothing(self, tmp_path):
         make_project(tmp_path, backend="redis")
@@ -134,7 +150,7 @@ class TestDoctorAgainstAReachableServer:
         with probe, opener:
             result = CliRunner().invoke(main, ["doctor", "--target", str(tmp_path)])
         assert result.exit_code == 0
-        assert "No problems found" in result.output
+        assert "No problems found" in flat(result)
 
 
 # ── scan ───────────────────────────────────────────────────────────────────
@@ -144,20 +160,20 @@ class TestScan:
     def test_reports_nothing_for_an_empty_tree(self, tmp_path):
         result = CliRunner().invoke(main, ["scan", str(tmp_path)])
         assert result.exit_code == 0
-        assert "No navegador projects" in result.output
+        assert "No navegador projects" in flat(result)
 
     def test_lists_projects(self, tmp_path):
         make_project(tmp_path / "alpha")
         make_project(tmp_path / "beta")
         result = CliRunner().invoke(main, ["scan", str(tmp_path)])
         assert result.exit_code == 0
-        assert "alpha" in result.output
-        assert "beta" in result.output
+        assert "alpha" in flat(result)
+        assert "beta" in flat(result)
 
     def test_highlights_stranded_projects(self, tmp_path):
         make_project(tmp_path / "stray", backend="redis", db_bytes=50_000)
         result = CliRunner().invoke(main, ["scan", str(tmp_path)])
-        assert "stranded" in result.output
+        assert "stranded" in flat(result)
 
     def test_json_output(self, tmp_path):
         make_project(tmp_path / "alpha", backend="redis", db_bytes=50_000)
@@ -170,7 +186,7 @@ class TestScan:
         for i in range(6):
             make_project(tmp_path / f"p{i}")
         result = CliRunner().invoke(main, ["scan", str(tmp_path)])
-        assert "navegador server install" in result.output
+        assert "navegador server install" in flat(result)
 
 
 # ── server ─────────────────────────────────────────────────────────────────
@@ -182,12 +198,12 @@ class TestServerStatus:
         # default URL, and whatever happens to be on :6379 must not decide this.
         result = CliRunner().invoke(main, ["server", "status", "--url", "redis://127.0.0.1:1"])
         assert result.exit_code != 0
-        assert "No managed server installed" in result.output
+        assert "No managed server installed" in flat(result)
 
     def test_unreachable_server_exits_nonzero(self):
         result = CliRunner().invoke(main, ["server", "status", "--url", "redis://127.0.0.1:1"])
         assert result.exit_code != 0
-        assert "Not reachable" in result.output
+        assert "Not reachable" in flat(result)
 
     def test_json_status_is_machine_readable(self):
         result = CliRunner().invoke(
@@ -205,7 +221,7 @@ class TestStorageMigrate:
         make_project(tmp_path)
         result = CliRunner().invoke(main, ["storage", "migrate", "--target", str(tmp_path)])
         assert result.exit_code != 0
-        assert "No destination server" in result.output
+        assert "No destination server" in flat(result)
 
     def test_dry_run_writes_nothing_and_reports_a_plan(self, tmp_path):
         from navegador.graph.store import GraphStore
@@ -228,7 +244,7 @@ class TestStorageMigrate:
             ],
         )
         assert result.exit_code == 0
-        assert "planned" in result.output
+        assert "planned" in flat(result)
 
     def test_missing_local_graph_is_skipped_not_failed(self, tmp_path):
         project = make_project(tmp_path / "repo", backend="redis")
@@ -237,7 +253,7 @@ class TestStorageMigrate:
             ["storage", "migrate", "--target", str(project), "--to", "redis://127.0.0.1:1"],
         )
         assert result.exit_code == 0
-        assert "skipped" in result.output
+        assert "skipped" in flat(result)
 
     def test_unreachable_destination_fails_loudly(self, tmp_path):
         from navegador.graph.store import GraphStore
@@ -252,7 +268,7 @@ class TestStorageMigrate:
             ["storage", "migrate", "--target", str(project), "--to", "redis://127.0.0.1:1"],
         )
         assert result.exit_code != 0
-        assert "failed" in result.output
+        assert "failed" in flat(result)
 
     def test_overwrite_reaches_the_bulk_path(self, tmp_path):
         """
@@ -326,4 +342,4 @@ class TestStorageMigrate:
             ["storage", "migrate", "--all", "--root", str(tmp_path), "--to", "redis://127.0.0.1:1"],
         )
         assert result.exit_code == 0
-        assert "No projects with a local graph" in result.output
+        assert "No projects with a local graph" in flat(result)
