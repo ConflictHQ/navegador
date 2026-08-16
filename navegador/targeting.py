@@ -294,17 +294,31 @@ class Targeting:
 
         def names(cypher: str) -> list[dict]:
             rows = self._store.query(cypher, {"symbol": symbol}).result_set
-            return [{"name": row[0], "path": row[1] or ""} for row in rows or [] if row and row[0]]
+            entries = []
+            for row in rows or []:
+                if not row or not row[0]:
+                    continue
+                entry = {"name": row[0], "path": row[1] or ""}
+                # Whether the edge was resolved or guessed. tree-sitter has no
+                # name resolution, so a call edge comes from import heuristics
+                # that are usually right; an agent should be able to tell that
+                # apart from a fact (#188).
+                if len(row) > 2 and row[2]:
+                    entry["resolution"] = row[2]
+                entries.append(entry)
+            return entries
 
         base = "MATCH (n) WHERE (n:Function OR n:Method OR n:Class) AND n.name = $symbol "
         return {
             "symbol": symbol,
             "defined_in": names(base + "RETURN n.name, coalesce(n.file_path,'') LIMIT 5"),
             "callers": names(
-                base + "MATCH (c)-[:CALLS]->(n) RETURN c.name, coalesce(c.file_path,'') LIMIT 25"
+                base + "MATCH (c)-[r:CALLS]->(n) "
+                "RETURN c.name, coalesce(c.file_path,''), coalesce(r.resolution,'') LIMIT 25"
             ),
             "callees": names(
-                base + "MATCH (n)-[:CALLS]->(c) RETURN c.name, coalesce(c.file_path,'') LIMIT 25"
+                base + "MATCH (n)-[r:CALLS]->(c) "
+                "RETURN c.name, coalesce(c.file_path,''), coalesce(r.resolution,'') LIMIT 25"
             ),
             "tests": names(
                 base + "MATCH (t)-[:TESTS]->(n) RETURN t.name, coalesce(t.file_path,'') LIMIT 25"

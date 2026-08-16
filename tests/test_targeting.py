@@ -225,3 +225,28 @@ class TestHashesForPaths:
 
     def test_unknown_path(self, targeting):
         assert targeting.hashes_for_paths(["nope.py"]) == set()
+
+
+class TestEdgeProvenance:
+    """
+    An agent should be able to tell a fact from a good guess (#188).
+
+    tree-sitter is syntax only — no name resolution, no types — so a call edge
+    is an import heuristic that is usually right. Two of the eight bugs fixed
+    in 1.5 came from treating those guesses as certainties, so the graph now
+    records which is which.
+    """
+
+    def test_call_edges_are_marked_inferred(self, project):
+        rows = project.query("MATCH ()-[r:CALLS]->() RETURN DISTINCT r.resolution").result_set
+        assert [row[0] for row in rows] == ["inferred"]
+
+    def test_neighbourhood_surfaces_resolution(self, targeting):
+        callers = targeting.neighbourhood("validate_token")["callers"]
+        assert callers
+        assert all(c.get("resolution") == "inferred" for c in callers)
+
+    def test_defined_in_carries_no_resolution(self, targeting):
+        """A definition is a fact about the file; there is no edge to qualify."""
+        defined = targeting.neighbourhood("validate_token")["defined_in"]
+        assert defined and "resolution" not in defined[0]
