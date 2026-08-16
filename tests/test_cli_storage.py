@@ -229,6 +229,37 @@ class TestStorageMigrate:
             )
         assert migrate.call_args.kwargs["overwrite"] is True
 
+    def test_json_output_is_parseable_despite_progress(self, tmp_path):
+        """
+        Per-graph progress must not land on stdout alongside --json.
+
+        It did, so piping the result into a parser failed on the narration —
+        the output is meant to be machine-readable, and a caller should not
+        have to strip human-facing lines out of it first.
+        """
+        from navegador.graph.store import GraphStore
+
+        project = make_project(tmp_path / "repo", backend="redis")
+        store = GraphStore.sqlite(str(project / ".navegador" / "graph.db"))
+        store.query("CREATE (:Function {name: 'seeded', file_path: 'a.py'})")
+        store.close()
+
+        result = CliRunner().invoke(
+            main,
+            [
+                "storage",
+                "migrate",
+                "--target",
+                str(project),
+                "--to",
+                "redis://127.0.0.1:1",
+                "--dry-run",
+                "--json",
+            ],
+        )
+        payload = json.loads(result.stdout)
+        assert payload["results"][0]["status"] == "planned"
+
     def test_all_reports_when_nothing_to_do(self, tmp_path):
         make_project(tmp_path / "empty", backend="redis")  # config only, no graph file
         result = CliRunner().invoke(

@@ -17,6 +17,10 @@ from rich.markdown import Markdown
 from rich.table import Table
 
 console = Console()
+# Progress narration goes to stderr so that --json output on stdout stays
+# parseable. A caller piping JSON into a parser must not have to strip
+# human-facing lines out of it first.
+progress = Console(stderr=True)
 
 DB_OPTION = click.option(
     "--db", default=".navegador/graph.db", show_default=True, help="Graph DB path."
@@ -4131,7 +4135,7 @@ def _copy_all_graphs(
     except Exception as e:  # noqa: BLE001
         if not dry_run:
             raise
-        console.print(
+        progress.print(
             f"  [yellow]destination not reachable, cannot check for clashes:[/yellow] {e}"
         )
 
@@ -4159,7 +4163,7 @@ def _copy_all_graphs(
             n, e = counts.node_count(), counts.edge_count()
             nodes += n
             edges += e
-            console.print(f"  {src} → {dst}: {n} nodes, {e} edges")
+            progress.print(f"  {src} → {dst}: {n} nodes, {e} edges")
         return {"status": "planned", "nodes": nodes, "edges": edges, "graphs": len(plan)}
 
     nodes = edges = 0
@@ -4167,7 +4171,7 @@ def _copy_all_graphs(
         stats = copy_graph(source_client.with_graph(src), dest_client.with_graph(dst))
         nodes += stats["nodes"]
         edges += stats["edges"]
-        console.print(f"  {src} → {dst}: {stats['nodes']} nodes, {stats['edges']} edges")
+        progress.print(f"  {src} → {dst}: {stats['nodes']} nodes, {stats['edges']} edges")
 
     return {"status": "ok", "nodes": nodes, "edges": edges, "graphs": len(plan)}
 
