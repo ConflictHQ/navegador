@@ -172,6 +172,65 @@ class TestResolveStorage:
         assert "project config" in described
 
 
+class TestGraphNamespacing:
+    """
+    On a shared server every project would otherwise read the same default
+    graph, making the per-repo namespaces unreachable through normal commands.
+    """
+
+    def test_graph_name_read_from_project_config(self, tmp_path):
+        write_project_config(tmp_path, '[storage]\nbackend = "redis"\ngraph = "navegador_myrepo"\n')
+        assert resolve_storage(target=tmp_path).graph_name == "navegador_myrepo"
+
+    def test_graph_name_read_for_embedded_too(self, tmp_path):
+        write_project_config(tmp_path, '[storage]\nbackend = "sqlite"\ngraph = "scratch"\n')
+        assert resolve_storage(target=tmp_path).graph_name == "scratch"
+
+    def test_absent_graph_name_is_empty(self, tmp_path):
+        write_project_config(tmp_path, '[storage]\nbackend = "redis"\n')
+        assert resolve_storage(target=tmp_path).graph_name == ""
+
+    def test_explicit_argument_overrides_config(self, tmp_path):
+        write_project_config(tmp_path, '[storage]\nbackend = "redis"\ngraph = "configured"\n')
+        cfg = resolve_storage(target=tmp_path, graph_name="explicit")
+        assert cfg.graph_name == "explicit"
+
+    def test_env_var_overrides_config(self, tmp_path, monkeypatch):
+        write_project_config(tmp_path, '[storage]\nbackend = "redis"\ngraph = "configured"\n')
+        monkeypatch.setenv("NAVEGADOR_GRAPH", "from-env")
+        assert resolve_storage(target=tmp_path).graph_name == "from-env"
+
+    def test_override_applies_to_env_selected_backend(self, monkeypatch):
+        monkeypatch.setenv("NAVEGADOR_REDIS_URL", "redis://h:6379")
+        assert resolve_storage(graph_name="g").graph_name == "g"
+
+    def test_override_applies_to_the_default_backend(self, tmp_path):
+        bare = tmp_path / "bare"
+        bare.mkdir()
+        assert resolve_storage(target=bare, graph_name="g").graph_name == "g"
+
+    def test_describe_mentions_the_graph(self, tmp_path):
+        write_project_config(tmp_path, '[storage]\nbackend = "redis"\ngraph = "navegador_x"\n')
+        assert "graph=navegador_x" in resolve_storage(target=tmp_path).describe()
+
+    def test_default_graph_name_follows_the_federation_convention(self, tmp_path):
+        from navegador.config import default_graph_name
+
+        repo = tmp_path / "my-repo"
+        repo.mkdir()
+        assert default_graph_name(repo) == "navegador_my-repo"
+
+    def test_redis_init_writes_a_graph_name(self, tmp_path):
+        repo = tmp_path / "widgets"
+        repo.mkdir()
+        init_project(repo, storage="redis")
+        assert resolve_storage(target=repo).graph_name == "navegador_widgets"
+
+    def test_embedded_init_writes_no_graph_name(self, tmp_path):
+        init_project(tmp_path, storage="sqlite")
+        assert resolve_storage(target=tmp_path).graph_name == ""
+
+
 class TestConfigDiscovery:
     def test_find_project_config_returns_none_without_one(self, tmp_path):
         assert find_project_config(tmp_path) is None

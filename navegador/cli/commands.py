@@ -97,6 +97,14 @@ def main():
     help="LLM provider (e.g. anthropic, openai, ollama).",
 )
 @click.option("--llm-model", default="", help="LLM model name.")
+@click.option(
+    "--graph",
+    "graph_name",
+    default="",
+    metavar="NAME",
+    help="Named graph on the shared server. Defaults to navegador_<directory>, "
+    "which keeps this project separate from others using the same server.",
+)
 @click.option("--cluster", is_flag=True, help="Enable cluster/swarm mode.")
 @click.option(
     "--commit-graph",
@@ -113,6 +121,7 @@ def init(
     redis_url: str,
     llm_provider: str,
     llm_model: str,
+    graph_name: str,
     cluster: bool,
     commit_graph: bool,
 ):
@@ -140,11 +149,12 @@ def init(
     """
     from navegador.config import init_project
 
-    storage = "redis" if redis_url else "sqlite"
+    storage = "redis" if (redis_url or graph_name) else "sqlite"
     nav_dir = init_project(
         path,
         storage=storage,
         redis_url=redis_url,
+        graph_name=graph_name,
         llm_provider=llm_provider,
         llm_model=llm_model,
         cluster=cluster,
@@ -3945,6 +3955,13 @@ def storage():
 @click.option(
     "--overwrite", is_flag=True, help="Replace destination graphs that already hold data."
 )
+@click.option(
+    "--write-config",
+    is_flag=True,
+    help="Point each migrated project's .navegador/config.toml at the shared "
+    "server and the graph it was copied into. Configs tracked by git are left "
+    "alone — a committed [storage] is a decision the repo makes for everyone.",
+)
 @click.option("--dry-run", is_flag=True, help="Report what would move without writing.")
 @click.option("--prune", is_flag=True, help="Delete the local graph file after a verified copy.")
 @click.option("--json", "as_json", is_flag=True)
@@ -3957,6 +3974,7 @@ def storage_migrate(
     graph_name: str,
     default_as: str,
     overwrite: bool,
+    write_config: bool,
     dry_run: bool,
     prune: bool,
     as_json: bool,
@@ -3999,7 +4017,15 @@ def storage_migrate(
             console.print(f"No projects with a local graph found under {root}.")
             return
         results = [
-            _migrate_project(r.root, dest_url, graph_name, dry_run, prune, overwrite)
+            _migrate_project(
+                r.root,
+                dest_url,
+                graph_name,
+                dry_run=dry_run,
+                prune=prune,
+                overwrite=overwrite,
+                write_config=write_config,
+            )
             for r in records
         ]
     else:
@@ -4009,7 +4035,17 @@ def storage_migrate(
                 "No destination server. Either configure one for this project "
                 "(navegador init --storage redis) or pass --to redis://host:port."
             )
-        results = [_migrate_project(Path(target), dest_url, graph_name, dry_run, prune, overwrite)]
+        results = [
+            _migrate_project(
+                Path(target),
+                dest_url,
+                graph_name,
+                dry_run=dry_run,
+                prune=prune,
+                overwrite=overwrite,
+                write_config=write_config,
+            )
+        ]
 
     failed = [r for r in results if r.get("status") == "failed"]
 
@@ -4140,9 +4176,11 @@ def _migrate_project(
     root: Path,
     dest_url: str,
     graph_name: str,
-    dry_run: bool,
-    prune: bool,
+    *,
+    dry_run: bool = False,
+    prune: bool = False,
     overwrite: bool = False,
+    write_config: bool = False,
 ) -> dict:
     """Copy a project's embedded graphs — all of them — into the shared server."""
     from navegador.config import DEFAULT_REDIS_URL, resolve_storage
@@ -4174,12 +4212,62 @@ def _migrate_project(
         if source is not None:
             source.close()
 
+    if result.get("status") == "ok" and write_config:
+        # Only after a verified copy: repointing a project at a graph that was
+        # not fully written would be worse than leaving it on the local file.
+        if _config_is_tracked(root):
+            result["config_skipped"] = "tracked by git"
+        else:
+            _point_config_at(root, url, default_as)
+            result["config_updated"] = True
+
     if prune and result.get("status") == "ok":
         # Only ever reached after copy_graph verified the counts matched.
         db_file.unlink()
         result["pruned"] = True
 
     return result
+
+
+def _config_is_tracked(root: Path) -> bool:
+    """
+    True when the project's config.toml is committed to git.
+
+    A tracked ``[storage]`` is a decision the repository makes for everyone who
+    clones it. Repointing it at one developer's machine-local server would break
+    every teammate who has no such server, so --write-config leaves it alone.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", ".navegador/config.toml"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _point_config_at(root: Path, redis_url: str, graph_name: str) -> None:
+    """Rewrite a project's [storage] table to use the shared server."""
+    from navegador.config import init_project, read_config
+
+    existing = read_config(root / ".navegador" / "config.toml")
+    llm = existing.get("llm", {}) if isinstance(existing.get("llm"), dict) else {}
+    cluster = existing.get("cluster", {}) if isinstance(existing.get("cluster"), dict) else {}
+    init_project(
+        root,
+        storage="redis",
+        redis_url=redis_url,
+        graph_name=graph_name,
+        llm_provider=str(llm.get("provider", "")),
+        llm_model=str(llm.get("model", "")),
+        cluster=bool(cluster.get("enabled", False)),
+        commit_graph=True,  # never re-touch .gitignore on an existing project
+    )
 
 
 def _migrate_server(

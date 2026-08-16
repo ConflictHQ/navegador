@@ -227,7 +227,7 @@ class TestStorageMigrate:
                     "--overwrite",
                 ],
             )
-        assert migrate.call_args.args[-1] is True
+        assert migrate.call_args.kwargs["overwrite"] is True
 
     def test_all_reports_when_nothing_to_do(self, tmp_path):
         make_project(tmp_path / "empty", backend="redis")  # config only, no graph file

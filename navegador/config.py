@@ -33,7 +33,7 @@ Centralized (Redis/FalkorDB) — multi-repo, multi-agent:
 
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 DEFAULT_DB_PATH = ".navegador/graph.db"
@@ -60,6 +60,7 @@ class StorageConfig:
     redis_url: str = ""
     db_path: str = ""
     source: str = ""
+    graph_name: str = ""
 
     @property
     def is_redis(self) -> bool:
@@ -73,7 +74,8 @@ class StorageConfig:
         through Rich, which would consume them as markup.
         """
         where = self.redis_url if self.is_redis else self.db_path
-        return f"{where} ({self.backend}, from {self.source})"
+        graph = f" graph={self.graph_name}" if self.graph_name else ""
+        return f"{where}{graph} ({self.backend}, from {self.source})"
 
 
 # ── Config file discovery ─────────────────────────────────────────────────────
@@ -136,10 +138,13 @@ def storage_from_file(path: Path, label: str) -> StorageConfig | None:
 
     backend = str(storage.get("backend", "")).strip().lower()
     source = f"{label} {path}"
+    # On a shared server every project would otherwise read the same default
+    # graph; `graph` is how a project addresses its own namespace.
+    graph_name = str(storage.get("graph", "")).strip()
 
     if backend in _REDIS_ALIASES:
         url = str(storage.get("redis_url", "")).strip() or DEFAULT_REDIS_URL
-        return StorageConfig(backend="redis", redis_url=url, source=source)
+        return StorageConfig(backend="redis", redis_url=url, source=source, graph_name=graph_name)
 
     if backend in _EMBEDDED_ALIASES:
         db_path = str(storage.get("db_path", "")).strip() or DEFAULT_DB_PATH
@@ -148,7 +153,9 @@ def storage_from_file(path: Path, label: str) -> StorageConfig | None:
         candidate = Path(db_path)
         if not candidate.is_absolute():
             candidate = path.parent.parent / candidate
-        return StorageConfig(backend="embedded", db_path=str(candidate), source=source)
+        return StorageConfig(
+            backend="embedded", db_path=str(candidate), source=source, graph_name=graph_name
+        )
 
     # A [storage] table with an unrecognised or missing backend is not a
     # decision — fall through to the next layer rather than guessing.
@@ -162,6 +169,7 @@ def resolve_storage(
     db_path: str | None = None,
     redis_url: str | None = None,
     target: str | Path | None = None,
+    graph_name: str | None = None,
 ) -> StorageConfig:
     """
     Resolve which store to use, and record why.
@@ -173,45 +181,60 @@ def resolve_storage(
                    graph file. Project config discovery walks up from here, so
                    naming a repo elsewhere on disk picks up *that* repo's config
                    rather than the caller's working directory.
+        graph_name: Named graph within the store (from ``--graph``). Overrides
+                   any configured name; on a shared server this is what keeps
+                   each project in its own namespace.
     """
+    override = (graph_name or os.environ.get("NAVEGADOR_GRAPH", "")).strip()
+
+    def _with_graph(config: StorageConfig) -> StorageConfig:
+        return replace(config, graph_name=override) if override else config
+
     # 1. Explicit arguments
     if redis_url:
-        return StorageConfig(backend="redis", redis_url=redis_url, source="--redis-url")
+        return _with_graph(
+            StorageConfig(backend="redis", redis_url=redis_url, source="--redis-url")
+        )
     if db_path:
-        return StorageConfig(backend="embedded", db_path=db_path, source="--db")
+        return _with_graph(StorageConfig(backend="embedded", db_path=db_path, source="--db"))
 
     # 2. Environment
     env_redis = os.environ.get("NAVEGADOR_REDIS_URL", "").strip()
     if env_redis:
-        return StorageConfig(
-            backend="redis", redis_url=env_redis, source="NAVEGADOR_REDIS_URL env var"
+        return _with_graph(
+            StorageConfig(
+                backend="redis", redis_url=env_redis, source="NAVEGADOR_REDIS_URL env var"
+            )
         )
     env_db = os.environ.get("NAVEGADOR_DB", "").strip()
     if env_db:
-        return StorageConfig(backend="embedded", db_path=env_db, source="NAVEGADOR_DB env var")
+        return _with_graph(
+            StorageConfig(backend="embedded", db_path=env_db, source="NAVEGADOR_DB env var")
+        )
 
     # 3. Project config, discovered from the target being operated on
     project_config = find_project_config(target)
     if project_config:
         resolved = storage_from_file(project_config, "project config")
         if resolved:
-            return resolved
+            return _with_graph(resolved)
 
     # 4. User config — the machine-wide default
     user_config = user_config_path()
     if user_config.is_file():
         resolved = storage_from_file(user_config, "user config")
         if resolved:
-            return resolved
+            return _with_graph(resolved)
 
     # 5. Default embedded store
-    return StorageConfig(backend="embedded", db_path=DEFAULT_DB_PATH, source="default")
+    return _with_graph(StorageConfig(backend="embedded", db_path=DEFAULT_DB_PATH, source="default"))
 
 
 def get_store(
     db_path: str | None = None,
     redis_url: str | None = None,
     target: str | Path | None = None,
+    graph_name: str | None = None,
 ):
     """
     Return a GraphStore for the resolved backend.
@@ -221,7 +244,7 @@ def get_store(
             message names the backend, where it came from, and how to fix it —
             rather than surfacing a raw redis-py traceback.
     """
-    return open_store(resolve_storage(db_path, redis_url, target))
+    return open_store(resolve_storage(db_path, redis_url, target, graph_name))
 
 
 def open_store(config: StorageConfig):
@@ -230,7 +253,10 @@ def open_store(config: StorageConfig):
 
     if config.is_redis:
         try:
-            return GraphStore.redis(config.redis_url)
+            store = GraphStore.redis(config.redis_url)
+            # On a shared server the default graph is common to every project;
+            # a configured name is what keeps each in its own namespace.
+            return store.with_graph(config.graph_name) if config.graph_name else store
         except ImportError:
             raise
         except Exception as e:
@@ -244,7 +270,8 @@ def open_store(config: StorageConfig):
             ) from e
 
     try:
-        return GraphStore.sqlite(config.db_path or DEFAULT_DB_PATH)
+        store = GraphStore.sqlite(config.db_path or DEFAULT_DB_PATH)
+        return store.with_graph(config.graph_name) if config.graph_name else store
     except ImportError:
         # Missing dependency — GraphStore.sqlite already explains this well.
         raise
@@ -261,10 +288,22 @@ def open_store(config: StorageConfig):
         ) from e
 
 
+def default_graph_name(project_dir: str | Path) -> str:
+    """
+    Conventional graph name for a project on a shared server.
+
+    Matches the ``navegador_<repo>`` namespacing used by federated workspace
+    ingest and by graph migration, so a project addresses the same graph however
+    it was populated.
+    """
+    return f"navegador_{Path(project_dir).resolve().name}"
+
+
 def init_project(
     project_dir: str | Path = ".",
     storage: str = "sqlite",
     redis_url: str = "",
+    graph_name: str = "",
     llm_provider: str = "",
     llm_model: str = "",
     cluster: bool = False,
@@ -317,6 +356,13 @@ def init_project(
     ]
     if storage == "redis":
         config_lines.append(f'redis_url = "{redis_url or DEFAULT_REDIS_URL}"')
+        # Without a name every project on a shared server reads the same default
+        # graph. Derive one from the project directory so they stay separate.
+        config_lines += [
+            "# Named graph on the shared server — keeps this project's graph",
+            "# separate from every other project using the same server.",
+            f'graph = "{graph_name or default_graph_name(project_dir)}"',
+        ]
     else:
         config_lines.append(f'db_path = "{DEFAULT_DB_PATH}"')
 
