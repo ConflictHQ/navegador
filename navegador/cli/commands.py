@@ -3623,10 +3623,15 @@ def server_install(
 
     probe = manifest.get("probe") or {}
     if start and not probe.get("graph_module"):
+        # Do not soften this into "not reported in yet": the service manager
+        # returning cleanly is not evidence that the server came up.
         console.print(
-            "[yellow]Started, but the graph module did not report in yet[/yellow] — "
-            "check: navegador server status"
+            f"[red]The server did not come up[/red] — "
+            f"{probe.get('error', 'no graph module loaded')}\n"
+            f"  Log: {srv.paths().logs / 'falkordb.log'}\n"
+            f"  Retry with: [cyan]navegador server start[/cyan]"
         )
+        raise SystemExit(1)
     elif start:
         console.print(f"[green]Running[/green] — FalkorDB {probe.get('module_version', '?')}")
     if not port_conflict and not start:
@@ -3662,7 +3667,19 @@ def server_restart():
         srv.start_service()
     except srv.ServerError as e:
         raise click.ClickException(str(e)) from e
-    console.print("[green]restarted[/green]")
+
+    manifest = srv.read_manifest(srv.paths())
+    url = f"redis://{manifest.get('bind', '127.0.0.1')}:{manifest.get('port', 6379)}"
+    # A large graph takes seconds to reload from AOF, during which the port is
+    # not yet accepting connections. Reporting success before then would send
+    # the user to a status check that contradicts it.
+    info = srv.wait_until_ready(url, timeout=120)
+    if not info.get("graph_module"):
+        raise click.ClickException(
+            f"Restarted, but {url} is not serving graphs — {info.get('error', 'no graph module')}\n"
+            f"  Log: {srv.paths().logs / 'falkordb.log'}"
+        )
+    console.print(f"[green]restarted[/green] — {len(info.get('graphs', []))} graph(s) resident")
 
 
 @server.command("status")

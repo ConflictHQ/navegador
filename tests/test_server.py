@@ -8,6 +8,9 @@ decode. Downloading and service registration are exercised by
 ``navegador server install`` itself, not here.
 """
 
+import subprocess
+import sys
+
 import pytest
 
 from navegador import server as srv
@@ -162,6 +165,71 @@ class TestManifest:
         p.mkdirs()
         p.manifest.write_text("{not json", encoding="utf-8")
         assert srv.read_manifest(p) == {}
+
+
+class TestServiceLifecycle:
+    """
+    The bootout/bootstrap race.
+
+    ``launchctl bootout`` returns before teardown finishes and the label stays
+    listed for a moment. Treating "still listed" as "already running" made a
+    restart quietly start nothing while reporting success.
+    """
+
+    @staticmethod
+    def _ok_run(*a, **k):
+        return subprocess.CompletedProcess(a[0] if a else [], 0, "", "")
+
+    def test_stop_waits_for_the_job_to_disappear(self, monkeypatch):
+        states = iter([True, True, False, False])
+        monkeypatch.setattr(srv, "_run", self._ok_run)
+        monkeypatch.setattr(srv, "service_loaded", lambda: next(states, False))
+        monkeypatch.setattr(srv.time, "sleep", lambda _: None)
+        assert srv.stop_service(timeout=5) == "stopped"
+
+    def test_stop_reports_when_teardown_outlasts_the_timeout(self, monkeypatch):
+        monkeypatch.setattr(srv, "_run", self._ok_run)
+        monkeypatch.setattr(srv, "service_loaded", lambda: True)
+        monkeypatch.setattr(srv.time, "sleep", lambda _: None)
+        assert "still shutting down" in srv.stop_service(timeout=0)
+
+    def test_start_raises_when_the_job_never_loads(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("NAVEGADOR_HOME", str(tmp_path))
+        plist = tmp_path / "agent.plist"
+        plist.write_text("<plist/>", encoding="utf-8")
+        monkeypatch.setattr(srv, "launch_agent_path", lambda: plist)
+        monkeypatch.setattr(srv, "service_loaded", lambda: False)
+        monkeypatch.setattr(
+            srv, "_run", lambda *a, **k: subprocess.CompletedProcess(a[0], 1, "", "boom")
+        )
+        monkeypatch.setattr(srv.time, "sleep", lambda _: None)
+
+        if sys.platform != "darwin":
+            pytest.skip("launchd-specific path")
+        with pytest.raises(srv.ServerError, match="Could not start"):
+            srv.start_service(attempts=2)
+
+    def test_start_requires_an_installed_service(self, monkeypatch, tmp_path):
+        if sys.platform != "darwin":
+            pytest.skip("launchd-specific path")
+        monkeypatch.setattr(srv, "launch_agent_path", lambda: tmp_path / "absent.plist")
+        with pytest.raises(srv.ServerError, match="server install"):
+            srv.start_service()
+
+
+class TestWaitUntilReady:
+    def test_returns_as_soon_as_the_module_answers(self, monkeypatch):
+        calls = iter([{"graph_module": False}, {"graph_module": True, "graphs": []}])
+        monkeypatch.setattr(srv, "probe", lambda url: next(calls))
+        monkeypatch.setattr(srv.time, "sleep", lambda _: None)
+        assert srv.wait_until_ready("redis://x", timeout=5)["graph_module"] is True
+
+    def test_gives_up_and_returns_the_last_probe(self, monkeypatch):
+        monkeypatch.setattr(srv, "probe", lambda url: {"graph_module": False, "error": "nope"})
+        monkeypatch.setattr(srv.time, "sleep", lambda _: None)
+        result = srv.wait_until_ready("redis://x", timeout=0)
+        assert result["graph_module"] is False
+        assert result["error"] == "nope"
 
 
 class TestProbe:

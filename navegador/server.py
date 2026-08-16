@@ -355,36 +355,76 @@ def _run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
     return result
 
 
-def start_service() -> str:
-    """Start the server via the platform service manager."""
+def service_loaded() -> bool:
+    """True when the platform service manager currently holds our job."""
     if sys.platform == "darwin":
-        plist = launch_agent_path()
-        if not plist.is_file():
-            raise ServerError("Service not installed. Run: navegador server install")
-        uid = os.getuid()
-        # bootstrap is the modern spelling; load -w still works on older macOS.
-        result = _run(["launchctl", "bootstrap", f"gui/{uid}", str(plist)], check=False)
-        if result.returncode != 0:
-            if "already bootstrapped" in (result.stderr + result.stdout).lower():
-                return "already running"
-            _run(["launchctl", "load", "-w", str(plist)])
+        result = _run(["launchctl", "list"], check=False)
+        return SERVICE_LABEL in result.stdout
+    result = _run(["systemctl", "--user", "is-active", "navegador-falkordb.service"], check=False)
+    return result.stdout.strip() == "active"
+
+
+def start_service(attempts: int = 5) -> str:
+    """
+    Start the server via the platform service manager.
+
+    Retries briefly: ``launchctl bootout`` returns before the job is fully torn
+    down, so a restart that bootstraps immediately afterwards races it and fails
+    with an opaque "Input/output error". Checking whether the job is actually
+    loaded is more reliable than reading launchctl's exit status, which is also
+    non-zero when the job is simply already present.
+    """
+    if sys.platform != "darwin":
+        _run(["systemctl", "--user", "enable", "--now", "navegador-falkordb.service"])
         return "started"
 
-    _run(["systemctl", "--user", "enable", "--now", "navegador-falkordb.service"])
-    return "started"
+    plist = launch_agent_path()
+    if not plist.is_file():
+        raise ServerError("Service not installed. Run: navegador server install")
+
+    uid = os.getuid()
+    last = ""
+    for attempt in range(attempts):
+        if service_loaded():
+            return "already running" if attempt else "started"
+        # bootstrap is the modern spelling; load -w still works on older macOS.
+        result = _run(["launchctl", "bootstrap", f"gui/{uid}", str(plist)], check=False)
+        if result.returncode == 0:
+            return "started"
+        last = (result.stderr or result.stdout).strip()
+        _run(["launchctl", "load", "-w", str(plist)], check=False)
+        if service_loaded():
+            return "started"
+        time.sleep(0.5)
+
+    raise ServerError(
+        f"Could not start the FalkorDB service after {attempts} attempts.\n"
+        f"  launchctl: {last}\n"
+        f"  Check the server log: {paths().logs / 'falkordb.log'}"
+    )
 
 
-def stop_service() -> str:
+def stop_service(timeout: float = 15.0) -> str:
+    """
+    Stop the server and wait for the service manager to release the job.
+
+    ``launchctl bootout`` returns before teardown completes, and the label stays
+    listed for a moment afterwards. Returning early makes a restart look like an
+    already-running service and quietly start nothing.
+    """
     if sys.platform == "darwin":
         plist = launch_agent_path()
         uid = os.getuid()
         result = _run(["launchctl", "bootout", f"gui/{uid}/{SERVICE_LABEL}"], check=False)
         if result.returncode != 0 and plist.is_file():
             _run(["launchctl", "unload", "-w", str(plist)], check=False)
-        return "stopped"
+    else:
+        _run(["systemctl", "--user", "disable", "--now", "navegador-falkordb.service"], check=False)
 
-    _run(["systemctl", "--user", "disable", "--now", "navegador-falkordb.service"], check=False)
-    return "stopped"
+    deadline = time.monotonic() + timeout
+    while service_loaded() and time.monotonic() < deadline:
+        time.sleep(0.3)
+    return "stopped" if not service_loaded() else "stop requested (still shutting down)"
 
 
 # ── Status ────────────────────────────────────────────────────────────────────
