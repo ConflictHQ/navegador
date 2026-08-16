@@ -336,9 +336,7 @@ class MemoryIngester:
 
     def _clear_memory_nodes(self, repo_name: str) -> None:
         """Remove all memory-typed nodes for a given repo."""
-        cypher = (
-            "MATCH (n) " "WHERE n.memory_type IS NOT NULL AND n.repo = $repo " "DETACH DELETE n"
-        )
+        cypher = "MATCH (n) WHERE n.memory_type IS NOT NULL AND n.repo = $repo DETACH DELETE n"
         self.store.query(cypher, {"repo": repo_name})
         logger.info("Cleared memory nodes for repo=%s", repo_name)
 

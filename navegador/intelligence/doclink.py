@@ -238,7 +238,7 @@ class DocLinker:
         ]
 
     def _existing_links(self) -> set[tuple[str, str]]:
-        cypher = "MATCH (a)-[:DOCUMENTS|ANNOTATES|GOVERNS]->(b) " "RETURN a.name, b.name LIMIT 5000"
+        cypher = "MATCH (a)-[:DOCUMENTS|ANNOTATES|GOVERNS]->(b) RETURN a.name, b.name LIMIT 5000"
         rows = self.store.query(cypher).result_set or []
         return {(r[0], r[1]) for r in rows if r[0] and r[1]}
 

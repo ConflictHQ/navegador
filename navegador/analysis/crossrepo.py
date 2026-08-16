@@ -79,9 +79,7 @@ class CrossRepoImpactResult:
 
     def to_markdown(self) -> str:
         lines = [f"# Cross-Repo Blast Radius — `{self.name}`\n"]
-        lines.append(
-            f"**Source repo:** {self.source_repo or 'unknown'}  " f"**Depth:** {self.depth}\n"
-        )
+        lines.append(f"**Source repo:** {self.source_repo or 'unknown'}  **Depth:** {self.depth}\n")
 
         if self.affected_repos:
             lines.append(f"\n## Affected Repos ({len(self.affected_repos)})\n")
@@ -98,7 +96,7 @@ class CrossRepoImpactResult:
             for n in self.affected_nodes[:50]:  # cap for readability
                 repo = f" [{n.get('repo', '')}]" if n.get("repo") else ""
                 loc = f":{n['line_start']}" if n.get("line_start") else ""
-                lines.append(f"- **{n['type']}** `{n['name']}` — " f"`{n['file_path']}`{loc}{repo}")
+                lines.append(f"- **{n['type']}** `{n['name']}` — `{n['file_path']}`{loc}{repo}")
             if len(self.affected_nodes) > 50:
                 lines.append(f"  _…and {len(self.affected_nodes) - 50} more_")
 
