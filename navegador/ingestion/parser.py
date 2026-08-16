@@ -191,9 +191,18 @@ class RepoIngester:
             "edges": 0,
             "skipped": 0,
             "grammar_skipped": 0,
+            "removed": 0,
         }
 
+        # Every path this pass saw on disk, recorded before any decision about
+        # whether it can be parsed. Pruning against the parsed set instead would
+        # delete files whose optional grammar merely isn't installed.
+        present: set[str] = set()
+
         for source_file in self._iter_source_files(repo_path):
+            rel_path = str(source_file.relative_to(rel_root))
+            present.add(rel_path)
+
             language = LANGUAGE_MAP.get(source_file.suffix)
             if not language:
                 continue
@@ -203,7 +212,6 @@ class RepoIngester:
                 stats["grammar_skipped"] += 1
                 continue
 
-            rel_path = str(source_file.relative_to(rel_root))
             content_hash = _file_hash(source_file)
 
             if incremental and self._file_unchanged(rel_path, content_hash):
@@ -238,7 +246,13 @@ class RepoIngester:
                     shutil.rmtree(effective_root, ignore_errors=True)
 
         # Ansible pass — heuristically detect and parse Ansible YAML files
-        self._ingest_ansible(repo_path, stats, incremental, rel_root, repo_key)
+        self._ingest_ansible(repo_path, stats, incremental, rel_root, repo_key, present)
+
+        # Anything the repository no longer contains is removed. Without this a
+        # maintained graph only ever grows: deleted files keep their File node,
+        # every symbol they contained, and all their edges, and those ghosts are
+        # still returned by queries and cited in impact answers (#168).
+        stats["removed"] = self._prune_deleted_files(present, repo_key)
 
         # Fossil mirror pass — if the repo is also a Fossil checkout (e.g. a
         # Git repo mirrored to/from Fossil), ingest wiki pages and tickets.
@@ -331,6 +345,35 @@ class RepoIngester:
         if not rows or rows[0][0] is None:
             return False
         return rows[0][0] == content_hash
+
+    def _prune_deleted_files(self, present: set[str], repo_key: str) -> int:
+        """
+        Remove File/Document nodes for paths this repo no longer contains.
+
+        Scoped by BELONGS_TO so a shared or federated graph only loses the
+        entries of the repository actually being ingested. Returns how many
+        paths were removed.
+        """
+        try:
+            rows = self.store.query(queries.REPO_FILE_PATHS, {"repo": repo_key}).result_set or []
+        except Exception:
+            logger.exception("Could not list known files for %s; skipping prune", repo_key)
+            return 0
+
+        stale = [row[0] for row in rows if row and row[0] and row[0] not in present]
+        for path in stale:
+            self.store.query(queries.DELETE_FILE_CHILDREN, {"path": path})
+            self.store.query(queries.DELETE_FILE_IMPORTS, {"path": path})
+            self.store.query(queries.DELETE_FILE_NODE, {"path": path})
+
+        if stale:
+            logger.info(
+                "Removed %d file(s) no longer present in %s: %s",
+                len(stale),
+                repo_key,
+                ", ".join(sorted(stale)[:10]) + ("…" if len(stale) > 10 else ""),
+            )
+        return len(stale)
 
     def _clear_file_subgraph(self, rel_path: str) -> None:
         suffix = Path(rel_path).suffix.lower()
@@ -503,6 +546,7 @@ class RepoIngester:
         incremental: bool,
         rel_root: Path | None = None,
         repo_key: str | None = None,
+        present: set[str] | None = None,
     ) -> None:
         """Detect and parse Ansible YAML files (playbooks, roles, tasks)."""
         from navegador.ingestion.ansible import AnsibleParser
@@ -520,6 +564,11 @@ class RepoIngester:
                 continue
 
             rel_path = str(path.relative_to(rel_root))
+            # Recorded before the unchanged/skip check: an Ansible file that did
+            # not need re-parsing this pass is still present on disk and must
+            # not be pruned.
+            if present is not None:
+                present.add(rel_path)
             content_hash = _file_hash(path)
 
             if incremental and self._file_unchanged(rel_path, content_hash):

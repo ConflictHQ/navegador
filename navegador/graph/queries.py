@@ -265,6 +265,35 @@ OPTIONAL MATCH (i:Import {file_path: $path})
 DETACH DELETE i
 """
 
+# Paths of every File/Document recorded as belonging to one repository. Used to
+# find nodes for source files that have since been deleted from disk (#168):
+# nothing else walks the set of previously-known paths, so whole-file removal
+# went unnoticed and the graph drifted monotonically away from the tree.
+REPO_FILE_PATHS = """
+MATCH (f)-[:BELONGS_TO]->(:Repository {path: $repo})
+WHERE (f:File OR f:Document) AND f.path IS NOT NULL
+RETURN f.path AS path
+"""
+
+# Remove a deleted file's symbols. Separate statements rather than one chained
+# query: a file with no children makes the leading MATCH yield nothing, which
+# would silently skip everything after it.
+DELETE_FILE_CHILDREN = """
+MATCH (f {path: $path})-[:CONTAINS]->(child)
+DETACH DELETE child
+"""
+
+DELETE_FILE_IMPORTS = """
+MATCH (i:Import {file_path: $path})
+DETACH DELETE i
+"""
+
+DELETE_FILE_NODE = """
+MATCH (f {path: $path})
+WHERE f:File OR f:Document
+DETACH DELETE f
+"""
+
 DOCUMENT_HASH = """
 MATCH (d:Document {path: $path})
 RETURN d.content_hash AS hash
