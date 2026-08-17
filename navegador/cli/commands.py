@@ -4349,6 +4349,98 @@ def storage_audit(db: str, root: str, as_json: bool):
         )
 
 
+@storage.command("reindex")
+@click.option("--db", default="", help="Server to inspect. Default: resolved storage.")
+@click.option(
+    "--root",
+    default=str(Path.home() / "repos"),
+    type=click.Path(),
+    help="Tree searched for the checkouts behind each graph.",
+)
+@click.option("--yes", is_flag=True, help="Actually re-ingest. Without it, this is a dry run.")
+@click.option("--json", "as_json", is_flag=True)
+def storage_reindex(db: str, root: str, yes: bool, as_json: bool):
+    """
+    Rebuild graphs holding files a current ingest would exclude.
+
+    Ingest stopped indexing gitignored files, but graphs built before that
+    still hold whatever the old fixed skip-list let through — one real graph
+    was 99.98% build output. Those graphs are not stale and not duplicates, so
+    `storage audit` does not flag them; this is the command that finds them.
+
+    Dry run unless --yes.
+    """
+    from navegador.graph.audit import needs_reindex
+    from navegador.ingestion import RepoIngester
+    from navegador.inventory import scan
+
+    server_url = _resolve_server_url(db)
+    import falkordb
+    import redis as redis_lib
+
+    database = falkordb.FalkorDB.from_url(server_url)
+    connection = redis_lib.from_url(server_url)
+
+    affected = []
+    for record in scan(root):
+        config = record.effective
+        if not config or not config.graph_name:
+            continue
+        checked, excluded = needs_reindex(database, connection, config.graph_name, record.root)
+        if excluded:
+            affected.append(
+                {
+                    "graph": config.graph_name,
+                    "root": str(record.root),
+                    "checked": checked,
+                    "excluded": excluded,
+                    "share": round(excluded / checked, 3) if checked else 0.0,
+                }
+            )
+
+    if not affected:
+        if as_json:
+            click.echo(json.dumps({"reindexed": [], "dry_run": not yes}, indent=2))
+        else:
+            console.print("[green]No graph holds files a current ingest would exclude.[/green]")
+        return
+
+    if not yes:
+        if as_json:
+            click.echo(json.dumps({"would_reindex": affected, "dry_run": True}, indent=2))
+            return
+        table = Table(title="Graphs a current ingest would build differently")
+        table.add_column("Graph", style="cyan", max_width=42, overflow="ellipsis")
+        table.add_column("Sampled", justify="right")
+        table.add_column("Now excluded", justify="right")
+        table.add_column("Share", justify="right")
+        for item in sorted(affected, key=lambda i: -i["share"]):
+            table.add_row(
+                item["graph"],
+                str(item["checked"]),
+                str(item["excluded"]),
+                f"{item['share']:.0%}",
+            )
+        console.print(table)
+        console.print("\nRe-run with [bold]--yes[/bold] to rebuild these.")
+        return
+
+    rebuilt = []
+    for item in affected:
+        console.print(f"[bold]Re-ingesting[/bold] {item['graph']} …")
+        try:
+            store = _get_store(db, target=item["root"])
+            stats = RepoIngester(store).ingest(item["root"], clear=True)
+            rebuilt.append({**item, "files": stats.get("files", 0)})
+        except Exception as exc:  # noqa: BLE001 — one bad repo must not stop the sweep
+            console.print(f"[red]  failed: {exc}[/red]")
+
+    if as_json:
+        click.echo(json.dumps({"reindexed": rebuilt, "dry_run": False}, indent=2))
+    else:
+        console.print(f"[green]Rebuilt {len(rebuilt)} graph(s).[/green]")
+
+
 @storage.command("prune")
 @click.option("--db", default="", help="Server to prune. Default: resolved storage.")
 @click.option("--root", default=str(Path.home() / "repos"), type=click.Path())

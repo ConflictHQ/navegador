@@ -316,3 +316,234 @@ class TestPruneAgainstAStore:
         from navegador.graph.audit import prune
 
         assert prune("redis://127.0.0.1:1", []) == []
+
+
+class TestSamplingIsRepeatable:
+    """
+    A verdict that changes between runs is not evidence, and `prune
+    --include-stale` deletes on this one.
+
+    `MATCH (f:File) RETURN f.path LIMIT n` with no ORDER BY returns an
+    arbitrary subset. On a real 15,291-file graph that called it stale on one
+    run and healthy on the next, depending on whether the rows that came back
+    happened to be the build-output directory or the source tree.
+    """
+
+    def test_repeated_audits_agree(self, live):
+        from navegador.graph.audit import audit_graph
+
+        store, root = live
+        verdicts = {
+            audit_graph(
+                store._client, store._client.connection, store.graph_name, root=root
+            ).verdict
+            for _ in range(5)
+        }
+        assert len(verdicts) == 1, f"verdict varied across runs: {verdicts}"
+
+    def test_a_bounded_sample_is_still_ordered(self, live):
+        """A sample is a heuristic, but it must be the *same* heuristic."""
+        from navegador.graph.audit import audit_graph
+
+        store, root = live
+        samples = {
+            tuple(
+                sorted(
+                    [
+                        audit_graph(
+                            store._client,
+                            store._client.connection,
+                            store.graph_name,
+                            root=root,
+                            sample=1,
+                        ).files_total
+                    ]
+                )
+            )
+            for _ in range(3)
+        }
+        assert len(samples) == 1
+
+    def test_gitignored_but_present_is_not_stale(self, live):
+        """
+        Staleness is "the checkout is gone", not "we would index this
+        differently now". Conflating them pointed prune at a healthy 45 MB
+        graph whose only problem was build output — which reindex fixes
+        without destroying anything.
+        """
+        from navegador.graph.audit import audit_graph
+
+        store, root = live
+        (root / ".gitignore").write_text("src/\n")
+
+        report = audit_graph(store._client, store._client.connection, store.graph_name, root=root)
+        assert report.verdict == "healthy"
+
+
+@pytest.fixture
+def git_live(tmp_path):
+    """
+    A *git-backed* checkout with a graph over it.
+
+    The `live` fixture is a plain directory, so exclusion checks correctly
+    return nothing there — git has no opinion outside a repository. These
+    tests need a real repo.
+    """
+    import subprocess
+
+    from navegador.graph import GraphStore
+    from navegador.ingestion import RepoIngester
+
+    root = tmp_path / "gitproj"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "app.py").write_text("def alpha():\n    return 1\n")
+    (root / "src" / "util.py").write_text("def beta():\n    return 2\n")
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    git("add", "-A")
+    git("commit", "-qm", "initial")
+
+    store = GraphStore.sqlite(str(tmp_path / "gitproj.db"))
+    RepoIngester(store).ingest(root)
+    return store, root
+
+
+class TestExcludedNow:
+    """
+    Which stored paths a current ingest would no longer take (#194).
+
+    Separate from staleness: these files exist, they are simply gitignored now
+    that ingest respects .gitignore. Graphs built before that change hold them,
+    and nothing else in this module notices.
+    """
+
+    def test_gitignored_paths_are_reported(self, git_live):
+        """
+        The real #180 case is untracked build output, not a tracked file that
+        someone later added a rule for. git check-ignore deliberately says
+        nothing about tracked paths — a tracked file is never ignored, and
+        ingest keeps taking it — so the fixture has to be a file git has never
+        been told about.
+        """
+        from navegador.graph.audit import excluded_now
+
+        _, root = git_live
+        (root / "bundled").mkdir()
+        (root / "bundled" / "vendor.js").write_text("// generated\n")
+        (root / ".gitignore").write_text("bundled/\n")
+
+        assert excluded_now(root, ["src/app.py", "bundled/vendor.js"]) == ["bundled/vendor.js"]
+
+    def test_a_tracked_file_is_never_an_exclusion(self, git_live):
+        """
+        Adding a rule for an already-tracked file changes nothing: git still
+        lists it and so does ingest. Reporting it would send reindex after
+        graphs that are correct.
+        """
+        from navegador.graph.audit import excluded_now
+
+        _, root = git_live
+        (root / ".gitignore").write_text("src/util.py\n")
+        assert excluded_now(root, ["src/util.py"]) == []
+
+    def test_tracked_paths_are_not_reported(self, git_live):
+        from navegador.graph.audit import excluded_now
+
+        _, root = git_live
+        assert excluded_now(root, ["src/app.py"]) == []
+
+    def test_missing_paths_are_not_exclusions(self, git_live):
+        """A file that no longer exists is staleness, which has its own verdict."""
+        from navegador.graph.audit import excluded_now
+
+        _, root = git_live
+        assert excluded_now(root, ["src/deleted_long_ago.py"]) == []
+
+    def test_submodule_contents_are_not_exclusions(self, tmp_path):
+        """
+        The false positive that would have destroyed data. A nested repo's
+        files are absent from the parent's `git ls-files` because they belong
+        to another repository — not because they are ignored. Treating that as
+        an exclusion reported 100% of a healthy 12-submodule workspace as
+        needing a rebuild, and --yes would have cleared it.
+        """
+        import subprocess
+
+        from navegador.graph.audit import excluded_now
+
+        parent = tmp_path / "workspace"
+        (parent / "sub").mkdir(parents=True)
+        (parent / "top.py").write_text("x = 1\n")
+        (parent / "sub" / "inner.py").write_text("y = 2\n")
+
+        def git(where, *args):
+            subprocess.run(["git", *args], cwd=where, check=True, capture_output=True)
+
+        for where in (parent, parent / "sub"):
+            git(where, "init", "-q")
+            git(where, "config", "user.email", "t@example.com")
+            git(where, "config", "user.name", "t")
+            git(where, "add", "-A")
+            git(where, "commit", "-qm", "initial")
+
+        assert excluded_now(parent, ["sub/inner.py"]) == []
+
+    def test_outside_git_there_is_no_opinion(self, tmp_path):
+        from navegador.graph.audit import excluded_now
+
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        (plain / "a.py").write_text("x = 1\n")
+        assert excluded_now(plain, ["a.py"]) == []
+
+
+class TestNeedsReindex:
+    def test_counts_what_a_current_ingest_would_drop(self, git_live, tmp_path):
+        """
+        A graph built the old way: ingested with build output included, then
+        .gitignore catches up. That is every graph created before #180.
+        """
+        from navegador.graph import GraphStore
+        from navegador.graph.audit import needs_reindex
+        from navegador.ingestion import RepoIngester
+
+        _, root = git_live
+        (root / "bundled").mkdir()
+        (root / "bundled" / "vendor.py").write_text("def generated():\n    return 1\n")
+        (root / ".gitignore").write_text("bundled/\n")
+
+        old = GraphStore.sqlite(str(tmp_path / "old.db"))
+        RepoIngester(old, respect_gitignore=False).ingest(root)
+
+        checked, excluded = needs_reindex(old._client, old._client.connection, old.graph_name, root)
+        assert checked > 0
+        assert excluded >= 1
+
+    def test_clean_graph_needs_nothing(self, git_live):
+        from navegador.graph.audit import needs_reindex
+
+        store, root = git_live
+        checked, excluded = needs_reindex(
+            store._client, store._client.connection, store.graph_name, root
+        )
+        assert checked > 0 and excluded == 0
+
+    def test_junk_name_is_skipped(self, git_live):
+        from navegador.graph.audit import needs_reindex
+
+        store, root = git_live
+        assert needs_reindex(store._client, store._client.connection, "1)", root) == (0, 0)
+
+    def test_unknown_graph_is_skipped(self, git_live):
+        from navegador.graph.audit import needs_reindex
+
+        store, root = git_live
+        assert needs_reindex(store._client, store._client.connection, "no_such_graph", root) == (
+            0,
+            0,
+        )
