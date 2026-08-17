@@ -615,3 +615,56 @@ class TestReindexCandidates:
 
         store, _ = git_live
         assert reindex_candidates(store._client, store._client.connection, []) == []
+
+
+class TestAuditAll:
+    """
+    The whole-server sweep, against an embedded store.
+
+    This contains the line that produced the worst wrong answer in this
+    module: GRAPH.LIST returns bytes, str() on bytes gives "b'name'", every
+    lookup missed, and the first run reported 41 of 41 graphs — including
+    populated ones — as safe to delete.
+    """
+
+    def test_finds_the_graph_and_reads_its_name(self, git_live):
+        from navegador.graph.audit import audit_all
+
+        store, root = git_live
+        reports = audit_all(store._client, store._client.connection, {store.graph_name: root})
+        names = [r.name for r in reports]
+        assert store.graph_name in names
+        assert not any(n.startswith("b'") for n in names), (
+            "graph names came back as bytes reprs; every lookup would miss"
+        )
+
+    def test_the_populated_graph_is_healthy(self, git_live):
+        from navegador.graph.audit import audit_all
+
+        store, root = git_live
+        report = next(
+            r
+            for r in audit_all(store._client, store._client.connection, {store.graph_name: root})
+            if r.name == store.graph_name
+        )
+        assert report.verdict == "healthy"
+        assert not report.reclaimable
+
+    def test_without_a_root_mapping_the_verdict_is_unknown(self, git_live):
+        """Not having looked is not evidence of rot."""
+        from navegador.graph.audit import audit_all
+
+        store, _ = git_live
+        report = next(
+            r
+            for r in audit_all(store._client, store._client.connection)
+            if r.name == store.graph_name
+        )
+        assert report.verdict == "unknown"
+
+    def test_results_are_sorted_by_name(self, git_live):
+        from navegador.graph.audit import audit_all
+
+        store, _ = git_live
+        names = [r.name for r in audit_all(store._client, store._client.connection)]
+        assert names == sorted(names)

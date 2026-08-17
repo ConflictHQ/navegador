@@ -230,8 +230,18 @@ def audit_server(url: str, roots: dict[str, Path] | None = None) -> list[GraphAu
     import falkordb
     import redis as redis_lib
 
-    db = falkordb.FalkorDB.from_url(url)
-    connection = redis_lib.from_url(url)
+    return audit_all(falkordb.FalkorDB.from_url(url), redis_lib.from_url(url), roots)
+
+
+def audit_all(db, connection, roots: dict[str, Path] | None = None) -> list[GraphAudit]:
+    """
+    Audit every graph reachable through *connection*.
+
+    Split from :func:`audit_server` so it can be driven against an embedded
+    store, which is a real Redis over a unix socket and has no ``redis://``
+    URL. The name decoding below is the reason that matters: it was wrong
+    once, and reported 41 of 41 graphs as reclaimable.
+    """
     roots = roots or {}
 
     # GRAPH.LIST returns bytes on a connection that is not decoding responses,

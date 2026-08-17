@@ -250,3 +250,50 @@ class TestEdgeProvenance:
         """A definition is a fact about the file; there is no edge to qualify."""
         defined = targeting.neighbourhood("validate_token")["defined_in"]
         assert defined and "resolution" not in defined[0]
+
+
+class TestVectorSource:
+    """
+    Semantic similarity is one of the four sources `locate` fuses, and the
+    only one that needs a provider. Without one the others must still answer;
+    with one, its hits must actually reach the ranking.
+    """
+
+    class Provider:
+        """Deterministic hashing embedder — meaningful ranking, no network."""
+
+        def embed(self, text):
+            import hashlib
+            import math
+
+            vector = [0.0] * 16
+            for token in text.lower().replace("_", " ").split():
+                vector[int(hashlib.md5(token.encode()).hexdigest(), 16) % 16] += 1.0
+            norm = math.sqrt(sum(v * v for v in vector)) or 1.0
+            return [v / norm for v in vector]
+
+    def test_vector_hits_reach_the_ranking(self, project):
+        from navegador.intelligence.search import SemanticSearch
+
+        provider = self.Provider()
+        SemanticSearch(project, provider).index()
+
+        candidates = Targeting(project, provider=provider).locate("validate token")
+        assert candidates
+        assert any("similar" in r for c in candidates for r in c.reasons)
+
+    def test_a_provider_that_fails_does_not_break_locate(self, project):
+        """
+        A source that errors contributes nothing and the rest still answer. A
+        targeting tool returning nothing is worse than one returning a partial
+        list.
+        """
+
+        class Broken:
+            def embed(self, text):
+                raise RuntimeError("no credential")
+
+        assert Targeting(project, provider=Broken()).locate("token signature invalid")
+
+    def test_without_a_provider_the_vector_source_is_skipped(self, project):
+        assert Targeting(project).locate("token signature invalid")
