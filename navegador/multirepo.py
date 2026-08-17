@@ -37,6 +37,7 @@ from typing import Any
 
 from navegador.graph.schema import NodeLabel
 from navegador.graph.store import GraphStore
+from navegador.ingestion.parser import repo_display_name, repo_identity
 
 logger = logging.getLogger(__name__)
 
@@ -98,23 +99,40 @@ class WorkspaceManager:
     # ── Registration ──────────────────────────────────────────────────────────
 
     def add_repo(self, name: str, path: str | Path) -> None:
-        """Register a repository by name and filesystem path."""
+        """
+        Register a repository by name and filesystem path.
+
+        The Repository node is keyed by the same portable identity the ingester
+        will use, not by the absolute checkout path. Registering under a
+        different key wrote a *second* node for every repo: the ingest pass
+        attached every File to its own, and the registration node was left with
+        zero members. `list_repos` then reported both, so a namespace that
+        ingested nothing looked identical to one that worked, and a symbol
+        resolved against the empty copy traversed no CALLS edges and reported
+        no impact at all (#179).
+        """
         resolved = str(Path(path).resolve())
         graph_name = f"navegador_{name}" if self.mode == WorkspaceMode.FEDERATED else "navegador"
         self._repos[name] = {"path": resolved, "graph_name": graph_name}
 
-        # Persist registration as a Repository node in the shared store
+        identity = repo_identity(Path(resolved))
         self.store.create_node(
             NodeLabel.Repository,
             {
-                "name": name,
-                "path": resolved,
+                "name": repo_display_name(identity),
+                "path": identity,
                 "description": f"workspace:{self.mode.value}",
                 "language": "",
-                "file_path": resolved,
+                "file_path": "",
             },
         )
-        logger.info("WorkspaceManager (%s): registered %s → %s", self.mode.value, name, resolved)
+        logger.info(
+            "WorkspaceManager (%s): registered %s → %s (identity %s)",
+            self.mode.value,
+            name,
+            resolved,
+            identity,
+        )
 
     def list_repos(self) -> list[dict[str, str]]:
         """Return all registered repositories."""
@@ -286,26 +304,48 @@ class MultiRepoManager:
     # ── Registration ──────────────────────────────────────────────────────────
 
     def add_repo(self, name: str, path: str | Path) -> None:
-        """Register a repository by name and filesystem path."""
+        """
+        Register a repository by name and filesystem path.
+
+        Keyed by the portable identity the ingester uses, so registration and
+        ingest converge on one node rather than writing two — see the note on
+        :meth:`WorkspaceManager.add_repo` (#179).
+        """
         resolved = str(Path(path).resolve())
+        identity = repo_identity(Path(resolved))
         self.store.create_node(
             NodeLabel.Repository,
             {
-                "name": name,
-                "path": resolved,
+                "name": repo_display_name(identity),
+                "path": identity,
                 "description": "",
+                # Where this checkout lives on *this* machine. Kept apart from
+                # `path`, which is the portable identity: this manager persists
+                # its registry in the graph and reads it back to know what to
+                # ingest, so it still needs somewhere to find the files.
                 "file_path": resolved,
             },
         )
-        logger.info("MultiRepo: registered %s → %s", name, resolved)
+        logger.info("MultiRepo: registered %s → %s (identity %s)", name, resolved, identity)
 
     # ── Query ─────────────────────────────────────────────────────────────────
 
     def list_repos(self) -> list[dict[str, Any]]:
-        """Return all registered repositories."""
-        result = self.store.query("MATCH (r:Repository) RETURN r.name, r.path ORDER BY r.name")
+        """
+        Return all registered repositories.
+
+        ``path`` is the checkout location, taken from ``file_path``; ``identity``
+        is the portable key the graph uses. They were the same property until
+        #179, and conflating them meant registration and ingest wrote two nodes.
+        A graph written before that change has no ``file_path``, so the identity
+        stands in rather than returning nothing.
+        """
+        result = self.store.query(
+            "MATCH (r:Repository) RETURN r.name, coalesce(r.file_path, r.path), r.path "
+            "ORDER BY r.name"
+        )
         rows = result.result_set or []
-        return [{"name": row[0], "path": row[1]} for row in rows]
+        return [{"name": row[0], "path": row[1], "identity": row[2]} for row in rows]
 
     # ── Ingestion ─────────────────────────────────────────────────────────────
 
