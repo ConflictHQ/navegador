@@ -6,15 +6,18 @@ Navegador CLI — the single interface to your project's knowledge graph.
   UNIVERSAL: explain, search (spans both layers), stats
 """
 
-import asyncio
 import json
 import logging
 from pathlib import Path
 
 import click
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.table import Table
+
+# asyncio and rich.markdown are imported where they are used, not here. They
+# cost ~95ms of the ~137ms it took to import this module, and every CLI
+# invocation paid it — including the agent hooks, which shell out per call
+# (#190). Only the MCP server needs asyncio; only `manual` renders markdown.
 
 console = Console()
 # Progress narration goes to stderr so that --json output on stdout stays
@@ -253,6 +256,23 @@ def init(
     help="Exclude paths matching GLOB (repeatable). Matches repo-relative "
     "paths or single path components; a repo-root .navignore is honored too.",
 )
+@click.option(
+    "--no-content",
+    "no_content",
+    is_flag=True,
+    help="Do not keep file text in the content store. Content is addressed by "
+    "hash, so unchanged files and vendored copies cost nothing to keep — but "
+    "without it lexical search has no corpus to match against.",
+)
+@click.option(
+    "--no-gitignore",
+    "no_gitignore",
+    is_flag=True,
+    help="Index files git ignores. By default a git checkout contributes only "
+    "the files git tracks or would show as untracked, which is the same set "
+    "ripgrep walks — without this, build output lands in the graph and agents "
+    "are handed generated code as if it were source.",
+)
 def ingest(
     repo_path: str,
     db: str,
@@ -265,6 +285,8 @@ def ingest(
     monorepo: bool,
     repo_key: str,
     excludes: tuple[str, ...],
+    no_content: bool,
+    no_gitignore: bool,
 ):
     """Ingest a repository's code into the graph (AST + call graph)."""
     if monorepo:
@@ -290,7 +312,13 @@ def ingest(
     from navegador.ingestion import RepoIngester
 
     store = _get_store(db, target=repo_path)
-    ingester = RepoIngester(store, redact=redact, exclude=list(excludes))
+    ingester = RepoIngester(
+        store,
+        redact=redact,
+        exclude=list(excludes),
+        respect_gitignore=not no_gitignore,
+        store_content=not no_content,
+    )
 
     if watch:
         console.print(f"[bold]Watching[/bold] {repo_path} (interval={interval}s, Ctrl-C to stop)")
@@ -1820,6 +1848,8 @@ def mcp(db: str, read_only: bool, federate: tuple[str, ...]):
     mode = "read-only" if read_only else "read-write"
     federated = f", federated over {len(federate)} repos" if federate else ""
     console.print(f"[green]Navegador MCP server running[/green] (stdio, {mode}{federated})")
+
+    import asyncio
 
     async def _run():
         async with stdio_server() as (read_stream, write_stream):
@@ -4096,6 +4126,288 @@ def storage():
     """Inspect and move the graph data behind the [storage] configuration."""
 
 
+@main.command("locate")
+@click.argument("intent")
+@click.option("--db", default="", help="Graph to search. Default: resolved storage.")
+@click.option("--target", default=".", type=click.Path())
+@click.option("-n", "--limit", default=10)
+@click.option("--json", "as_json", is_flag=True)
+def locate(intent: str, db: str, target: str, limit: int, as_json: bool):
+    """
+    Where to look for INTENT, ranked, with the reason for each place.
+
+    Returns places to look, not an answer. Exact text matches, symbol names,
+    documents and semantic similarity are fused on rank, so the top result is
+    where several kinds of evidence agree.
+    """
+    from navegador.targeting import Targeting
+
+    store = _get_store(db, target=target)
+    candidates = Targeting(store).locate(intent, limit=limit)
+
+    if as_json:
+        click.echo(json.dumps([c.to_dict() for c in candidates], indent=2))
+        return
+    if not candidates:
+        console.print("[dim]Nothing found. Has this repository been ingested?[/dim]")
+        return
+
+    table = Table(title=f"Where to look — {intent}")
+    table.add_column("Where", style="cyan", overflow="fold")
+    table.add_column("Score", justify="right", width=7)
+    table.add_column("Why", style="dim", overflow="fold")
+    for candidate in candidates:
+        where = candidate.path + (f":{candidate.line}" if candidate.line else "")
+        table.add_row(where, f"{candidate.score:.4f}", "; ".join(candidate.reasons)[:90])
+    console.print(table)
+
+
+@main.command("scope")
+@click.argument("symbol")
+@click.option("--db", default="", help="Graph to search. Default: resolved storage.")
+@click.option("--target", default=".", type=click.Path())
+@click.option("--depth", default=2, help="How far to follow calls, references and imports.")
+@click.option("--pattern", default="", help="Search within the scope instead of listing it.")
+@click.option("-n", "--limit", default=50)
+@click.option("--json", "as_json", is_flag=True)
+def scope(symbol: str, db: str, target: str, depth: int, pattern: str, limit: int, as_json: bool):
+    """
+    Files reachable from SYMBOL — the set worth searching.
+
+    With --pattern, searches only those files. This is the reduction a flat
+    text index cannot compute: it follows calls, references and imports.
+    """
+    from navegador.targeting import Targeting
+
+    store = _get_store(db, target=target)
+    targeting = Targeting(store)
+    paths = targeting.scope_for(symbol, depth=depth)
+
+    if pattern:
+        matches = targeting.search_within(symbol, pattern, depth=depth, limit=limit)
+        if as_json:
+            click.echo(
+                json.dumps(
+                    {"symbol": symbol, "files": paths, "matches": [m.to_dict() for m in matches]},
+                    indent=2,
+                )
+            )
+            return
+        console.print(f"[dim]{len(paths)} file(s) in scope[/dim]")
+        for match in matches:
+            console.print(
+                f"[cyan]{match.path}[/cyan]:[green]{match.line}[/green]: {match.text.strip()}"
+            )
+        return
+
+    if as_json:
+        click.echo(json.dumps({"symbol": symbol, "files": paths}, indent=2))
+        return
+    if not paths:
+        console.print(f"[dim]No scope found for {symbol}.[/dim]")
+        return
+    console.print(f"[bold]{len(paths)} file(s) reachable from {symbol}:[/bold]")
+    for path in paths:
+        console.print(f"  {path}")
+
+
+@main.command("grep")
+@click.argument("pattern")
+@click.option("--db", default="", help="Graph to search. Default: resolved storage.")
+@click.option("--target", default=".", type=click.Path(), help="Project the graph belongs to.")
+@click.option("-e", "--regex", is_flag=True, help="Treat PATTERN as a regular expression.")
+@click.option("-i", "--ignore-case", is_flag=True)
+@click.option("-n", "--limit", default=100, help="Maximum matches.")
+@click.option(
+    "--reindex", is_flag=True, help="Index any stored content not yet in the trigram index."
+)
+@click.option("--json", "as_json", is_flag=True)
+def grep(
+    pattern: str,
+    db: str,
+    target: str,
+    regex: bool,
+    ignore_case: bool,
+    limit: int,
+    reindex: bool,
+    as_json: bool,
+):
+    """
+    Exact substring or regex search over indexed content.
+
+    Trigrams narrow the candidate set inside the database and the real pattern
+    then matches against stored text, so results are exact — verified against
+    ripgrep on this package's own source. Cost scales with the number of
+    matches rather than the size of the corpus, so a miss is nearly free.
+    """
+    from navegador.graph.trigram import TrigramIndex
+
+    store = _get_store(db, target=target)
+    index = TrigramIndex(store)
+    if reindex:
+        index.index_graph()
+
+    matches = index.search(pattern, is_regex=regex, limit=limit, ignore_case=ignore_case)
+
+    if as_json:
+        click.echo(json.dumps([m.to_dict() for m in matches], indent=2))
+        return
+
+    if not matches:
+        console.print(
+            "[dim]No matches. If content has not been indexed yet, run with --reindex.[/dim]"
+        )
+        return
+    for match in matches:
+        console.print(
+            f"[cyan]{match.path}[/cyan]:[green]{match.line}[/green]: {match.text.strip()}"
+        )
+
+
+def _audit_reports(server_url: str, root: str):
+    """Audit every graph, checking against whatever checkouts we can find."""
+    from navegador.graph.audit import audit_server
+    from navegador.inventory import scan
+
+    roots = {}
+    for record in scan(root):
+        if record.effective and record.effective.graph_name:
+            roots[record.effective.graph_name] = record.root
+    return audit_server(server_url, roots)
+
+
+def _resolve_server_url(db: str) -> str:
+    from navegador.config import resolve_storage
+
+    storage_config = resolve_storage(db or None)
+    if not storage_config.is_redis:
+        raise click.ClickException(
+            "This inspects a shared server; the resolved backend is "
+            f"{storage_config.describe()}. Pass --db redis://... or configure [storage]."
+        )
+    return storage_config.redis_url
+
+
+@storage.command("audit")
+@click.option("--db", default="", help="Server to inspect. Default: resolved storage.")
+@click.option(
+    "--root",
+    default=str(Path.home() / "repos"),
+    type=click.Path(),
+    help="Tree searched for the checkouts a graph is checked against. A graph "
+    "with no checkout here is reported 'unknown', never assumed stale.",
+)
+@click.option("--json", "as_json", is_flag=True)
+def storage_audit(db: str, root: str, as_json: bool):
+    """
+    Report graphs that have stopped describing anything real.
+
+    Four verdicts matter: 'junk' (a name we would not have written), 'empty',
+    'stale' (its file paths no longer exist on disk) and 'duplicate' (another
+    graph covers the same repository). Nothing is deleted here.
+    """
+    server_url = _resolve_server_url(db)
+    reports = _audit_reports(server_url, root)
+
+    if as_json:
+        click.echo(json.dumps([r.to_dict() for r in reports], indent=2))
+        return
+
+    table = Table(title=f"Graph audit — {server_url}")
+    # Graph names are long and the interesting columns are the narrow ones, so
+    # the name truncates rather than squeezing everything else to ellipses.
+    table.add_column("Graph", style="cyan", max_width=42, overflow="ellipsis", no_wrap=True)
+    table.add_column("Verdict", width=9)
+    table.add_column("Nodes", justify="right", width=9)
+    table.add_column("Size", justify="right", width=9)
+    table.add_column("Why", style="dim", overflow="fold")
+    colours = {
+        "healthy": "green",
+        "stale": "red",
+        "junk": "red",
+        "empty": "yellow",
+        "duplicate": "yellow",
+        "unknown": "dim",
+    }
+    for report in sorted(reports, key=lambda r: -r.size_bytes):
+        verdict = report.verdict
+        table.add_row(
+            report.name,
+            f"[{colours[verdict]}]{verdict}[/{colours[verdict]}]",
+            f"{report.nodes:,}",
+            f"{report.size_bytes / 1048576:.1f} MB",
+            report.explain(),
+        )
+    console.print(table)
+
+    reclaimable = [r for r in reports if r.reclaimable]
+    if reclaimable:
+        total = sum(r.size_bytes for r in reclaimable) / 1048576
+        console.print(
+            f"\n[yellow]{len(reclaimable)} graph(s) reclaimable, {total:.1f} MB[/yellow] — "
+            "run [bold]navegador storage prune[/bold] to see what would go."
+        )
+
+
+@storage.command("prune")
+@click.option("--db", default="", help="Server to prune. Default: resolved storage.")
+@click.option("--root", default=str(Path.home() / "repos"), type=click.Path())
+@click.option(
+    "--include-stale",
+    is_flag=True,
+    help="Also delete graphs whose files no longer exist. Off by default: a "
+    "moved checkout and a deleted one look identical from here, and one of "
+    "those is recoverable by re-ingesting while the other is not.",
+)
+@click.option("--yes", is_flag=True, help="Actually delete. Without it, this is a dry run.")
+@click.option("--json", "as_json", is_flag=True)
+def storage_prune(db: str, root: str, include_stale: bool, yes: bool, as_json: bool):
+    """Delete junk and empty graphs. Dry run unless --yes is given."""
+    from navegador.graph.audit import prune as prune_graphs
+
+    server_url = _resolve_server_url(db)
+    reports = _audit_reports(server_url, root)
+    doomed = [
+        r
+        for r in reports
+        if r.verdict in {"junk", "empty"} or (include_stale and r.verdict == "stale")
+    ]
+
+    if not doomed:
+        if as_json:
+            click.echo(json.dumps({"removed": [], "dry_run": not yes}, indent=2))
+        else:
+            console.print("[green]Nothing to prune.[/green]")
+        return
+
+    reclaimed = sum(r.size_bytes for r in doomed) / 1048576
+    if not yes:
+        if as_json:
+            click.echo(
+                json.dumps(
+                    {"would_remove": [r.to_dict() for r in doomed], "dry_run": True}, indent=2
+                )
+            )
+            return
+        console.print(f"[bold]Would delete {len(doomed)} graph(s), {reclaimed:.1f} MB:[/bold]")
+        for report in sorted(doomed, key=lambda r: -r.size_bytes):
+            console.print(f"  {report.name}  [dim]{report.explain()}[/dim]")
+        stale_held = [r for r in reports if r.verdict == "stale" and not include_stale]
+        if stale_held:
+            console.print(
+                f"\n[dim]{len(stale_held)} stale graph(s) held back; "
+                "--include-stale to delete them too.[/dim]"
+            )
+        console.print("\nRe-run with [bold]--yes[/bold] to delete.")
+        return
+
+    removed = prune_graphs(server_url, doomed, include_stale=include_stale)
+    if as_json:
+        click.echo(json.dumps({"removed": removed, "dry_run": False}, indent=2))
+    else:
+        console.print(f"[green]Deleted {len(removed)} graph(s), {reclaimed:.1f} MB.[/green]")
+
+
 @storage.command("migrate")
 @click.option("--target", default=".", type=click.Path(), help="Project to migrate.")
 @click.option("--to", "dest_url", default="", help="Destination server URL.")
@@ -4604,6 +4916,8 @@ def manual(page: str, query: str, list_only: bool, raw: bool, as_json: bool):
             elif raw:
                 click.echo(doc.read())
             else:
+                from rich.markdown import Markdown
+
                 console.print(Markdown(doc.read()))
             return
 

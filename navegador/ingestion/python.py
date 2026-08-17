@@ -422,6 +422,13 @@ class PythonParser(LanguageParser):
                 edge_type,
                 NodeLabel.Function,
                 {"name": target_name, "file_path": target_file},
+                # tree-sitter is syntax only: it has no name resolution and no
+                # types, so `foo.bar()` cannot be resolved to Baz.bar. The
+                # callee here was matched by import heuristics and is usually
+                # but not always right (#163, #166). Recording that lets a
+                # caller tell a fact from a good guess, and leaves room for
+                # compiler-accurate edges to be marked `resolved` (#188).
+                {"resolution": "inferred"},
             )
             stats["edges"] += 1
 

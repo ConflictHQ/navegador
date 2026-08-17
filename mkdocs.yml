@@ -90,6 +90,7 @@ nav:
       - Intelligence Layer: guide/intelligence.md
       - Python SDK: guide/sdk.md
       - Graph Queries: guide/graph-queries.md
+      - Targeting: guide/targeting.md
       - MCP Integration: guide/mcp-integration.md
       - Supergraph Contract: guide/supergraph-contract.md
       - CI/CD: guide/ci-cd.md
@@ -99,6 +100,7 @@ nav:
   - Architecture:
       - Overview: architecture/overview.md
       - Graph Schema: architecture/graph-schema.md
+      - Dependency Posture: architecture/dependencies.md
   - API Reference:
       - Python SDK: api/sdk.md
       - Ingestion: api/ingestion.md

@@ -138,9 +138,22 @@ class RepoIngester:
         redact: bool = False,
         exclude: list[str] | None = None,
         include_nested_repos: bool = False,
+        respect_gitignore: bool = True,
+        store_content: bool = True,
     ) -> None:
         self.store = store
         self.redact = redact
+        # Keep each file's text in the content store so lexical search has
+        # something to match against (#183). Content-addressed, so unchanged
+        # files and vendored copies cost nothing.
+        self.store_content = store_content
+        self._content_store = None
+        self._prose_index = None
+        # When True (default), a git checkout contributes only the files git
+        # does not ignore. Without this the walk pruned on a fixed directory
+        # list and indexed any build output whose directory name happened to
+        # fall outside it (#180).
+        self.respect_gitignore = respect_gitignore
         # Glob patterns excluded from the walk, merged with the repo's
         # .navignore. Matching directories are pruned before descent.
         self.exclude = list(exclude or [])
@@ -242,6 +255,8 @@ class RepoIngester:
             "skipped": 0,
             "grammar_skipped": 0,
             "removed": 0,
+            "content_stored": 0,
+            "prose_indexed": 0,
         }
 
         # Every path this pass saw on disk, recorded before any decision about
@@ -284,6 +299,10 @@ class RepoIngester:
                 self._store_file_hash(rel_path, content_hash)
                 self._link_file_to_repo(rel_path, repo_key)
                 stats["edges"] += 1
+                if self._store_content(source_file, content_hash):
+                    stats["content_stored"] += 1
+                if self._index_prose(rel_path, source_file):
+                    stats["prose_indexed"] += 1
                 if stats["files"] % 1000 == 0:
                     logger.info(
                         "Ingest progress %s: %d files parsed", repo_path.name, stats["files"]
@@ -386,6 +405,68 @@ class RepoIngester:
     # Extensions handled by MarkdownParser — these produce Document nodes, not File nodes.
     _DOCUMENT_EXTENSIONS = frozenset({".md", ".markdown"})
 
+    @property
+    def _content(self):
+        """
+        Lazily opened content store, or None when content is not being kept.
+
+        Opened once per ingester rather than per file: it holds a Redis
+        connection, and building one for each of 50,000 files would dominate
+        the ingest.
+        """
+        if not self.store_content:
+            return None
+        if self._content_store is None:
+            from navegador.graph.content import ContentStore
+
+            self._content_store = ContentStore(self.store)
+        return self._content_store
+
+    def _store_content(self, source_file: Path, content_hash: str) -> bool:
+        """
+        Keep the file's text so lexical search has something to match against.
+
+        Returns True only when the blob was newly written; an unchanged file
+        or one already stored by another repository returns False, which is
+        what makes re-ingest and vendored copies free.
+
+        Redaction is deliberately honoured here: if content is being redacted
+        for the graph, storing the unredacted original beside it would put the
+        secret back on the server through another door.
+        """
+        content = self._content
+        if content is None:
+            return False
+        try:
+            text = source_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        if self._detector is not None:
+            text = self._detector.redact(text)
+        return content.put(content_hash, text)
+
+    def _index_prose(self, rel_path: str, source_file: Path) -> bool:
+        """
+        Index the literals, comments and identifiers parsing discards (#185).
+
+        Separate from content storage because the two answer different
+        questions: content backs exact matching, this backs ranked "what is
+        about this" search.
+        """
+        if not self.store_content:
+            return False
+        if self._prose_index is None:
+            from navegador.graph.prose import ProseIndex
+
+            self._prose_index = ProseIndex(self.store)
+        try:
+            text = source_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        if self._detector is not None:
+            text = self._detector.redact(text)
+        return self._prose_index.index_file(rel_path, text)
+
     def _file_unchanged(self, rel_path: str, content_hash: str) -> bool:
         suffix = Path(rel_path).suffix.lower()
         if suffix in self._DOCUMENT_EXTENSIONS:
@@ -417,6 +498,11 @@ class RepoIngester:
             self.store.query(queries.DELETE_FILE_CHILDREN, {"path": path})
             self.store.query(queries.DELETE_FILE_IMPORTS, {"path": path})
             self.store.query(queries.DELETE_FILE_NODE, {"path": path})
+            # The prose node is keyed by path like File is, and is just as
+            # stale once the file is gone. Missing it reintroduced #168 for a
+            # node type introduced after that fix: an incrementally maintained
+            # graph stopped matching a clean rebuild.
+            self.store.query(queries.DELETE_FILE_TEXT, {"path": path})
 
         if stale:
             logger.info(
@@ -529,6 +615,7 @@ class RepoIngester:
         directories the same way (#130).
         """
         patterns = self._exclusion_patterns(repo_path)
+        visible_files, visible_dirs = self._git_visible(repo_path)
         for dirpath, dirnames, filenames in os.walk(repo_path):
             current = Path(dirpath)
             kept = []
@@ -536,6 +623,10 @@ class RepoIngester:
                 if d in self._SKIP_DIRS:
                     continue
                 child = current / d
+                # Prune ignored directories rather than filtering their files
+                # afterwards, so a large ignored tree is never descended into.
+                if visible_dirs is not None and child not in visible_dirs:
+                    continue
                 if patterns and self._matches_exclusion(
                     child.relative_to(repo_path).as_posix(), patterns
                 ):
@@ -548,12 +639,48 @@ class RepoIngester:
             dirnames[:] = kept
             for fname in filenames:
                 path = current / fname
+                if visible_files is not None and path not in visible_files:
+                    continue
                 if patterns and self._matches_exclusion(
                     path.relative_to(repo_path).as_posix(), patterns
                 ):
                     continue
                 if path.is_file():  # excludes broken symlinks, FIFOs, sockets
                     yield path
+
+    def _git_visible(self, repo_path: Path) -> tuple[set[Path] | None, set[Path] | None]:
+        """
+        The files git does not ignore, plus every directory leading to one.
+
+        Returns ``(None, None)`` when the answer is "no opinion" — gitignore
+        respect is off, the path is not a git checkout, or git returned
+        nothing — and the caller then walks everything as before.
+
+        The directory set exists so ignored trees can be pruned during the
+        walk instead of being descended into and filtered file by file; a
+        repository with 54k files of ignored build output should cost nothing
+        to skip.
+        """
+        if not self.respect_gitignore:
+            return None, None
+        from navegador.vcs import GitAdapter
+
+        adapter = GitAdapter(repo_path)
+        if not adapter.is_repo():
+            return None, None
+        relative = adapter.visible_files()
+        if not relative:
+            return None, None
+        files = {repo_path / rel for rel in relative}
+        directories: set[Path] = set()
+        for path in files:
+            for parent in path.parents:
+                if parent in directories:
+                    break  # this chain is already recorded
+                if parent == repo_path:
+                    break
+                directories.add(parent)
+        return files, directories
 
     def _exclusion_patterns(self, repo_path: Path) -> list[str]:
         """Explicit exclude patterns plus the repo's .navignore entries."""

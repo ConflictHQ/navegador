@@ -192,3 +192,38 @@ class TestPruneIsConservative:
         stats = ing.ingest(repo, clear=True)
         assert stats["removed"] == 0
         assert any(n[1] == "zeta_compute" for n in names(store))
+
+
+class TestProseIsPrunedToo:
+    """
+    FileText nodes (#185) are keyed by path and go stale with the file.
+
+    This reintroduced #168 for a node type added after that fix was written:
+    the deletion sweep knew about File, Document and Import and nothing had
+    told it about the new label, so a maintained graph quietly stopped
+    matching a clean rebuild. Caught by the equality test, not by any test
+    that looked at prose directly — which is the argument for keeping that
+    equality assertion around.
+    """
+
+    def test_prose_node_is_removed_with_its_file(self, store, tmp_path):
+        repo = write_repo(tmp_path)
+        RepoIngester(store).ingest(repo)
+        before = store.query("MATCH (t:FileText) RETURN t.path ORDER BY t.path").result_set
+        assert any("zeta" in (row[0] or "") for row in before or [])
+
+        (repo / "pkg" / "zeta.py").unlink()
+        RepoIngester(store).ingest(repo, incremental=True)
+
+        after = store.query("MATCH (t:FileText) RETURN t.path").result_set or []
+        assert not any("zeta" in (row[0] or "") for row in after)
+
+    def test_surviving_files_keep_their_prose(self, store, tmp_path):
+        """Pruning must not take the neighbours with it."""
+        repo = write_repo(tmp_path)
+        RepoIngester(store).ingest(repo)
+        (repo / "pkg" / "zeta.py").unlink()
+        RepoIngester(store).ingest(repo, incremental=True)
+
+        remaining = store.query("MATCH (t:FileText) RETURN t.path").result_set or []
+        assert any("alpha" in (row[0] or "") for row in remaining)
