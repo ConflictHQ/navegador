@@ -59,13 +59,36 @@ class TestNamespaceSurvivesAConnectionOverride:
         assert config.graph_name == "navegador_myproj"
         assert config.redis_url == "redis://elsewhere:6379"
 
-    def test_env_db_keeps_the_configured_graph(self, tmp_path, monkeypatch):
+    def test_env_db_does_not_borrow_the_namespace(self, tmp_path, monkeypatch):
+        """
+        An embedded store *is* its own namespace, so there is nothing to
+        borrow. Applying the configured name here pointed a scratch database
+        at whatever graph the current directory happened to declare, which is
+        #170's mistake — answering about the working directory rather than the
+        target — and it broke every CLI test that passes an explicit --db.
+
+        A namespace is only meaningful on a server other projects share.
+        """
         root = project(tmp_path, backend="redis", graph="navegador_myproj")
         monkeypatch.setenv("NAVEGADOR_DB", str(tmp_path / "other.db"))
 
         config = resolve_storage(target=root)
-        assert config.graph_name == "navegador_myproj"
         assert config.backend == "embedded"
+        assert config.graph_name == ""
+
+    def test_explicit_db_does_not_borrow_the_namespace(self, tmp_path):
+        root = project(tmp_path, backend="redis", graph="navegador_myproj")
+        config = resolve_storage(db_path=str(tmp_path / "scratch.db"), target=root)
+        assert config.graph_name == ""
+
+    def test_configured_embedded_graph_is_still_honoured(self, tmp_path):
+        """
+        Not borrowed, but not discarded either: a project that configures an
+        embedded backend *with* a graph name still gets it, because that name
+        arrived with the connection rather than from the surroundings.
+        """
+        root = project(tmp_path, backend="embedded", graph="explicit_embedded")
+        assert resolve_storage(target=root).graph_name == "explicit_embedded"
 
 
 class TestPrecedence:

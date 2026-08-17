@@ -268,10 +268,19 @@ def resolve_storage(
         invisible — the server starts, every tool answers, and the graph is
         empty (#178).
 
+        The ambient name is only borrowed for a **shared server**, because
+        that is the only place a namespace means anything: `graph` is how a
+        project addresses its own corner of a server other projects also use.
+        An embedded store *is* its own namespace, so borrowing a name there
+        pointed `--db /tmp/scratch.db` at whatever graph the current directory
+        happened to configure — reintroducing #170's mistake of answering
+        about the working directory rather than the target.
+
         Precedence: an explicit --graph or NAVEGADOR_GRAPH wins, then whatever
         the resolving layer itself carried, then the project's configured name.
         """
-        chosen = override or config.graph_name or configured
+        ambient = configured if config.backend == "redis" else ""
+        chosen = override or config.graph_name or ambient
         return replace(config, graph_name=chosen) if chosen else config
 
     # 1. Explicit arguments
