@@ -294,6 +294,14 @@ WHERE f:File OR f:Document
 DETACH DELETE f
 """
 
+# Extracted literals, comments and identifiers for a file (#185). Keyed by
+# path like File is, and equally stale once the file is gone — leaving it
+# behind made an incrementally maintained graph diverge from a clean rebuild.
+DELETE_FILE_TEXT = """
+MATCH (t:FileText {path: $path})
+DETACH DELETE t
+"""
+
 DOCUMENT_HASH = """
 MATCH (d:Document {path: $path})
 RETURN d.content_hash AS hash

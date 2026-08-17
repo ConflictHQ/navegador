@@ -498,6 +498,11 @@ class RepoIngester:
             self.store.query(queries.DELETE_FILE_CHILDREN, {"path": path})
             self.store.query(queries.DELETE_FILE_IMPORTS, {"path": path})
             self.store.query(queries.DELETE_FILE_NODE, {"path": path})
+            # The prose node is keyed by path like File is, and is just as
+            # stale once the file is gone. Missing it reintroduced #168 for a
+            # node type introduced after that fix: an incrementally maintained
+            # graph stopped matching a clean rebuild.
+            self.store.query(queries.DELETE_FILE_TEXT, {"path": path})
 
         if stale:
             logger.info(
