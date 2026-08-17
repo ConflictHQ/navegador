@@ -313,6 +313,34 @@ def needs_reindex(db, connection, name: str, root: Path, sample: int = 0) -> tup
     return len(paths), len(excluded_now(root, paths))
 
 
+def reindex_candidates(
+    db, connection, projects: list[tuple[str, Path]], sample: int = 0
+) -> list[dict]:
+    """
+    Graphs holding files a current ingest would exclude, worst first.
+
+    *projects* is ``(graph_name, checkout_root)`` pairs, normally from
+    ``navegador scan``. Kept here rather than in the CLI so it can be driven
+    against an embedded store: the command clears and rebuilds graphs, and the
+    decision about which ones is not something to leave untested behind a
+    server connection.
+    """
+    affected = []
+    for graph_name, root in projects:
+        checked, excluded = needs_reindex(db, connection, graph_name, Path(root), sample)
+        if excluded:
+            affected.append(
+                {
+                    "graph": graph_name,
+                    "root": str(root),
+                    "checked": checked,
+                    "excluded": excluded,
+                    "share": round(excluded / checked, 3) if checked else 0.0,
+                }
+            )
+    return sorted(affected, key=lambda item: -item["share"])
+
+
 def prune(
     target: str | object, reports: list[GraphAudit], include_stale: bool = False
 ) -> list[str]:

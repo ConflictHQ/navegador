@@ -547,3 +547,71 @@ class TestNeedsReindex:
             0,
             0,
         )
+
+
+class TestReindexCandidates:
+    """
+    Which graphs get cleared and rebuilt.
+
+    This decision lives here rather than in the CLI precisely so it can be
+    driven against a real store. `storage reindex --yes` destroys and rebuilds,
+    and the first version of the underlying check reported a healthy
+    12-submodule workspace as 100% needing a rebuild.
+    """
+
+    def test_a_graph_with_ignored_content_is_a_candidate(self, git_live, tmp_path):
+        from navegador.graph import GraphStore
+        from navegador.graph.audit import reindex_candidates
+        from navegador.ingestion import RepoIngester
+
+        _, root = git_live
+        (root / "bundled").mkdir()
+        (root / "bundled" / "vendor.py").write_text("def generated():\n    return 1\n")
+        (root / ".gitignore").write_text("bundled/\n")
+
+        old = GraphStore.sqlite(str(tmp_path / "old.db"))
+        RepoIngester(old, respect_gitignore=False).ingest(root)
+
+        found = reindex_candidates(old._client, old._client.connection, [(old.graph_name, root)])
+        assert len(found) == 1
+        assert found[0]["excluded"] >= 1
+        assert 0 < found[0]["share"] <= 1
+
+    def test_a_clean_graph_is_not_a_candidate(self, git_live):
+        from navegador.graph.audit import reindex_candidates
+
+        store, root = git_live
+        assert (
+            reindex_candidates(store._client, store._client.connection, [(store.graph_name, root)])
+            == []
+        )
+
+    def test_worst_offender_comes_first(self, git_live, tmp_path):
+        from navegador.graph import GraphStore
+        from navegador.graph.audit import reindex_candidates
+        from navegador.ingestion import RepoIngester
+
+        _, root = git_live
+        (root / "bundled").mkdir()
+        for i in range(6):
+            (root / "bundled" / f"gen{i}.py").write_text(f"def g{i}():\n    return {i}\n")
+        (root / ".gitignore").write_text("bundled/\n")
+
+        mostly_junk = GraphStore.sqlite(str(tmp_path / "junk.db"))
+        RepoIngester(mostly_junk, respect_gitignore=False).ingest(root)
+        clean = GraphStore.sqlite(str(tmp_path / "clean.db"))
+        RepoIngester(clean).ingest(root)
+
+        found = reindex_candidates(
+            mostly_junk._client,
+            mostly_junk._client.connection,
+            [(clean.graph_name, root), (mostly_junk.graph_name, root)],
+        )
+        assert found, "expected at least the polluted graph"
+        assert found[0]["share"] >= (found[-1]["share"] if len(found) > 1 else 0)
+
+    def test_empty_project_list(self, git_live):
+        from navegador.graph.audit import reindex_candidates
+
+        store, _ = git_live
+        assert reindex_candidates(store._client, store._client.connection, []) == []

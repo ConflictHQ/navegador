@@ -4370,7 +4370,7 @@ def storage_reindex(db: str, root: str, yes: bool, as_json: bool):
 
     Dry run unless --yes.
     """
-    from navegador.graph.audit import needs_reindex
+    from navegador.graph.audit import reindex_candidates
     from navegador.ingestion import RepoIngester
     from navegador.inventory import scan
 
@@ -4381,22 +4381,12 @@ def storage_reindex(db: str, root: str, yes: bool, as_json: bool):
     database = falkordb.FalkorDB.from_url(server_url)
     connection = redis_lib.from_url(server_url)
 
-    affected = []
-    for record in scan(root):
-        config = record.effective
-        if not config or not config.graph_name:
-            continue
-        checked, excluded = needs_reindex(database, connection, config.graph_name, record.root)
-        if excluded:
-            affected.append(
-                {
-                    "graph": config.graph_name,
-                    "root": str(record.root),
-                    "checked": checked,
-                    "excluded": excluded,
-                    "share": round(excluded / checked, 3) if checked else 0.0,
-                }
-            )
+    projects = [
+        (record.effective.graph_name, record.root)
+        for record in scan(root)
+        if record.effective and record.effective.graph_name
+    ]
+    affected = reindex_candidates(database, connection, projects)
 
     if not affected:
         if as_json:
@@ -4414,7 +4404,7 @@ def storage_reindex(db: str, root: str, yes: bool, as_json: bool):
         table.add_column("Sampled", justify="right")
         table.add_column("Now excluded", justify="right")
         table.add_column("Share", justify="right")
-        for item in sorted(affected, key=lambda i: -i["share"]):
+        for item in affected:
             table.add_row(
                 item["graph"],
                 str(item["checked"]),
