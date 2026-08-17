@@ -1,5 +1,64 @@
 # Changelog
 
+## 1.6.0 — 2026-08-16
+
+Two themes: ingest was indexing the wrong files, and navegador could not answer the questions agents actually ask. The work is measurement-gated, and the measurement is reported below including the part that does not yet support the thesis.
+
+### Ingest correctness
+
+- **`.gitignore` is respected** — the walk pruned against a hardcoded skip list and never read `.gitignore`, so any project whose build output sat outside that list was indexed wholesale. On one real graph 54,543 of 54,552 `File` nodes were gitignored build output: 99.98% of a 98 MiB index was generated code being offered to agents as source. Git is the oracle (`ls-files --cached --others --exclude-standard`, exactly what ripgrep walks), which gets nested ignore files, negation, anchoring and `core.excludesFile` right for free. Ignored trees are pruned during the walk, not filtered after. `--no-gitignore` opts out (#180)
+- **`navegador storage audit` and `storage prune`** — with one shared server the graph list accumulates and nothing notices when an entry goes bad. Auditing a live 41-graph server found a 45 MB graph with none of its paths resolving, one repository indexed under three names, and nine empty graphs named `1)`–`9)`. Conservative by design: a graph with no checkout to check against is `unknown` rather than assumed stale, stale graphs are held back unless `--include-stale`, and duplicates are reported rather than merged (#181)
+- **`navegador storage reindex`** — #180 changed what ingest indexes and nothing rebuilt the graphs it invalidated, so every graph created before it still holds whatever the old skip-list let through. Those graphs are not stale and not duplicates, so `audit` does not flag them; this finds them and rebuilds in place, dry run unless `--yes`. It asks `git check-ignore` rather than checking membership of `git ls-files`, because a submodule's files are absent from the parent's listing without being ignored — the first version reported 100% of a healthy 12-submodule workspace as needing a rebuild (#194)
+- **Audit verdicts are repeatable** — `MATCH (f:File) RETURN f.path LIMIT n` with no `ORDER BY` returns an arbitrary subset, so a 15,291-file graph was called stale on one run and healthy on the next depending on which rows came back. `prune --include-stale` deletes on that verdict. Paths are now read in order and in full (#194)
+- **Call edges record how they were derived** — tree-sitter is syntax only, so `foo.bar()` cannot be proven to reach `Baz.bar`. Edges carry `resolution: "inferred"`, leaving room for compiler-accurate `resolved`. Two of the eight fidelity bugs in 1.5 came from treating those guesses as certainties (#188, partial)
+
+### Targeting
+
+Navegador now answers "where should I look", not "what is the answer". Telemetry across 151 real sessions found agents already scope 96.5% of their searches; what costs is the turns spent working out where.
+
+- **`navegador locate`** — ranked places to look, each stating why it surfaced. Exact text, symbol names, file prose and vector similarity, fused by reciprocal rank rather than added, since those scores are not on comparable scales (#186)
+- **`navegador scope`** — the files reachable from a symbol through calls, references and imports, optionally searched in place. On this repository it returns 2 files out of 264. This is the search-space reduction no flat text index can compute. An unknown symbol yields nothing rather than falling back to the whole repository (#186)
+- **`navegador grep`** — exact substring and regex search with file and line. Trigrams narrow, the real pattern decides, so results are exact: verified against ripgrep on this package's own source across eight patterns with zero disagreements. Cost scales with matches rather than corpus size — a search matching nothing takes 0.1 ms where ripgrep pays 13 ms (#184)
+- **Four new MCP tools** — `locate`, `scope_for`, `neighbourhood`, `grep_code`, taking the server to 31. `scope_for` accepts a pattern so an agent can narrow and search in one round trip (#186)
+
+### Retrieval
+
+- **Content store** — the graph kept structure and discarded the text, so there was nothing to match a literal against. Content lives in Redis beside the graph, addressed by the `content_hash` ingest already computes, which makes dedup and incremental re-ingest free. stdlib `zlib`, 3.83× on this package's source; short files are stored raw because compression made an 81-byte file 93 (#183)
+- **Literals, comments and split identifiers are indexed** — an AST keeps a function's name and throws away the error message it raises. A pasted error message now finds the file that raises it, "rate limiting" finds a file where the phrase exists only in a comment, and "user id" reaches `getUserById` (#185)
+- **Semantic search runs inside the database** — every query used to fetch all embedded nodes with full vectors and compute cosine in Python, roughly a gigabyte per query at 100k nodes, growing with the graph and paid again by every agent sharing the server. Now behind FalkorDB's native vector index: 500 nodes 1.18 ms, 5000 nodes 1.37 ms. Also fixes a silent 1000-node truncation, full re-embedding on every call, and a name-based upsert that could write to the wrong node (#182)
+
+### Performance and process
+
+- **CLI startup 137 ms → 37 ms** — `rich.markdown` and `asyncio` were ~95 ms of module import paid by every invocation, including agent hooks, against a 0.45 ms graph query. Deferred to the functions that need them, with tests asserting they stay absent (#190)
+- **Coverage is enforced** — it was measured on every run and gated nowhere. Ratcheted at 93 against a measured 94. The more useful rule is the companion: all eight 1.5 fidelity bugs shipped inside covered lines, and #173 survived because its tests mocked the store, where a `MagicMock` write always succeeds. New tests reject any new test file that mocks the graph store (#191)
+- **Retrieval telemetry** — `scripts/retrieval_telemetry.py` and a frozen baseline. Median 13 turns to first correct target, 5 orientation turns, 1.17 re-read ratio (#187)
+- **Dependency posture documented** — `pip install navegador` is the whole installation. It is why the trigram index was built rather than integrating Zoekt, and why SCIP ingestion will consume an index if present but never require one (#189)
+
+### On the evidence
+
+This release is measured rather than argued, and the measurement is not finished.
+
+`scripts/retrieval_telemetry.py` carries a frozen baseline of what agents actually
+do: 206 tool calls in a median session, 13 turns before touching the file that gets
+edited, and 32% of file reads re-opening something already read.
+
+It also carries the measurement that can settle this without a control group. When a
+targeting call hands an agent a set of places, is the file it goes on to edit among
+them? Both the call and its result are in the transcript, and so is the edit that
+follows, so the hit rate is directly computable — alongside the size of the scope
+offered, because precision on its own is gamed by returning everything.
+
+That reading is not in yet. The tools shipped before any agent had used them, so the
+only scored calls so far are this release's own tests.
+
+Two things are already true independent of it. `scope_for` reduces a 264-file
+repository to the 2 files reachable from a symbol, a reduction no flat text index can
+compute. And `grep` costs 0.1 ms on a miss where a full scan costs 13 ms, because its
+cost tracks matches rather than corpus size.
+
+Whether those add up to fewer turns in practice is an open question with an
+instrument pointed at it. If the answer is no, the instrument will say so.
+
 ## 1.5.0 — 2026-08-16
 
 ### Storage configuration
