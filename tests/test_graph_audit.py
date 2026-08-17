@@ -162,3 +162,157 @@ class TestSerialisation:
         assert payload["reclaimable"] is True
         assert payload["resolution"] == 0.0
         assert "explanation" in payload
+
+
+# ── Against a real store ──────────────────────────────────────────────────────
+#
+# The classification tests above are pure. These exercise the code that talks
+# to a server, which is where the one real bug lived: GRAPH.LIST returns bytes
+# and str() on bytes yields "b'name'", so every lookup missed and every graph
+# looked empty. An embedded store is a real Redis over a unix socket, so it
+# exercises the same paths without needing a server on the machine.
+
+
+@pytest.fixture
+def live(tmp_path):
+    """An embedded store with a populated graph and a checkout on disk."""
+    from navegador.graph import GraphStore
+    from navegador.ingestion import RepoIngester
+
+    root = tmp_path / "proj"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "app.py").write_text("def alpha():\n    return 1\n")
+    (root / "src" / "util.py").write_text("def beta():\n    return 2\n")
+
+    store = GraphStore.sqlite(str(tmp_path / "g.db"))
+    RepoIngester(store).ingest(root)
+    return store, root
+
+
+class TestAuditGraphAgainstAStore:
+    def test_healthy_graph_with_resolving_paths(self, live):
+        from navegador.graph.audit import audit_graph
+
+        store, root = live
+        report = audit_graph(store._client, store._client.connection, store.graph_name, root=root)
+        assert report.nodes > 0
+        assert report.files_total > 0
+        assert report.files_resolved == report.files_total
+        assert report.verdict == "healthy"
+
+    def test_graph_whose_checkout_vanished_is_stale(self, live, tmp_path):
+        """The 45 MB case found on the live server, in miniature."""
+        from navegador.graph.audit import audit_graph
+
+        store, _ = live
+        report = audit_graph(
+            store._client,
+            store._client.connection,
+            store.graph_name,
+            root=tmp_path / "moved-away",
+        )
+        assert report.verdict == "stale"
+        assert report.reclaimable
+
+    def test_without_a_root_the_verdict_is_unknown(self, live):
+        from navegador.graph.audit import audit_graph
+
+        store, _ = live
+        report = audit_graph(store._client, store._client.connection, store.graph_name)
+        assert report.verdict == "unknown"
+        assert not report.reclaimable
+
+    def test_repositories_are_collected(self, live):
+        from navegador.graph.audit import audit_graph
+
+        store, root = live
+        report = audit_graph(store._client, store._client.connection, store.graph_name, root=root)
+        assert report.repositories
+
+    def test_size_is_measured(self, live):
+        """
+        DUMP, because MEMORY USAGE returns a meaningless 48 bytes for a graph
+        key — Redis cannot size a module type.
+        """
+        from navegador.graph.audit import audit_graph
+
+        store, root = live
+        report = audit_graph(store._client, store._client.connection, store.graph_name, root=root)
+        assert report.size_bytes > 48
+
+    def test_sampling_bounds_the_path_check(self, live):
+        from navegador.graph.audit import audit_graph
+
+        store, root = live
+        report = audit_graph(
+            store._client, store._client.connection, store.graph_name, root=root, sample=1
+        )
+        assert report.files_total == 1
+
+    def test_junk_named_key_is_not_queried(self, live):
+        """A junk key may not be a graph at all; probing it would raise."""
+        from navegador.graph.audit import audit_graph
+
+        store, _ = live
+        report = audit_graph(store._client, store._client.connection, "1)")
+        assert report.verdict == "junk"
+
+
+class TestGraphSizeBytes:
+    def test_missing_key_is_zero(self, live):
+        from navegador.graph.audit import graph_size_bytes
+
+        store, _ = live
+        assert graph_size_bytes(store._client.connection, "no_such_graph_here") == 0
+
+
+class TestPruneAgainstAStore:
+    def test_empty_graph_is_deleted(self, live):
+        from navegador.graph.audit import GraphAudit, prune
+
+        store, _ = live
+        connection = store._client.connection
+        connection.set("nav_empty_probe", "x")
+        report = GraphAudit(name="nav_empty_probe", nodes=0)
+
+        assert prune(connection, [report]) == ["nav_empty_probe"]
+        assert not connection.exists("nav_empty_probe")
+
+    def test_healthy_graph_is_left_alone(self, live, tmp_path):
+        from navegador.graph.audit import GraphAudit, prune
+
+        store, _ = live
+        report = GraphAudit(
+            name=store.graph_name, nodes=10, files_total=5, files_resolved=5, root=tmp_path
+        )
+        assert prune(store._client.connection, [report]) == []
+        assert store.node_count() > 0
+
+    def test_stale_is_held_back_by_default(self, live, tmp_path):
+        """
+        A moved checkout and a deleted one look identical from here, and one
+        of them is recoverable by re-ingesting.
+        """
+        from navegador.graph.audit import GraphAudit, prune
+
+        store, _ = live
+        report = GraphAudit(
+            name=store.graph_name, nodes=10, files_total=5, files_resolved=0, root=tmp_path
+        )
+        assert prune(store._client.connection, [report]) == []
+        assert store.node_count() > 0
+
+    def test_stale_goes_when_asked_explicitly(self, live, tmp_path):
+        from navegador.graph.audit import GraphAudit, prune
+
+        store, _ = live
+        report = GraphAudit(
+            name=store.graph_name, nodes=10, files_total=5, files_resolved=0, root=tmp_path
+        )
+        assert prune(store._client.connection, [report], include_stale=True) == [store.graph_name]
+
+    def test_url_form_still_accepted(self):
+        """The CLI passes a URL; only tests pass a connection."""
+        from navegador.graph.audit import prune
+
+        assert prune("redis://127.0.0.1:1", []) == []

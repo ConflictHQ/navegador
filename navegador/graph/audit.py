@@ -230,7 +230,9 @@ def audit_server(url: str, roots: dict[str, Path] | None = None) -> list[GraphAu
     return reports
 
 
-def prune(url: str, reports: list[GraphAudit], include_stale: bool = False) -> list[str]:
+def prune(
+    target: str | object, reports: list[GraphAudit], include_stale: bool = False
+) -> list[str]:
     """
     Delete the graphs named in *reports* that are safe to remove.
 
@@ -238,10 +240,17 @@ def prune(url: str, reports: list[GraphAudit], include_stale: bool = False) -> l
     explicitly: "the checkout moved" and "the checkout is gone" look identical
     from here, and one of those is recoverable by re-ingesting while the other
     throws away the only copy.
-    """
-    import redis as redis_lib
 
-    connection = redis_lib.from_url(url)
+    *target* is a server URL or an existing Redis connection. Accepting a
+    connection is what lets this be tested against an embedded store, which is
+    a real Redis over a unix socket and has no ``redis://`` URL to pass.
+    """
+    if isinstance(target, str):
+        import redis as redis_lib
+
+        connection = redis_lib.from_url(target)
+    else:
+        connection = target
     removed = []
     for report in reports:
         if report.verdict in {"junk", "empty"} or (include_stale and report.verdict == "stale"):
