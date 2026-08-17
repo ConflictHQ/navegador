@@ -21,6 +21,22 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # ripgrep is the oracle for the trigram differential test (#184), which
+      # is the strongest correctness evidence we have for lexical search: two
+      # implementations sharing no code, agreeing on real input. Without it
+      # installed those tests skip silently, and CI coverage came in a full
+      # point below local because of it.
+      #
+      # A CI test tool, not a package dependency — nothing a user installs.
+      - name: Install ripgrep
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y ripgrep
+          else
+            brew install ripgrep
+          fi
+        shell: bash
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
