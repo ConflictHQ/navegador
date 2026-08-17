@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import statistics
 from collections import Counter
@@ -50,6 +51,16 @@ SEARCH_COMMANDS = {"grep", "rg", "find", "fd", "cat", "ls", "head", "tail", "awk
 READ_TOOLS = {"Read", "Grep", "Glob"}
 # Tools that represent productive work rather than orientation.
 WRITE_TOOLS = {"Edit", "Write", "NotebookEdit"}
+
+# Navegador's targeting surface, however it is reached: as MCP tools, or as
+# CLI commands through Bash. A call counts as targeting when it hands back a
+# set of places to look.
+TARGETING_TOOLS = {"locate", "scope_for", "neighbourhood", "grep_code"}
+TARGETING_CLI = ("navegador locate", "navegador scope", "navegador grep")
+
+# Paths look like a/b/c.py — enough to pull candidates out of a tool result
+# without depending on its exact JSON shape, which differs per tool.
+PATH_IN_TEXT = re.compile(r"[\w./-]+\.[A-Za-z0-9]{1,6}")
 
 
 def parse_timestamp(raw: str) -> datetime | None:
@@ -91,9 +102,13 @@ def bash_paths(command: str) -> list[str]:
 
 
 class ToolCall:
-    __slots__ = ("name", "input", "timestamp", "is_read", "is_write", "paths")
+    __slots__ = ("name", "input", "timestamp", "is_read", "is_write", "paths", "uid", "result")
 
-    def __init__(self, name: str, tool_input: dict, timestamp: datetime | None) -> None:
+    def __init__(
+        self, name: str, tool_input: dict, timestamp: datetime | None, uid: str = ""
+    ) -> None:
+        self.uid = uid
+        self.result = ""
         self.name = name
         self.input = tool_input if isinstance(tool_input, dict) else {}
         self.timestamp = timestamp
@@ -113,6 +128,19 @@ class ToolCall:
                     return False, []
                 return True, bash_paths(command)
         return False, []
+
+    @property
+    def is_targeting(self) -> bool:
+        if any(t in self.name for t in TARGETING_TOOLS):
+            return True
+        if self.name == "Bash":
+            command = self.input.get("command", "")
+            return any(c in command for c in TARGETING_CLI)
+        return False
+
+    def offered_paths(self) -> set[str]:
+        """Paths this call handed back — the scope the agent was given."""
+        return set(PATH_IN_TEXT.findall(self.result or ""))
 
     def touches(self, path: str) -> bool:
         """
@@ -148,6 +176,7 @@ class Session:
         self._load()
 
     def _load(self) -> None:
+        results: dict[str, str] = {}
         with self.path.open(encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 line = line.strip()
@@ -177,8 +206,25 @@ class Session:
                 for part in message.get("content") or []:
                     if isinstance(part, dict) and part.get("type") == "tool_use":
                         self.calls.append(
-                            ToolCall(part.get("name", "?"), part.get("input", {}), stamp)
+                            ToolCall(
+                                part.get("name", "?"),
+                                part.get("input", {}),
+                                stamp,
+                                uid=part.get("id", ""),
+                            )
                         )
+                    elif isinstance(part, dict) and part.get("type") == "tool_result":
+                        # The result is how we learn what a targeting call
+                        # actually offered, which is the whole point of
+                        # measuring precision rather than turn counts.
+                        body = part.get("content")
+                        if isinstance(body, list):
+                            body = " ".join(b.get("text", "") for b in body if isinstance(b, dict))
+                        results[part.get("tool_use_id", "")] = str(body or "")
+
+        for call in self.calls:
+            if call.uid in results:
+                call.result = results[call.uid]
 
     def active_minutes(self, idle_threshold: float) -> float:
         stamps = sorted(self.timestamps)
@@ -234,6 +280,41 @@ class Session:
                         out.append(index)
                         break
         return out
+
+    def targeting_precision(self) -> list[tuple[int, bool]]:
+        """
+        For each targeting call: how many places it offered, and whether the
+        file the episode went on to edit was among them.
+
+        This is the measurement that needs no control group. Comparing turn
+        counts across time periods is confounded by task difficulty and by
+        whether the tools were used at all; asking "was the answer in the set
+        we handed over" is a direct question about whether targeting works.
+
+        Only episodes that end in an edit are scored — without an edit there
+        is no ground truth about which file mattered.
+        """
+        scored: list[tuple[int, bool]] = []
+        for episode in self.episodes():
+            edited = {
+                call.input.get("file_path", "")
+                for call in episode
+                if call.is_write and call.input.get("file_path")
+            }
+            if not edited:
+                continue
+            for call in episode:
+                if not call.is_targeting:
+                    continue
+                offered = call.offered_paths()
+                if not offered:
+                    continue
+                hit = any(
+                    any(o.endswith(target) or target.endswith(o) for o in offered)
+                    for target in edited
+                )
+                scored.append((len(offered), hit))
+        return scored
 
     def reread_ratio(self) -> float | None:
         """Reads divided by distinct files read; 1.0 means nothing re-opened."""
@@ -298,6 +379,7 @@ def collect(root: Path, min_calls: int, idle: float) -> tuple[list[Session], dic
             sessions.append(session)
 
     orientation: list[float] = []
+    precision: list[tuple[int, bool]] = []
     to_target: list[float] = []
     rereads: list[float] = []
     read_rate: list[float] = []
@@ -309,6 +391,7 @@ def collect(root: Path, min_calls: int, idle: float) -> tuple[list[Session], dic
         minutes = session.active_minutes(idle)
         reads = sum(1 for c in session.calls if c.is_read)
         orientation.extend(session.orientation_turns())
+        precision.extend(session.targeting_precision())
         to_target.extend(session.turns_to_first_target())
         ratio = session.reread_ratio()
         if ratio is not None:
@@ -320,6 +403,14 @@ def collect(root: Path, min_calls: int, idle: float) -> tuple[list[Session], dic
         scope.update(session.scope_mix())
 
     total_scope = sum(scope.values()) or 1
+    hits = sum(1 for _, hit in precision if hit)
+    targeting = {
+        "calls_scored": len(precision),
+        "hit_rate": round(hits / len(precision), 3) if precision else None,
+        "median_scope_size": (
+            round(statistics.median([n for n, _ in precision]), 1) if precision else None
+        ),
+    }
     return sessions, {
         "sample": {
             "sessions": len(sessions),
@@ -333,6 +424,7 @@ def collect(root: Path, min_calls: int, idle: float) -> tuple[list[Session], dic
         "fs_reads_per_active_minute": percentiles(read_rate),
         "tool_calls_per_session": percentiles(calls_per_session),
         "scope_mix_pct": {k: round(100 * v / total_scope, 1) for k, v in scope.most_common()},
+        "targeting": targeting,
         "top_tools": dict(tools.most_common(8)),
     }
 
@@ -372,6 +464,24 @@ def render(report: dict, baseline: dict | None) -> str:
     lines.append(
         "search scope:  " + "  ".join(f"{k} {v}%" for k, v in report["scope_mix_pct"].items())
     )
+
+    targeting = report.get("targeting") or {}
+    lines.append("")
+    if not targeting.get("calls_scored"):
+        lines.append(
+            "targeting:     no scored calls yet — needs episodes where a targeting tool\n"
+            "               was used and the session went on to edit a file"
+        )
+    else:
+        lines.append(
+            f"targeting:     hit rate {targeting['hit_rate']:.1%} "
+            f"over {targeting['calls_scored']} calls "
+            f"(median {targeting['median_scope_size']:.0f} places offered)"
+        )
+        lines.append(
+            "               = how often the file the agent went on to edit was in\n"
+            "                 the scope it was handed"
+        )
     return "\n".join(lines)
 
 
