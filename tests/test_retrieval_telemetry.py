@@ -259,3 +259,113 @@ class TestPercentiles:
         stats = percentiles([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
         assert stats["n"] == 10
         assert stats["p50"] == pytest.approx(5.5)
+
+
+def tool_result_for(uid, text, offset_s):
+    return {
+        "type": "user",
+        "timestamp": (START + timedelta(seconds=offset_s)).isoformat().replace("+00:00", "Z"),
+        "message": {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": uid, "content": text}],
+        },
+    }
+
+
+def targeting_call(name, uid, offset_s, tool_input=None):
+    return {
+        "type": "assistant",
+        "timestamp": (START + timedelta(seconds=offset_s)).isoformat().replace("+00:00", "Z"),
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "name": name, "input": tool_input or {}, "id": uid}],
+        },
+    }
+
+
+class TestTargetingPrecision:
+    """
+    The measurement that needs no control group.
+
+    Comparing turn counts across time periods is confounded by task difficulty
+    and by whether the tools were used at all. Asking "was the file the agent
+    went on to edit inside the scope we handed it" is a direct question about
+    whether targeting works, answerable from one transcript.
+    """
+
+    def test_hit_when_the_edited_file_was_offered(self, tmp_path):
+        events = [
+            user_turn("fix the auth bug", 0),
+            targeting_call("mcp__navegador__locate", "t1", 10),
+            tool_result_for("t1", '{"candidates":[{"path":"src/auth.py"}]}', 20),
+            tool_use("Edit", {"file_path": "src/auth.py"}, 30),
+        ]
+        session = Session(write_session(tmp_path / "p", events))
+        assert session.targeting_precision() == [(1, True)]
+
+    def test_miss_when_it_offered_the_wrong_places(self, tmp_path):
+        events = [
+            user_turn("fix it", 0),
+            targeting_call("mcp__navegador__locate", "t1", 10),
+            tool_result_for("t1", '{"candidates":[{"path":"src/decoy.py"}]}', 20),
+            tool_use("Edit", {"file_path": "src/real.py"}, 30),
+        ]
+        session = Session(write_session(tmp_path / "p", events))
+        assert session.targeting_precision() == [(1, False)]
+
+    def test_scope_size_is_recorded(self, tmp_path):
+        """
+        A hit from a hundred candidates is not the same as a hit from three.
+        Precision without scope size can be gamed by returning everything.
+        """
+        events = [
+            user_turn("go", 0),
+            targeting_call("mcp__navegador__scope_for", "t1", 10),
+            tool_result_for("t1", '{"files":["a.py","b.py","c.py"]}', 20),
+            tool_use("Edit", {"file_path": "b.py"}, 30),
+        ]
+        session = Session(write_session(tmp_path / "p", events))
+        size, hit = session.targeting_precision()[0]
+        assert size == 3 and hit
+
+    def test_cli_invocations_count_too(self, tmp_path):
+        """Targeting reached through Bash is still targeting."""
+        events = [
+            user_turn("go", 0),
+            targeting_call("Bash", "t1", 10, {"command": "navegador scope validate_token"}),
+            tool_result_for("t1", "src/auth.py\nsrc/api.py", 20),
+            tool_use("Edit", {"file_path": "src/auth.py"}, 30),
+        ]
+        session = Session(write_session(tmp_path / "p", events))
+        assert session.targeting_precision() == [(2, True)]
+
+    def test_episode_without_an_edit_is_not_scored(self, tmp_path):
+        """No edit means no ground truth about which file mattered."""
+        events = [
+            user_turn("what does this do", 0),
+            targeting_call("mcp__navegador__locate", "t1", 10),
+            tool_result_for("t1", '{"candidates":[{"path":"src/auth.py"}]}', 20),
+        ]
+        session = Session(write_session(tmp_path / "p", events))
+        assert session.targeting_precision() == []
+
+    def test_non_targeting_calls_are_ignored(self, tmp_path):
+        events = [
+            user_turn("go", 0),
+            targeting_call("Read", "t1", 10, {"file_path": "src/auth.py"}),
+            tool_result_for("t1", "contents of src/auth.py", 20),
+            tool_use("Edit", {"file_path": "src/auth.py"}, 30),
+        ]
+        session = Session(write_session(tmp_path / "p", events))
+        assert session.targeting_precision() == []
+
+    def test_a_call_that_offered_nothing_is_not_scored(self, tmp_path):
+        """An empty result is not a miss — it offered no scope to be wrong about."""
+        events = [
+            user_turn("go", 0),
+            targeting_call("mcp__navegador__locate", "t1", 10),
+            tool_result_for("t1", "no matches", 20),
+            tool_use("Edit", {"file_path": "src/auth.py"}, 30),
+        ]
+        session = Session(write_session(tmp_path / "p", events))
+        assert session.targeting_precision() == []

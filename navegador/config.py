@@ -214,6 +214,25 @@ def resolve_llm(
 # ── Resolution ────────────────────────────────────────────────────────────────
 
 
+def _configured_graph_name(target: str | Path | None) -> str:
+    """
+    The graph name a config file declares, regardless of which layer wins.
+
+    Read separately from the connection so that overriding the server does not
+    silently drop the namespace (#178). Project config first, then the
+    machine-wide user config.
+    """
+    for path in (find_project_config(target), user_config_path()):
+        if not path or not Path(path).is_file():
+            continue
+        storage = read_config(Path(path)).get("storage")
+        if isinstance(storage, dict):
+            name = str(storage.get("graph", "")).strip()
+            if name:
+                return name
+    return ""
+
+
 def resolve_storage(
     db_path: str | None = None,
     redis_url: str | None = None,
@@ -235,9 +254,34 @@ def resolve_storage(
                    each project in its own namespace.
     """
     override = (graph_name or os.environ.get("NAVEGADOR_GRAPH", "")).strip()
+    configured = _configured_graph_name(target)
 
     def _with_graph(config: StorageConfig) -> StorageConfig:
-        return replace(config, graph_name=override) if override else config
+        """
+        Apply the namespace decision, which is separate from the connection one.
+
+        ``redis_url`` says *which server*; ``graph`` says *which namespace on
+        it*. Overriding the first must not discard the second. It used to:
+        setting NAVEGADOR_REDIS_URL returned before project config was ever
+        read, so a project with a configured graph landed on the default
+        `navegador` graph instead of its own. For an MCP client that is
+        invisible — the server starts, every tool answers, and the graph is
+        empty (#178).
+
+        The ambient name is only borrowed for a **shared server**, because
+        that is the only place a namespace means anything: `graph` is how a
+        project addresses its own corner of a server other projects also use.
+        An embedded store *is* its own namespace, so borrowing a name there
+        pointed `--db /tmp/scratch.db` at whatever graph the current directory
+        happened to configure — reintroducing #170's mistake of answering
+        about the working directory rather than the target.
+
+        Precedence: an explicit --graph or NAVEGADOR_GRAPH wins, then whatever
+        the resolving layer itself carried, then the project's configured name.
+        """
+        ambient = configured if config.backend == "redis" else ""
+        chosen = override or config.graph_name or ambient
+        return replace(config, graph_name=chosen) if chosen else config
 
     # 1. Explicit arguments
     if redis_url:

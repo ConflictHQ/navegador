@@ -133,7 +133,21 @@ def _counts(graph) -> tuple[int, int]:
 
 
 def _file_paths(graph, limit: int) -> list[str]:
-    rows = graph.ro_query(f"MATCH (f:File) RETURN f.path LIMIT {int(limit)}").result_set
+    """
+    Every file path in the graph, or the first *limit* in path order.
+
+    Ordering is not cosmetic. An unordered LIMIT returns an arbitrary subset,
+    so the same graph was called stale on one run and healthy on the next
+    depending on which rows came back — and `prune --include-stale` deletes on
+    that verdict. Sampling has to be repeatable to be evidence.
+
+    ``limit <= 0`` reads everything, which is the default: a graph has far
+    fewer File nodes than total nodes, this runs once per audit rather than on
+    a hot path, and a partial sample of an unevenly distributed tree is how
+    the non-determinism produced a wrong answer in the first place.
+    """
+    clause = f" LIMIT {int(limit)}" if limit and limit > 0 else ""
+    rows = graph.ro_query(f"MATCH (f:File) RETURN f.path ORDER BY f.path{clause}").result_set
     return [row[0] for row in (rows or []) if row and row[0]]
 
 
@@ -147,13 +161,16 @@ def audit_graph(
     connection,
     name: str,
     root: Path | None = None,
-    sample: int = 2000,
+    sample: int = 0,
 ) -> GraphAudit:
     """
     Inspect one graph, checking its file paths against *root* when given.
 
-    Only a sample of paths is checked: resolution is a ratio, and stat-ing
-    50,000 files to learn what 2,000 already say is a waste of a scan.
+    All paths are checked by default. Sampling was the original design and
+    it produced a wrong verdict: an unordered LIMIT drew a different arbitrary
+    subset each run, so this graph was called stale on one pass and healthy on
+    the next. Pass a positive *sample* only for a graph large enough that the
+    scan itself is the problem, and accept a heuristic answer there.
     """
     report = GraphAudit(name=name, root=root)
     if JUNK_NAME.search(name):
@@ -213,8 +230,18 @@ def audit_server(url: str, roots: dict[str, Path] | None = None) -> list[GraphAu
     import falkordb
     import redis as redis_lib
 
-    db = falkordb.FalkorDB.from_url(url)
-    connection = redis_lib.from_url(url)
+    return audit_all(falkordb.FalkorDB.from_url(url), redis_lib.from_url(url), roots)
+
+
+def audit_all(db, connection, roots: dict[str, Path] | None = None) -> list[GraphAudit]:
+    """
+    Audit every graph reachable through *connection*.
+
+    Split from :func:`audit_server` so it can be driven against an embedded
+    store, which is a real Redis over a unix socket and has no ``redis://``
+    URL. The name decoding below is the reason that matters: it was wrong
+    once, and reported 41 of 41 graphs as reclaimable.
+    """
     roots = roots or {}
 
     # GRAPH.LIST returns bytes on a connection that is not decoding responses,
@@ -228,6 +255,100 @@ def audit_server(url: str, roots: dict[str, Path] | None = None) -> list[GraphAu
     reports = [audit_graph(db, connection, name, roots.get(name)) for name in sorted(names)]
     mark_duplicates(reports)
     return reports
+
+
+def excluded_now(root: Path, paths: list[str]) -> list[str]:
+    """
+    Which of *paths* a current ingest would no longer index.
+
+    Since #180 a git checkout contributes only the files git does not ignore.
+    Graphs built before that still hold whatever the old fixed skip-list let
+    through — on one real graph, 54,543 of 54,552 files were gitignored build
+    output. Those graphs are not stale (the paths resolve) and not duplicates;
+    nothing else in this module would notice them.
+    """
+    import subprocess
+
+    from navegador.vcs import GitAdapter
+
+    if not GitAdapter(root).is_repo():
+        return []
+
+    # Ask whether git ignores each path, rather than whether it appears in
+    # `ls-files`. Absence from ls-files is not the same as being ignored: a
+    # submodule's contents are absent from the parent's listing because they
+    # belong to a nested repository, and treating that as "excluded" reported
+    # 100% of a healthy 12-submodule workspace graph as needing a rebuild —
+    # which, with --yes, would have destroyed it.
+    #
+    # A path that no longer exists is not an exclusion either; that is
+    # staleness, and it has its own verdict.
+    present = [p for p in paths if (root / p).exists()]
+    if not present:
+        return []
+    try:
+        result = subprocess.run(
+            ["git", "check-ignore", "--stdin"],
+            cwd=root,
+            input="\n".join(present),
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return []
+    # Exit 0 means some paths matched; 1 means none did. Anything else is an
+    # error and is treated as "no opinion" rather than as everything matching.
+    if result.returncode not in (0, 1):
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def needs_reindex(db, connection, name: str, root: Path, sample: int = 0) -> tuple[int, int]:
+    """
+    ``(files_checked, files_a_current_ingest_would_exclude)`` for one graph.
+
+    Checks every path by default, for the same reason the staleness check
+    does: a partial sample of an unevenly distributed tree gives a different
+    answer each run.
+    """
+    if JUNK_NAME.search(name):
+        return 0, 0
+    try:
+        graph = db.select_graph(name)
+        paths = _file_paths(graph, sample)
+    except Exception:
+        return 0, 0
+    if not paths:
+        return 0, 0
+    return len(paths), len(excluded_now(root, paths))
+
+
+def reindex_candidates(
+    db, connection, projects: list[tuple[str, Path]], sample: int = 0
+) -> list[dict]:
+    """
+    Graphs holding files a current ingest would exclude, worst first.
+
+    *projects* is ``(graph_name, checkout_root)`` pairs, normally from
+    ``navegador scan``. Kept here rather than in the CLI so it can be driven
+    against an embedded store: the command clears and rebuilds graphs, and the
+    decision about which ones is not something to leave untested behind a
+    server connection.
+    """
+    affected = []
+    for graph_name, root in projects:
+        checked, excluded = needs_reindex(db, connection, graph_name, Path(root), sample)
+        if excluded:
+            affected.append(
+                {
+                    "graph": graph_name,
+                    "root": str(root),
+                    "checked": checked,
+                    "excluded": excluded,
+                    "share": round(excluded / checked, 3) if checked else 0.0,
+                }
+            )
+    return sorted(affected, key=lambda item: -item["share"])
 
 
 def prune(

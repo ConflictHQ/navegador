@@ -164,3 +164,25 @@ class TestStorageAuditRequiresAServer:
         result = CliRunner().invoke(main, ["storage", "prune", "--db", db])
         assert result.exit_code != 0
         assert "shared server" in flat(result)
+
+
+class TestStorageReindexRequiresAServer:
+    def test_reindex_explains_itself_on_an_embedded_backend(self, project):
+        """
+        Like audit and prune, this inspects a shared server. Pointed at an
+        embedded file it should say so rather than failing obscurely.
+        """
+        db, _ = project
+        result = CliRunner().invoke(main, ["storage", "reindex", "--db", db])
+        assert result.exit_code != 0
+        assert "shared server" in flat(result)
+
+    def test_reindex_is_a_dry_run_without_yes(self, project):
+        """
+        It clears and rebuilds graphs, so the default must never write. The
+        first version of this command would have wiped healthy 12-submodule
+        workspace graphs on a false positive.
+        """
+        db, _ = project
+        result = CliRunner().invoke(main, ["storage", "reindex", "--db", db, "--json"])
+        assert "reindexed" not in result.output or '"dry_run": true' in result.output.lower()

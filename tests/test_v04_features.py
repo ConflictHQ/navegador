@@ -36,113 +36,154 @@ def _write(path: Path, content: str) -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
+def real_store(tmp_path):
+    """An embedded store — real FalkorDB, milliseconds to build."""
+    from navegador.graph import GraphStore
+
+    return GraphStore.sqlite(str(tmp_path / "v04.db"))
+
+
+def git_repo(path, remote=""):
+    """A committed git repo, so repo identity resolves from the remote."""
+    import subprocess
+
+    (path / "src").mkdir(parents=True, exist_ok=True)
+    (path / "src" / "mod.py").write_text(
+        "def entry():\n    return helper()\n\ndef helper():\n    return 1\n"
+    )
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=path, check=True, capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    if remote:
+        git("remote", "add", "origin", remote)
+    git("add", "-A")
+    git("commit", "-qm", "initial")
+    return path
+
+
 class TestMultiRepoManagerAddRepo:
-    def test_creates_repository_node(self, tmp_path):
+    """
+    Registration against a real store.
+
+    These used to assert against a MagicMock's call_args, which meant they
+    described the arguments passed rather than the graph produced — and so
+    they could not notice that registration and ingest were writing two
+    different Repository nodes (#179).
+    """
+
+    def test_creates_one_repository_node(self, tmp_path):
         from navegador.multirepo import MultiRepoManager
 
-        store = _mock_store()
-        mgr = MultiRepoManager(store)
-        mgr.add_repo("backend", str(tmp_path))
-        store.create_node.assert_called_once()
-        args = store.create_node.call_args[0]
-        assert args[0] == "Repository"
-        assert args[1]["name"] == "backend"
+        store = real_store(tmp_path)
+        repo = git_repo(tmp_path / "backend", "git@github.com:acme/backend.git")
+        MultiRepoManager(store).add_repo("backend", repo)
 
-    def test_resolves_path(self, tmp_path):
+        rows = store.query("MATCH (r:Repository) RETURN r.name, r.path").result_set
+        assert len(rows) == 1
+
+    def test_keyed_by_portable_identity_not_the_checkout_path(self, tmp_path):
+        """An absolute path is not an identity and leaks local layout (#145)."""
         from navegador.multirepo import MultiRepoManager
 
-        store = _mock_store()
-        mgr = MultiRepoManager(store)
-        mgr.add_repo("x", str(tmp_path))
-        props = store.create_node.call_args[0][1]
-        assert Path(props["path"]).is_absolute()
+        store = real_store(tmp_path)
+        repo = git_repo(tmp_path / "backend", "git@github.com:acme/backend.git")
+        MultiRepoManager(store).add_repo("backend", repo)
+
+        rows = store.query("MATCH (r:Repository) RETURN r.path").result_set
+        assert rows[0][0] == "acme/backend"
+
+    def test_checkout_location_is_still_recorded(self, tmp_path):
+        """
+        The registry is persisted and read back to know what to ingest, so the
+        machine-local path has to live somewhere — just not in `path`.
+        """
+        from navegador.multirepo import MultiRepoManager
+
+        store = real_store(tmp_path)
+        repo = git_repo(tmp_path / "backend", "git@github.com:acme/backend.git")
+        MultiRepoManager(store).add_repo("backend", repo)
+
+        rows = store.query("MATCH (r:Repository) RETURN r.file_path").result_set
+        assert Path(rows[0][0]).is_absolute()
 
 
 class TestMultiRepoManagerListRepos:
-    def test_returns_empty_list_when_no_repos(self):
+    def test_returns_empty_list_when_no_repos(self, tmp_path):
         from navegador.multirepo import MultiRepoManager
 
-        store = _mock_store()
-        store.query.return_value = MagicMock(result_set=[])
-        mgr = MultiRepoManager(store)
-        assert mgr.list_repos() == []
+        assert MultiRepoManager(real_store(tmp_path)).list_repos() == []
 
-    def test_parses_result_set(self):
+    def test_reports_location_and_identity_separately(self, tmp_path):
         from navegador.multirepo import MultiRepoManager
 
-        store = _mock_store()
-        store.query.return_value = MagicMock(
-            result_set=[["backend", "/repos/backend"], ["frontend", "/repos/frontend"]]
-        )
-        mgr = MultiRepoManager(store)
-        repos = mgr.list_repos()
-        assert len(repos) == 2
-        assert repos[0] == {"name": "backend", "path": "/repos/backend"}
-        assert repos[1] == {"name": "frontend", "path": "/repos/frontend"}
+        store = real_store(tmp_path)
+        repo = git_repo(tmp_path / "backend", "git@github.com:acme/backend.git")
+        manager = MultiRepoManager(store)
+        manager.add_repo("backend", repo)
+
+        (entry,) = manager.list_repos()
+        assert entry["identity"] == "acme/backend"
+        assert Path(entry["path"]).is_absolute()
+
+    def test_older_graphs_without_file_path_still_list(self, tmp_path):
+        """A graph written before #179 has no file_path; identity stands in."""
+        from navegador.multirepo import MultiRepoManager
+
+        store = real_store(tmp_path)
+        store.query("CREATE (:Repository {name:'old', path:'acme/old'})")
+
+        (entry,) = MultiRepoManager(store).list_repos()
+        assert entry["path"] == "acme/old"
 
 
 class TestMultiRepoManagerIngestAll:
-    def test_calls_repo_ingester_for_each_repo(self, tmp_path):
+    def test_ingests_each_registered_repo(self, tmp_path):
         from navegador.multirepo import MultiRepoManager
 
-        store = _mock_store()
-        # list_repos() is called first; return one repo
-        store.query.return_value = MagicMock(
-            result_set=[["svc", str(tmp_path)]]
-        )
-        mgr = MultiRepoManager(store)
+        store = real_store(tmp_path)
+        repo = git_repo(tmp_path / "svc", "git@github.com:acme/svc.git")
+        manager = MultiRepoManager(store)
+        manager.add_repo("svc", repo)
 
-        mock_ingester_instance = MagicMock()
-        mock_ingester_instance.ingest.return_value = {"files": 3, "functions": 10}
-        mock_ingester_cls = MagicMock(return_value=mock_ingester_instance)
+        summary = manager.ingest_all()
+        assert summary and next(iter(summary.values()))["files"] > 0
 
-        # Patch the lazy import inside ingest_all
-        with patch("navegador.ingestion.parser.RepoIngester", mock_ingester_cls):
-            # Also patch the name that is imported lazily inside the method
-            import navegador.ingestion.parser as _p
-            original = getattr(_p, "RepoIngester", None)
-            _p.RepoIngester = mock_ingester_cls
-            try:
-                summary = mgr.ingest_all()
-            finally:
-                if original is not None:
-                    _p.RepoIngester = original
-
-        assert "svc" in summary
-        assert summary["svc"]["files"] == 3
-
-    def test_returns_empty_when_no_repos(self):
+    def test_files_attach_to_the_registered_repository(self, tmp_path):
+        """The bug's teeth: the registration node used to have zero members."""
         from navegador.multirepo import MultiRepoManager
 
-        store = _mock_store()
-        store.query.return_value = MagicMock(result_set=[])
-        mgr = MultiRepoManager(store)
-        assert mgr.ingest_all() == {}
+        store = real_store(tmp_path)
+        repo = git_repo(tmp_path / "svc", "git@github.com:acme/svc.git")
+        manager = MultiRepoManager(store)
+        manager.add_repo("svc", repo)
+        manager.ingest_all()
 
-    def test_clear_flag_calls_store_clear_when_repos_exist(self, tmp_path):
+        rows = store.query(
+            "MATCH (f)-[:BELONGS_TO]->(r:Repository {path:'acme/svc'}) RETURN count(f)"
+        ).result_set
+        assert int(rows[0][0]) > 0
+
+    def test_returns_empty_when_no_repos(self, tmp_path):
         from navegador.multirepo import MultiRepoManager
 
-        store = _mock_store()
-        # Return one repo so ingest_all proceeds past the empty check
-        store.query.return_value = MagicMock(
-            result_set=[["svc", str(tmp_path)]]
-        )
-        mgr = MultiRepoManager(store)
+        assert MultiRepoManager(real_store(tmp_path)).ingest_all() == {}
 
-        mock_ingester_instance = MagicMock()
-        mock_ingester_instance.ingest.return_value = {"files": 1}
-        mock_ingester_cls = MagicMock(return_value=mock_ingester_instance)
+    def test_clear_empties_the_graph_first(self, tmp_path):
+        from navegador.multirepo import MultiRepoManager
 
-        import navegador.ingestion.parser as _p
-        original = getattr(_p, "RepoIngester", None)
-        _p.RepoIngester = mock_ingester_cls
-        try:
-            mgr.ingest_all(clear=True)
-        finally:
-            if original is not None:
-                _p.RepoIngester = original
+        store = real_store(tmp_path)
+        store.query("CREATE (:Function {name:'stale_leftover', file_path:'gone.py'})")
+        repo = git_repo(tmp_path / "svc", "git@github.com:acme/svc.git")
+        manager = MultiRepoManager(store)
+        manager.add_repo("svc", repo)
+        manager.ingest_all(clear=True)
 
-        store.clear.assert_called_once()
+        rows = store.query("MATCH (n:Function {name:'stale_leftover'}) RETURN count(n)").result_set
+        assert int(rows[0][0]) == 0
 
 
 class TestMultiRepoManagerCrossRepoSearch:
@@ -150,9 +191,7 @@ class TestMultiRepoManagerCrossRepoSearch:
         from navegador.multirepo import MultiRepoManager
 
         store = _mock_store()
-        store.query.return_value = MagicMock(
-            result_set=[["Function", "authenticate", "auth.py"]]
-        )
+        store.query.return_value = MagicMock(result_set=[["Function", "authenticate", "auth.py"]])
         mgr = MultiRepoManager(store)
         results = mgr.cross_repo_search("authenticate")
         assert len(results) == 1
@@ -185,9 +224,7 @@ class TestRepoCLI:
         runner = CliRunner()
         store = _mock_store()
         with patch("navegador.cli.commands._get_store", return_value=store):
-            result = runner.invoke(
-                main, ["repo", "add", "myapp", str(tmp_path)]
-            )
+            result = runner.invoke(main, ["repo", "add", "myapp", str(tmp_path)])
         assert result.exit_code == 0
         assert "myapp" in result.output
 
@@ -218,9 +255,7 @@ class TestSymbolRenamerFindReferences:
         from navegador.refactor import SymbolRenamer
 
         store = _mock_store()
-        store.query.return_value = MagicMock(
-            result_set=[["Function", "foo", "a.py", 10]]
-        )
+        store.query.return_value = MagicMock(result_set=[["Function", "foo", "a.py", 10]])
         renamer = SymbolRenamer(store)
         refs = renamer.find_references("foo")
         assert len(refs) == 1
@@ -594,11 +629,7 @@ _OPENAPI_JSON = {
             "post": {"summary": "Create item"},
         }
     },
-    "components": {
-        "schemas": {
-            "Item": {"description": "An item", "type": "object"}
-        }
-    },
+    "components": {"schemas": {"Item": {"description": "An item", "type": "object"}}},
 }
 
 _GRAPHQL_SCHEMA = """\
@@ -711,9 +742,7 @@ class TestAPICLI:
         p.write_text(json.dumps(_OPENAPI_JSON))
         store = _mock_store()
         with patch("navegador.cli.commands._get_store", return_value=store):
-            result = runner.invoke(
-                main, ["api", "ingest", str(p), "--type", "openapi"]
-            )
+            result = runner.invoke(main, ["api", "ingest", str(p), "--type", "openapi"])
         assert result.exit_code == 0
 
     def test_api_ingest_graphql(self, tmp_path):
@@ -722,9 +751,7 @@ class TestAPICLI:
         p.write_text(_GRAPHQL_SCHEMA)
         store = _mock_store()
         with patch("navegador.cli.commands._get_store", return_value=store):
-            result = runner.invoke(
-                main, ["api", "ingest", str(p), "--type", "graphql"]
-            )
+            result = runner.invoke(main, ["api", "ingest", str(p), "--type", "graphql"])
         assert result.exit_code == 0
 
     def test_api_ingest_auto_detects_graphql(self, tmp_path):
@@ -742,9 +769,7 @@ class TestAPICLI:
         p.write_text(json.dumps(_OPENAPI_JSON))
         store = _mock_store()
         with patch("navegador.cli.commands._get_store", return_value=store):
-            result = runner.invoke(
-                main, ["api", "ingest", str(p), "--type", "openapi", "--json"]
-            )
+            result = runner.invoke(main, ["api", "ingest", str(p), "--type", "openapi", "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "endpoints" in data
