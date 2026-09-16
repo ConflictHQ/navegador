@@ -276,3 +276,52 @@ class TestCli:
             result = runner.invoke(main, ["aggregate", f"backend={repo_root}", "--json"])
         assert result.exit_code == 0, result.output
         assert "backend" in json.loads(result.output)
+
+
+# ── Brain proposals (project-brain W4 producer conformance) ─────────────────
+
+
+class TestBrainProposals:
+    """The central graph unifies knowledge nodes by name — its own store, its
+    own call. The brain must never inherit that merge: every unification is
+    also recorded as a same_as PROPOSAL in the brain's proposals/v1 shape."""
+
+    def _agg(self, central, source_a, source_b):
+        _seed_repo(source_a, "charge")
+        _seed_repo(source_b, "refund")
+        agg = SuperGraphAggregator(central)
+        agg.aggregate({"repo-a": source_a, "repo-b": source_b})
+        return agg
+
+    def test_each_unification_is_proposed_not_inherited(self, central, source_a, source_b):
+        agg = self._agg(central, source_a, source_b)
+        payload = agg.proposals_payload()
+        pairs = {(p["source"], p["target"]) for p in payload["proposals"]}
+        assert ("repo-a/glossary-term:payments", "repo-b/glossary-term:payments") in pairs
+        assert ("repo-a/person:ada", "repo-b/person:ada") in pairs
+        # the central graph still unified them — one Payments node, as before
+        rows = central.query("MATCH (c:Concept {name: 'Payments'}) RETURN count(c)").result_set
+        assert rows[0][0] == 1
+
+    def test_proposals_carry_the_brain_contract(self, central, source_a, source_b):
+        payload = self._agg(central, source_a, source_b).proposals_payload(scope="company:acme")
+        assert payload["format"] == "proposals/v1"
+        assert payload["generator"] == "navegador"
+        assert payload["contract"] == "1.0" and payload["realm"] == "code"
+        assert payload["scope"] == "company:acme"
+        for p in payload["proposals"]:
+            assert p["kind"] == "equivalence" and p["rel"] == "same_as"
+            assert p["status"] == "proposed" and p["proposed_by"] == "navegador"
+            assert 0 < p["confidence"] < 1.0
+            assert "identical" in p["evidence"]
+
+    def test_proposals_are_deduplicated_and_ordered(self, central, source_a, source_b):
+        agg = self._agg(central, source_a, source_b)
+        ids = [p["id"] for p in agg.proposals_payload()["proposals"]]
+        assert ids == sorted(set(ids))
+
+    def test_single_repo_proposes_nothing(self, central, source_a, source_b):
+        _seed_repo(source_a, "charge")
+        agg = SuperGraphAggregator(central)
+        agg.aggregate({"repo-a": source_a})
+        assert agg.proposals_payload()["proposals"] == []

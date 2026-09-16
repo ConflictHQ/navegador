@@ -51,12 +51,44 @@ KNOWLEDGE_DEDUP_LABELS = frozenset(
 
 _REPOS_SEPARATOR = ","
 
+# Brain-side proposal contract (project-brain schemas/proposals.schema.json).
+# The central code graph merges knowledge nodes by name — that is this realm's
+# own store and its own call. But a brain must never INHERIT a merge it did not
+# decide: identity across brains is an edge a curator accepts, never a merge
+# (project-brain docs/patterns/brain-scope.md). So every knowledge unification
+# the aggregator performs is ALSO recorded as a same_as proposal in the brain's
+# proposals/v1 shape, with the evidence stated, for the brain to accept or not.
+PROPOSALS_FORMAT = "proposals/v1"
+PROPOSAL_CONFIDENCE = 0.6
+_LABEL_TO_BRAIN_KIND = {
+    "Concept": "glossary-term",
+    "Person": "person",
+    "Domain": "kg-entity",
+    "Rule": "decision",
+}
+
+
+def _slug(text: str) -> str:
+    out = []
+    for ch in str(text).strip().lower():
+        if ch.isalnum():
+            out.append(ch)
+        elif out and out[-1] != "-":
+            out.append("-")
+    return "".join(out).strip("-") or "item"
+
+
+def _brain_address(repo: str, label: str, name: str) -> str:
+    kind = _LABEL_TO_BRAIN_KIND.get(str(label), str(label).lower())
+    return f"{repo}/{kind}:{_slug(name)}"
+
 
 class SuperGraphAggregator:
     """Merge repo-local graphs bottom-up into a central super-graph."""
 
     def __init__(self, central: GraphStore) -> None:
         self.central = central
+        self.proposals: list[dict] = []
 
     def aggregate(
         self, sources: dict[str, GraphStore | str | Path], clear: bool = False
@@ -127,6 +159,28 @@ class SuperGraphAggregator:
                     )
                 return self.central.with_graph(candidate)
         return None
+
+    def proposals_payload(self, scope: str = "") -> dict:
+        """Equivalence proposals in the brain's proposals/v1 shape, deduplicated
+        and ordered. ``scope`` is carried when stated (the brain's policy
+        namespace beside repo)."""
+        seen: set[str] = set()
+        out = []
+        for p in sorted(self.proposals, key=lambda x: x["id"]):
+            if p["id"] in seen:
+                continue
+            seen.add(p["id"])
+            out.append(p)
+        payload = {
+            "format": PROPOSALS_FORMAT,
+            "generator": "navegador",
+            "contract": "1.0",
+            "realm": "code",
+            "proposals": out,
+        }
+        if scope:
+            payload["scope"] = scope
+        return payload
 
     def aggregate_repo(self, repo: str, source: GraphStore) -> dict[str, int]:
         """
@@ -207,6 +261,23 @@ class SuperGraphAggregator:
         )
         current = result.result_set[0][0] if result.result_set else None
         repos = set(filter(None, (current or "").split(_REPOS_SEPARATOR)))
+        # The central graph unifies; the brain decides. Record the unification
+        # as a proposal against every repo this node was already seen in.
+        for other in sorted(repos - {repo}):
+            a, b = sorted((_brain_address(other, label, name), _brain_address(repo, label, name)))
+            self.proposals.append(
+                {
+                    "id": f"eq:{a}~{b}",
+                    "kind": "equivalence",
+                    "rel": "same_as",
+                    "source": a,
+                    "target": b,
+                    "confidence": PROPOSAL_CONFIDENCE,
+                    "evidence": f"identical {label} name {name!r} in repos {other!r} and {repo!r}",
+                    "proposed_by": "navegador",
+                    "status": "proposed",
+                }
+            )
         repos.add(repo)
         self.central.query(
             f"MATCH (n:{label} {{name: $name}}) SET n.repos = $repos",

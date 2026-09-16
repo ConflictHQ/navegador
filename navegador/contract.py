@@ -247,6 +247,7 @@ def propose_join_edges(
     repo: str = "",
     min_confidence: float = 0.5,
     limit: int = 200,
+    scope: str = "",
 ) -> dict[str, Any]:
     """
     Propose contract-format join edges from inferred doc↔code affinity.
@@ -289,7 +290,7 @@ def propose_join_edges(
         if len(proposals) >= limit:
             break
 
-    return {
+    envelope: dict[str, Any] = {
         "contract": CONTRACT_VERSION,
         "realm": REALM,
         "repo": repo,
@@ -297,6 +298,14 @@ def propose_join_edges(
         "proposals": proposals,
         "count": len(proposals),
     }
+    # Scope is the brain's POLICY namespace beside the repo (storage)
+    # namespace: a scope address such as `project:acme-data-platform`
+    # (project-brain docs/patterns/brain-scope.md). Carried verbatim when the
+    # caller states it, so a consuming brain can check the proposal came from
+    # a scope it federates with before it reads a single edge.
+    if scope:
+        envelope["scope"] = scope
+    return envelope
 
 
 #: Graph labels on the documentation side mapped to the brain kinds they

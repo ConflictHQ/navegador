@@ -223,6 +223,16 @@ class TestProposeJoinEdges:
         payload = propose_join_edges(documented, repo="myrepo")
         assert all(p["target"].startswith("myrepo/code:") for p in payload["proposals"])
 
+    def test_scope_is_carried_when_stated(self, documented):
+        """Scope is the brain's policy namespace beside repo (storage): a
+        consuming brain checks it before reading a single edge."""
+        payload = propose_join_edges(documented, repo="myrepo", scope="project:acme")
+        assert payload["scope"] == "project:acme"
+        assert payload["repo"] == "myrepo"
+
+    def test_scope_is_absent_when_not_stated(self, documented):
+        assert "scope" not in propose_join_edges(documented)
+
     def test_proposals_carry_confidence_and_evidence(self, documented):
         proposal = propose_join_edges(documented)["proposals"][0]
         assert 0 < proposal["confidence"] <= 1.0
