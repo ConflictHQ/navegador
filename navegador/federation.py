@@ -171,10 +171,12 @@ class SuperGraphAggregator:
                 continue
             seen.add(p["id"])
             out.append(p)
+        # Only keys proposals/v1 admits. The brain validates each batch whole
+        # and drops all of it on one unknown key (the schema's top level is
+        # additionalProperties: false) — a `contract` key here did exactly that.
         payload = {
             "format": PROPOSALS_FORMAT,
             "generator": "navegador",
-            "contract": "1.0",
             "realm": "code",
             "proposals": out,
         }
