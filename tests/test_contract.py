@@ -12,6 +12,7 @@ against a graph a real ingest produced, and mocking the store would test the
 grammar while leaving the resolution untested.
 """
 
+import hashlib
 import json
 from unittest.mock import MagicMock, patch
 
@@ -29,6 +30,7 @@ from navegador.contract import (
     resolve,
 )
 from navegador.graph.store import GraphStore
+from navegador.ingestion.parser import RepoIngester
 
 
 @pytest.fixture()
@@ -270,6 +272,119 @@ class TestProposeJoinEdges:
         payload = propose_join_edges(store)
         assert payload["proposals"] == []
         assert payload["contract"] == CONTRACT_VERSION
+
+
+# ── Revisions: which code a join reflects (#199) ───────────────────────────
+
+
+def _sha256(path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.fixture()
+def ingested(store, tmp_path):
+    """
+    A repo built by a real ingest. The revision under test is whatever ingest
+    recorded, so a hash written into the fixture would prove nothing.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "auth.py").write_text(
+        "def validate_token(token):\n    return bool(token)\n", encoding="utf-8"
+    )
+    (tmp_path / "src" / "views.py").write_text(
+        "def login(token):\n    return token\n", encoding="utf-8"
+    )
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "auth-design.md").write_text(
+        "# Auth\n\nEvery request is checked by `validate_token` first.\n", encoding="utf-8"
+    )
+    RepoIngester(store).ingest(tmp_path, clear=True)
+    return tmp_path
+
+
+class TestRevisions:
+    @pytest.mark.parametrize(
+        "address, file",
+        [
+            ("code:src/auth.py", "src/auth.py"),
+            ("code:src/auth.py#validate_token", "src/auth.py"),
+            ("code:docs/auth-design.md", "docs/auth-design.md"),
+        ],
+    )
+    def test_a_resolved_node_states_its_files_revision(self, store, ingested, address, file):
+        """A file, a symbol inside it, and a document each state their file's hash."""
+        resolved = resolve(store, address)
+        assert resolved.found
+        assert resolved.revision == _sha256(ingested / file)
+        assert resolved.to_dict()["revision"] == resolved.revision
+
+    def test_an_edit_moves_only_that_files_revision(self, store, ingested):
+        """
+        What a brain relies on: the revision it holds goes stale exactly when
+        the code under the edge changes, and not when some other file does.
+        """
+        edited, untouched = "code:src/auth.py#validate_token", "code:src/views.py#login"
+        before = {address: resolve(store, address).revision for address in (edited, untouched)}
+
+        source = ingested / "src" / "auth.py"
+        source.write_text(
+            source.read_text(encoding="utf-8") + "\n\ndef revoke(token):\n    return None\n",
+            encoding="utf-8",
+        )
+        RepoIngester(store).ingest(ingested, incremental=True)
+
+        after = resolve(store, edited).revision
+        assert after == _sha256(source)
+        assert after != before[edited]
+        assert resolve(store, untouched).revision == before[untouched]
+
+    def test_a_workspace_prefixed_path_still_finds_its_revision(self, store, tmp_path):
+        """
+        A workspace ingest records `svc/src/app.py` (#144). The revision must
+        come from the node that matched, not the path as the address spells it.
+        """
+        (tmp_path / "svc" / "src").mkdir(parents=True)
+        source = tmp_path / "svc" / "src" / "app.py"
+        source.write_text("def handler():\n    return 1\n", encoding="utf-8")
+        RepoIngester(store).ingest(tmp_path / "svc", rel_root=tmp_path, repo_key="svc")
+        assert resolve(store, "svc/code:src/app.py#handler").revision == _sha256(source)
+
+    def test_a_proposal_carries_the_revision_a_later_resolve_is_compared_with(
+        self, store, ingested
+    ):
+        """
+        The brain's loop: keep the proposal's revision with the edge it commits,
+        then compare it with what resolving the same target says later.
+        """
+        proposals = propose_join_edges(store, repo="myrepo")["proposals"]
+        target = "myrepo/code:src/auth.py#validate_token"
+        proposal = next(p for p in proposals if p["target"] == target)
+        assert proposal["revision"] == _sha256(ingested / "src" / "auth.py")
+        assert resolve(store, target).revision == proposal["revision"]
+
+    def test_a_graph_that_recorded_no_hash_says_so(self, code_graph):
+        """
+        `code_graph` is hand-built, as an older or partial graph can be: no file
+        carries a hash. The node still resolves, and its revision is an explicit
+        null rather than a missing key or a guess.
+        """
+        resolved = resolve(code_graph, "code:src/auth.py#validate_token")
+        assert resolved.found
+        assert resolved.revision is None
+        payload = resolved.to_dict()
+        assert "revision" in payload and payload["revision"] is None
+
+    def test_a_miss_has_no_revision(self, code_graph):
+        assert resolve(code_graph, "code:src/nope.py#absent").to_dict()["revision"] is None
+
+    def test_a_proposal_whose_target_has_no_hash_says_so(self, code_graph):
+        code_graph.query(
+            "CREATE (:Document {name: 'auth-design.md', path: 'docs/auth-design.md', "
+            "content: '# Auth\\n\\nEvery request is checked by `validate_token` first.'})"
+        )
+        proposals = propose_join_edges(code_graph)["proposals"]
+        proposal = next(p for p in proposals if p["target"] == "code:src/auth.py#validate_token")
+        assert "revision" in proposal and proposal["revision"] is None
 
 
 # ── The MCP surface ────────────────────────────────────────────────────────
