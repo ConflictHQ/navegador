@@ -76,6 +76,7 @@ not need a second round trip to keep moving:
   "label": "Function",
   "name": "validate_token",
   "path": "src/auth.py",
+  "revision": "78c70066a4bc7550ff4183643c3f3e3cdf47e30f377b65ca61450768c236a39b",
   "neighbourhood": {
     "callers": [
       {
@@ -113,6 +114,7 @@ $ navegador contract propose --repo calliope-astrolift --json
       "edge": "implemented_in",
       "source": {"kind": "doc", "name": "auth-design.md"},
       "target": "calliope-astrolift/code:src/auth.py#validate_token",
+      "revision": "78c70066a4bc7550ff4183643c3f3e3cdf47e30f377b65ca61450768c236a39b",
       "confidence": 0.95,
       "evidence": {
         "strategy": "EXACT_NAME",
@@ -138,6 +140,25 @@ Source labels are mapped into brain kinds (`Document` → `doc`, `Rule` →
 `decision`, `Concept` → `glossary-term`) so the receiving brain can validate them
 against its own schema. An unmapped label passes through lowercased; the brain is
 free to reject it.
+
+## Revisions
+
+Both responses above state a `revision`: the SHA-256 of the file's bytes as
+navegador last ingested them — the digest `sha256sum src/auth.py` prints. A
+symbol takes its file's revision, so an edit anywhere in `src/auth.py` moves the
+revision of every symbol in it.
+
+A brain keeps the revision with the edge it commits. When a later resolve
+returns a different one, the code under the edge has changed since the edge was
+reviewed.
+
+- **It is a content revision, not a commit.** Navegador ingests the working
+  tree, which need not match any commit. A content hash also moves only when
+  that file changes, where a commit id moves with every commit to the repo.
+- **It is only as current as the last ingest.** It says which code the graph
+  holds, not whether the graph is up to date. Re-ingest to refresh it.
+- **`null` means unknown.** A graph that holds no hash for the file reports
+  `null` rather than a guess.
 
 ## Version declaration
 
