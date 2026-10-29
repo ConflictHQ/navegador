@@ -45,7 +45,11 @@ dependencies = [
     "click>=8.1.0",
     "rich>=13.0.0",
     # MCP server
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2",         # server uses @server.list_tools()/@server.call_tool(), removed in mcp 2.x
+    # Security floors for transitive dependencies (lockfile-free library; see issue #202)
+    "anyio>=4.14.2",         # via mcp/httpx; GHSA-82r6-8w77-94w6, GHSA-3w57-8xmc-8v26, GHSA-5p39-cfhj-2xmp
+    "pyjwt>=2.15.0",         # via mcp; 13 PyJWT advisories incl. GHSA-ffc3-869f-jxw9, GHSA-42vr-xj54-vc7v
+    "cryptography>=50.0.0",  # via pyjwt[crypto]; GHSA-g6cj-pr64-35w5
     # Utilities
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
@@ -87,7 +91,8 @@ dev = [
     "pyyaml>=6.0",            # Ansible parser tests require yaml.safe_load
 ]
 docs = [
-    "mkdocs-material>=9.0.0",
+    "mkdocs-material>=9.7.7",  # GHSA-xvg9-69gf-fjrf
+    "urllib3>=2.8.0",          # via requests; GHSA-vxq7-64xx-v4gw, GHSA-8988-9cw3-xx77, GHSA-gh4c-6fx4-qh6g
     "mkdocstrings[python]>=0.24.0",
     "pymdown-extensions>=10.0",
 ]
