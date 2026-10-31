@@ -1,10 +1,18 @@
 # Changelog
 
-## Unreleased
+## 1.7.0 — 2026-10-31
 
 ### Interoperability
 
 - **Exports carry `mimwell-kg/v1`** — Mimwell retires the `conflict-kg/v1` name, and its readers refuse files stamped with it. `navegador export --format mimwell-kg` and explorer `GET /api/graph?format=mimwell-kg` now emit `mimwell-kg/v1`; the JSON and SQLite shapes are unchanged. `conflict-kg` remains a deprecated alias on both and emits the new name, with a stderr notice from the CLI. `navegador import` still reads files stamped `conflict-kg/v1` or `calliope-kg/v1`
+
+### Federation
+
+- **Proposals carry their scope, and unifications become brain proposals** — `contract.propose_join_edges` takes an optional `scope` (the brain's policy namespace beside `repo`) and carries it on the envelope, so a consuming brain can check a proposal came from a scope it federates with. `SuperGraphAggregator` still unifies Concept/Person/Domain/Rule by name in its own store, and now also records every unification as a `same_as` proposal in the brain's `proposals/v1` shape (#158)
+
+### Dependencies
+
+- **Security floors** — minimum versions for transitive dependencies with open advisories (`anyio`, `pyjwt`, `cryptography`, `urllib3`, `mkdocs-material`), and `mcp` capped below 2.x, whose API the server still uses (#202)
 
 ## 1.6.0 — 2026-08-16
 
