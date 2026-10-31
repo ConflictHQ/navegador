@@ -115,7 +115,7 @@ class TestNamedGraph:
                     "export",
                     str(out),
                     "--format",
-                    "conflict-kg",
+                    "mimwell-kg",
                     "--graph",
                     "navegador_cli",
                     "--json",

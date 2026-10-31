@@ -10,7 +10,7 @@ An agent given this document and a business requirement should be able to genera
 
 | Layer | What's there |
 |-------|-------------|
-| Graph store | `navegador/graph/` — GraphStore + schema + queries + migrations + export + conflict-kg/v1 interchange + `transfer.py` (lossless store-to-store copy), backed by FalkorDB |
+| Graph store | `navegador/graph/` — GraphStore + schema + queries + migrations + export + mimwell-kg/v1 interchange + `transfer.py` (lossless store-to-store copy), backed by FalkorDB |
 | Federation | `navegador/federation.py` — SuperGraphAggregator: roll repo-local graphs into a central super-graph (namespacing, knowledge dedup) |
 | Ingestion | `navegador/ingestion/` — RepoIngester + 13 tree-sitter language parsers + optimization |
 | Context | `navegador/context/` — ContextLoader + ContextBundle (JSON/markdown output) |

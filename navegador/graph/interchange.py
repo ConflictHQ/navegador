@@ -1,11 +1,15 @@
 """
-conflict-kg/v1 — canonical KG interchange format shared across Conflict tools.
+mimwell-kg/v1 — canonical KG interchange format shared across Conflict tools.
+
+The JSON encoding is stamped ``mimwell-kg/v1``. Files stamped with the legacy
+names ``conflict-kg/v1`` or ``calliope-kg/v1`` have the same shape and still
+import. The SQLite encoding carries no format marker.
 
 One contract, two encodings (same field names):
 
 JSON (small/medium graphs):
   {
-    "format": "conflict-kg/v1",
+    "format": "mimwell-kg/v1",
     "nodes": [{"id": "str-unique", "name": "display", "type": "NodeType", "props": {}}],
     "edges": [{"source": "node-id", "target": "node-id", "type": "REL", "props": {}}]
   }
@@ -28,7 +32,9 @@ from navegador.graph.store import GraphStore, paged_query
 
 logger = logging.getLogger(__name__)
 
-FORMAT = "conflict-kg/v1"
+FORMAT = "mimwell-kg/v1"
+# Earlier names for the same shape: accepted on import and detection, never written.
+LEGACY_FORMATS = ("conflict-kg/v1", "calliope-kg/v1")
 
 _SQLITE_EXTENSIONS = {".db", ".sqlite", ".sqlite3"}
 
@@ -42,7 +48,7 @@ _SQLITE_SCHEMA = [
 
 def collect_graph(store: GraphStore) -> tuple[list[dict], list[dict]]:
     """
-    Read the full graph into canonical conflict-kg/v1 node and edge dicts.
+    Read the full graph into canonical mimwell-kg/v1 node and edge dicts.
 
     Returns:
         (nodes, edges) — deterministically ordered, edges referencing node ids.
@@ -91,7 +97,7 @@ def collect_graph(store: GraphStore) -> tuple[list[dict], list[dict]]:
 
 def export_conflict_kg(store: GraphStore, output_path: str | Path) -> dict[str, int | str]:
     """
-    Export the graph in conflict-kg/v1 format.
+    Export the graph in mimwell-kg/v1 format.
 
     Encoding is chosen by extension: .db/.sqlite/.sqlite3 → SQLite,
     anything else → canonical JSON.
@@ -129,11 +135,13 @@ def import_conflict_kg(
     store: GraphStore, input_path: str | Path, clear: bool = True
 ) -> dict[str, int]:
     """
-    Import a conflict-kg/v1 graph (JSON or SQLite encoding) into the store.
+    Import a mimwell-kg/v1 graph (JSON or SQLite encoding) into the store.
+
+    JSON stamped with a legacy name (``LEGACY_FORMATS``) imports the same way.
 
     Args:
         store: Target GraphStore.
-        input_path: Path to a conflict-kg/v1 .json or .db file.
+        input_path: Path to a mimwell-kg/v1 .json or .db file.
         clear: If True (default), wipe the graph before importing.
 
     Returns:
@@ -147,7 +155,7 @@ def import_conflict_kg(
         nodes, edges = _read_sqlite(input_path)
     else:
         payload = json.loads(input_path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or payload.get("format") != FORMAT:
+        if not isinstance(payload, dict) or payload.get("format") not in (FORMAT, *LEGACY_FORMATS):
             raise ValueError(f"Not a {FORMAT} file: {input_path}")
         nodes, edges = payload.get("nodes", []), payload.get("edges", [])
 
@@ -187,12 +195,12 @@ def is_sqlite_file(path: str | Path) -> bool:
 
 
 def is_conflict_kg_json(path: str | Path) -> bool:
-    """True if the file is a conflict-kg/v1 JSON document."""
+    """True if the file is a mimwell-kg/v1 JSON document (or one stamped with a legacy name)."""
     try:
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError):
         return False
-    return isinstance(payload, dict) and payload.get("format") == FORMAT
+    return isinstance(payload, dict) and payload.get("format") in (FORMAT, *LEGACY_FORMATS)
 
 
 def merge_key(label: str, props: dict) -> dict:
