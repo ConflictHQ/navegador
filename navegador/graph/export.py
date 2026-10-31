@@ -5,7 +5,7 @@ Exports the full graph to a deterministic JSON Lines format (.jsonl) suitable
 for committing to version control. Each line is a self-contained JSON object —
 either a node or an edge.
 
-Format (conflict-kg/v1 identity, one record per line)::
+Format (mimwell-kg/v1 identity, one record per line)::
 
   {"kind": "node", "id": "Function::foo", "type": "Function",
    "name": "foo", "props": {...}}
@@ -14,7 +14,7 @@ Format (conflict-kg/v1 identity, one record per line)::
 
 Node ids are content-derived (``type:path:name``, with a ``#n`` suffix on
 collision) and edges reference them, so a round trip preserves every edge
-exactly. This is the same identity scheme as the conflict-kg interchange
+exactly. This is the same identity scheme as the mimwell-kg interchange
 format, deliberately: two serializations of one canonical shape rather than two
 formats that disagree about what a node is.
 

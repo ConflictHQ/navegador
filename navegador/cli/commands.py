@@ -1119,10 +1119,11 @@ def planopticon_ingest(path: str, input_type: str, source: str, as_json: bool, d
 @click.option(
     "--format",
     "fmt",
-    type=click.Choice(["jsonl", "conflict-kg"]),
+    type=click.Choice(["jsonl", "mimwell-kg", "conflict-kg"]),
     default="jsonl",
-    help="Export format: jsonl (legacy) or conflict-kg (canonical conflict-kg/v1; "
-    "writes SQLite for .db/.sqlite outputs, JSON otherwise).",
+    help="Export format: jsonl (legacy) or mimwell-kg (canonical mimwell-kg/v1; "
+    "writes SQLite for .db/.sqlite outputs, JSON otherwise). "
+    "conflict-kg is a deprecated alias for mimwell-kg.",
 )
 @click.option(
     "--graph",
@@ -1140,6 +1141,12 @@ def export_cmd(output: str, db: str, fmt: str, graph_name: str, as_json: bool):
     if graph_name:
         store = store.with_graph(graph_name)
     if fmt == "conflict-kg":
+        progress.print(
+            "[yellow]--format conflict-kg is deprecated and now writes mimwell-kg/v1; "
+            "use --format mimwell-kg.[/yellow]"
+        )
+        fmt = "mimwell-kg"
+    if fmt == "mimwell-kg":
         from navegador.graph.interchange import export_conflict_kg
 
         stats = export_conflict_kg(store, output)
@@ -1162,7 +1169,10 @@ def export_cmd(output: str, db: str, fmt: str, graph_name: str, as_json: bool):
 @click.option("--no-clear", is_flag=True, help="Don't wipe graph before importing.")
 @click.option("--json", "as_json", is_flag=True, help="Output stats as JSON.")
 def import_cmd(input_path: str, db: str, no_clear: bool, as_json: bool):
-    """Import a graph from a JSONL or conflict-kg/v1 export file (auto-detected)."""
+    """Import a graph from a JSONL or mimwell-kg/v1 export file (auto-detected).
+
+    Files stamped with the legacy conflict-kg/v1 or calliope-kg/v1 names import too.
+    """
     from navegador.graph.interchange import (
         import_conflict_kg,
         is_conflict_kg_json,
