@@ -295,7 +295,8 @@ def _make_handler(store: "GraphStore"):
             # ── Full graph
             elif path == "/api/graph":
                 fmt = qs.get("format", [""])[0]
-                if fmt == "conflict-kg":
+                # conflict-kg is a deprecated alias; both answer in mimwell-kg/v1.
+                if fmt in ("mimwell-kg", "conflict-kg"):
                     from navegador.graph.interchange import FORMAT, collect_graph
 
                     kg_nodes, kg_edges = collect_graph(self._store)

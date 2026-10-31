@@ -21,7 +21,7 @@ AST + knowledge graph context engine for AI coding agents. Parses codebases into
 ```
 navegador/
   cli/           — Click commands (50+ subcommands)
-  graph/         — GraphStore + schema + queries + migrations + export + conflict-kg/v1 interchange + transfer (store-to-store copy)
+  graph/         — GraphStore + schema + queries + migrations + export + mimwell-kg/v1 interchange + transfer (store-to-store copy)
   ingestion/     — RepoIngester + 13 language parsers + optimization
   context/       — ContextLoader + ContextBundle (JSON/markdown)
   mcp/           — MCP server with 25 tools + security hardening

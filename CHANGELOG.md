@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Interoperability
+
+- **Exports carry `mimwell-kg/v1`** — Mimwell retires the `conflict-kg/v1` name, and its readers refuse files stamped with it. `navegador export --format mimwell-kg` and explorer `GET /api/graph?format=mimwell-kg` now emit `mimwell-kg/v1`; the JSON and SQLite shapes are unchanged. `conflict-kg` remains a deprecated alias on both and emits the new name, with a stderr notice from the CLI. `navegador import` still reads files stamped `conflict-kg/v1` or `calliope-kg/v1`
+
 ## 1.6.0 — 2026-08-16
 
 Two themes: ingest was indexing the wrong files, and navegador could not answer the questions agents actually ask. The work is measurement-gated, and the measurement is reported below including the part that does not yet support the thesis.

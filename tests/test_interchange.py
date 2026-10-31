@@ -1,6 +1,6 @@
 # Copyright CONFLICT LLC 2026 (weareconflict.com)
 """
-Tests for navegador.graph.interchange — the conflict-kg/v1 canonical format.
+Tests for navegador.graph.interchange — the mimwell-kg/v1 canonical format.
 
 These run against real embedded FalkorDB stores (no graph mocks): seed a
 graph, export, re-import, and assert on actual graph state.
@@ -137,7 +137,8 @@ class TestJsonExport:
         stats = export_conflict_kg(source_store, out)
         assert stats == {"nodes": 3, "edges": 2, "encoding": "json"}
         doc = json.loads(out.read_text())
-        assert doc["format"] == FORMAT
+        # The literal, not FORMAT: Mimwell readers refuse the retired conflict-kg/v1 name.
+        assert doc["format"] == "mimwell-kg/v1"
 
     def test_deterministic_output(self, source_store, tmp_path):
         _seed(source_store)
@@ -246,7 +247,7 @@ class TestImportEdgeCases:
     def test_rejects_non_interchange_json(self, target_store, tmp_path):
         bad = tmp_path / "other.json"
         bad.write_text(json.dumps({"nodes": [], "edges": []}))
-        with pytest.raises(ValueError, match="conflict-kg/v1"):
+        with pytest.raises(ValueError, match="mimwell-kg/v1"):
             import_conflict_kg(target_store, bad)
 
     def test_missing_file_raises(self, target_store, tmp_path):
@@ -279,6 +280,63 @@ class TestImportEdgeCases:
         assert stats == {"nodes": 1, "edges": 0}
 
 
+# ── Legacy format names ────────────────────────────────────────────────────
+
+# The shape navegador 1.6.0 wrote under conflict-kg/v1. Only the format name has changed since.
+_LEGACY_GRAPH = {
+    "nodes": [
+        {
+            "id": "Function:app.py:bar",
+            "name": "bar",
+            "type": "Function",
+            "props": {"file_path": "app.py", "line": 9},
+        },
+        {
+            "id": "Function:app.py:foo",
+            "name": "foo",
+            "type": "Function",
+            "props": {"file_path": "app.py", "line": 1},
+        },
+    ],
+    "edges": [
+        {
+            "source": "Function:app.py:foo",
+            "target": "Function:app.py:bar",
+            "type": "CALLS",
+            "props": {"count": 2},
+        }
+    ],
+}
+
+
+def _write_kg(path, format_name: str):
+    path.write_text(json.dumps({"format": format_name, **_LEGACY_GRAPH}))
+    return path
+
+
+class TestLegacyFormatNames:
+    @pytest.mark.parametrize("format_name", ["conflict-kg/v1", "calliope-kg/v1"])
+    def test_legacy_json_still_imports(self, target_store, tmp_path, format_name):
+        path = _write_kg(tmp_path / "legacy.json", format_name)
+        assert is_conflict_kg_json(path)
+
+        stats = import_conflict_kg(target_store, path)
+
+        assert stats == {"nodes": 2, "edges": 1}
+        result = target_store.query(
+            "MATCH (:Function {name: 'foo'})-[r:CALLS]->(:Function {name: 'bar'}) RETURN r.count"
+        )
+        assert result.result_set == [[2]]
+
+    def test_unknown_format_name_rejected(self, target_store, tmp_path):
+        # The legacy names are an exact allow-list, not a prefix match.
+        path = _write_kg(tmp_path / "future.json", "mimwell-kg/v2")
+        assert not is_conflict_kg_json(path)
+        with pytest.raises(ValueError, match="mimwell-kg/v1"):
+            import_conflict_kg(target_store, path)
+        assert target_store.node_count() == 0
+
+
 # ── Format detection ───────────────────────────────────────────────────────
 
 
@@ -304,7 +362,7 @@ class TestDetection:
         assert not is_conflict_kg_json(jsonl)
 
 
-# ── Explorer /api/graph?format=conflict-kg ─────────────────────────────────
+# ── Explorer /api/graph?format=mimwell-kg ──────────────────────────────────
 
 
 def _free_port() -> int:
@@ -319,16 +377,26 @@ def _fetch_json(url: str):
 
 
 class TestExplorerFormat:
-    def test_conflict_kg_format(self, source_store):
+    def test_mimwell_kg_format(self, source_store):
         _seed(source_store)
         port = _free_port()
         with ExplorerServer(source_store, port=port):
-            status, data = _fetch_json(f"http://127.0.0.1:{port}/api/graph?format=conflict-kg")
+            status, data = _fetch_json(f"http://127.0.0.1:{port}/api/graph?format=mimwell-kg")
         assert status == 200
-        assert data["format"] == FORMAT
+        assert data["format"] == "mimwell-kg/v1"
         assert {n["type"] for n in data["nodes"]} == {"Function", "Concept"}
         ids = {n["id"] for n in data["nodes"]}
         assert all(e["source"] in ids and e["target"] in ids for e in data["edges"])
+
+    def test_conflict_kg_alias_answers_in_mimwell_kg(self, source_store):
+        _seed(source_store)
+        port = _free_port()
+        with ExplorerServer(source_store, port=port):
+            _, canonical = _fetch_json(f"http://127.0.0.1:{port}/api/graph?format=mimwell-kg")
+            status, alias = _fetch_json(f"http://127.0.0.1:{port}/api/graph?format=conflict-kg")
+        assert status == 200
+        assert alias["format"] == "mimwell-kg/v1"
+        assert alias == canonical
 
     def test_default_shape_unchanged(self, source_store):
         _seed(source_store)
@@ -344,22 +412,47 @@ class TestExplorerFormat:
 
 
 class TestCli:
-    def test_export_conflict_kg_and_reimport(self, source_store, target_store, tmp_path):
+    def test_export_mimwell_kg_and_reimport(self, source_store, target_store, tmp_path):
         _seed(source_store)
         runner = CliRunner()
         out = tmp_path / "kg.json"
 
         with patch("navegador.cli.commands._get_store", return_value=source_store):
-            result = runner.invoke(main, ["export", str(out), "--format", "conflict-kg", "--json"])
+            result = runner.invoke(main, ["export", str(out), "--format", "mimwell-kg", "--json"])
         assert result.exit_code == 0, result.output
         assert json.loads(result.output)["encoding"] == "json"
-        assert is_conflict_kg_json(out)
+        assert json.loads(out.read_text())["format"] == "mimwell-kg/v1"
 
         with patch("navegador.cli.commands._get_store", return_value=target_store):
             result = runner.invoke(main, ["import", str(out), "--json"])
         assert result.exit_code == 0, result.output
         assert json.loads(result.output) == {"nodes": 3, "edges": 2}
         assert target_store.node_count() == 3
+
+    def test_conflict_kg_is_a_deprecated_alias(self, source_store, tmp_path):
+        _seed(source_store)
+        runner = CliRunner()
+        canonical, alias = tmp_path / "canonical.json", tmp_path / "alias.json"
+
+        with patch("navegador.cli.commands._get_store", return_value=source_store):
+            first = runner.invoke(main, ["export", str(canonical), "--format", "mimwell-kg"])
+            result = runner.invoke(
+                main, ["export", str(alias), "--format", "conflict-kg", "--json"]
+            )
+        assert first.exit_code == 0, first.output
+        assert result.exit_code == 0, result.output
+        # The notice goes to stderr, so --json on stdout stays parseable.
+        assert json.loads(result.stdout)["encoding"] == "json"
+        assert "deprecated" in result.stderr
+        assert alias.read_bytes() == canonical.read_bytes()
+        assert json.loads(alias.read_text())["format"] == "mimwell-kg/v1"
+
+    def test_import_autodetects_legacy_conflict_kg_file(self, target_store, tmp_path):
+        path = _write_kg(tmp_path / "legacy.json", "conflict-kg/v1")
+        with patch("navegador.cli.commands._get_store", return_value=target_store):
+            result = CliRunner().invoke(main, ["import", str(path), "--json"])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output) == {"nodes": 2, "edges": 1}
 
     def test_export_default_stays_jsonl(self, source_store, tmp_path):
         _seed(source_store)
