@@ -24,6 +24,16 @@ optionally followed by ``#`` and a qualified symbol. So::
 The brain is authoritative for its own kinds and decides which proposed join
 edges to commit; navegador only proposes. Code addresses appear in brain
 artifacts solely as join-edge targets.
+
+Every resolved node and every proposed join target also states its
+``revision``: the SHA-256 of the file's bytes as navegador last ingested them,
+the same whole-file digest a brain pins a code join to (project-brain
+template/docs/primitives/federation-resolution.md, "Code-reference proof"). A
+symbol takes its file's revision. A brain keeps the revision with the edge it
+commits; a different one on a later resolve means the code under the edge has
+changed. It is a content revision, not a commit — the graph is built from a
+working tree, which need not match any commit. When the graph holds no hash
+for the file, the revision is ``None``: unknown, never invented.
 """
 
 from dataclasses import dataclass, field
@@ -139,6 +149,8 @@ class ResolvedNode:
     path: str
     found: bool = True
     properties: dict[str, Any] = field(default_factory=dict)
+    #: SHA-256 of the node's file as last ingested; None when the graph holds none.
+    revision: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -149,6 +161,7 @@ class ResolvedNode:
             "label": self.label,
             "name": self.name,
             "path": self.path,
+            "revision": self.revision,
             "properties": self.properties,
         }
 
@@ -164,6 +177,9 @@ def resolve(store: GraphStore, address: str) -> ResolvedNode:
     A path may legitimately be recorded with or without its repo prefix
     depending on whether the graph was built by a plain or a workspace ingest,
     so both spellings are tried before reporting a miss.
+
+    The result states the ``revision`` of the code it reflects, so a brain can
+    compare it with the one it recorded when it committed the edge.
     """
     parsed = parse_address(address)
     candidates = [parsed.path]
@@ -183,6 +199,7 @@ def resolve(store: GraphStore, address: str) -> ResolvedNode:
                 name=node["name"],
                 path=node["path"],
                 properties=node["properties"],
+                revision=_file_revisions(store, [node["path"]]).get(node["path"]),
             )
 
     return ResolvedNode(address=str(parsed), label="", name="", path=parsed.path, found=False)
@@ -227,6 +244,26 @@ def _row_to_node(rows) -> dict | None:
     }
 
 
+def _file_revisions(store: GraphStore, paths: list[str]) -> dict[str, str]:
+    """
+    The recorded revision of each file in *paths*, keyed by path.
+
+    Nothing new is computed: ingest already stores ``content_hash``, the
+    SHA-256 of the file's bytes, on every File and Document node it parses.
+    A path the graph holds no hash for is left out, which the caller reports
+    as an unknown revision.
+    """
+    wanted = sorted({path for path in paths if path})
+    if not wanted:
+        return {}
+    labels = " OR ".join(f"n:{label}" for label in _FILE_LABELS)
+    rows = store.query(
+        f"MATCH (n) WHERE ({labels}) AND n.path IN $paths RETURN n.path, n.content_hash",
+        {"paths": wanted},
+    ).result_set
+    return {row[0]: row[1] for row in rows or [] if row[1]}
+
+
 def address_for_node(label: str, name: str, path: str, repo: str = "") -> str | None:
     """
     Contract address for a graph node, or None when it is not a code entity.
@@ -259,10 +296,16 @@ def propose_join_edges(
     Only candidates whose target is a code entity become proposals — a
     doc→concept affinity is entirely within the brain realm and is not ours to
     propose.
+
+    Each proposal also states its target's ``revision`` — the code the
+    inference was made against — so the brain can keep it with the edge and
+    notice when that code changes.
     """
     from navegador.intelligence.doclink import DocLinker
 
     candidates = DocLinker(store).suggest_links(min_confidence=min_confidence)
+    # One lookup for every file a candidate targets, rather than one per proposal.
+    revisions = _file_revisions(store, [c.target_file for c in candidates])
 
     proposals: list[dict[str, Any]] = []
     for candidate in candidates:
@@ -279,6 +322,7 @@ def propose_join_edges(
                     "name": candidate.source_name,
                 },
                 "target": target,
+                "revision": revisions.get(candidate.target_file),
                 "confidence": round(candidate.confidence, 3),
                 "evidence": {
                     "strategy": candidate.strategy,

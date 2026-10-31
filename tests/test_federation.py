@@ -307,13 +307,35 @@ class TestBrainProposals:
         payload = self._agg(central, source_a, source_b).proposals_payload(scope="company:acme")
         assert payload["format"] == "proposals/v1"
         assert payload["generator"] == "navegador"
-        assert payload["contract"] == "1.0" and payload["realm"] == "code"
+        assert payload["realm"] == "code"
         assert payload["scope"] == "company:acme"
         for p in payload["proposals"]:
             assert p["kind"] == "equivalence" and p["rel"] == "same_as"
             assert p["status"] == "proposed" and p["proposed_by"] == "navegador"
             assert 0 < p["confidence"] < 1.0
             assert "identical" in p["evidence"]
+
+    def test_the_payload_stays_inside_what_the_brain_admits(self, central, source_a, source_b):
+        """project-brain's merge-proposals validates each batch whole against
+        proposals.schema.json, whose top level and items are both
+        additionalProperties: false, and drops the entire batch on one unknown
+        key — a top-level `contract` key did exactly that. The key sets mirror
+        that schema at project-brain 0780c47."""
+        payload = self._agg(central, source_a, source_b).proposals_payload(scope="company:acme")
+        assert payload["proposals"]
+        assert set(payload) <= {"format", "generator", "$comment", "proposals", "scope", "realm"}
+        required = {
+            "id",
+            "kind",
+            "rel",
+            "source",
+            "target",
+            "confidence",
+            "evidence",
+            "proposed_by",
+        }
+        for p in payload["proposals"]:
+            assert required <= set(p) <= required | {"status"}
 
     def test_proposals_are_deduplicated_and_ordered(self, central, source_a, source_b):
         agg = self._agg(central, source_a, source_b)
